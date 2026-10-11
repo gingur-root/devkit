@@ -1,0 +1,29 @@
+name: Secret scan
+
+# gitleaks over a pull request's commits, or all history on any other event.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner label: callers pass vars.RUNNER. A public repo never passes `local`.'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/gitleaks.scan@main
+        with:
+          logOpts: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}

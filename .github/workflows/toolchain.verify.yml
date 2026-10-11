@@ -1,0 +1,110 @@
+name: Verify
+
+# Format, lint, typecheck, test and build a repo with its own declared
+# toolchain (.nvmrc, .bun-version, package.json packageManager/devEngines).
+
+on:
+  workflow_call:
+    inputs:
+      cwd:
+        description: 'Directory containing package.json and runtime version files.'
+        type: string
+        required: false
+        default: '.'
+      node:
+        description: 'Optional Node.js override. Prefer repo-owned version files.'
+        type: string
+        required: false
+        default: ''
+      pnpm:
+        description: 'Optional pnpm override. Prefer package.json packageManager/devEngines.'
+        type: string
+        required: false
+        default: ''
+      bun:
+        description: 'Optional Bun override. Prefer .bun-version or package.json devEngines.'
+        type: string
+        required: false
+        default: ''
+      format:
+        description: 'pnpm script for the format check. Empty skips it.'
+        type: string
+        required: false
+        default: 'fmt:check'
+      lint:
+        description: 'pnpm script for lint. Empty skips it.'
+        type: string
+        required: false
+        default: 'lint'
+      typecheck:
+        description: 'pnpm script for typecheck. Empty skips it.'
+        type: string
+        required: false
+        default: 'typecheck'
+      test:
+        description: 'pnpm script for tests. Empty skips them.'
+        type: string
+        required: false
+        default: 'test'
+      build:
+        description: 'pnpm script for build. Empty skips it.'
+        type: string
+        required: false
+        default: 'build'
+      runner:
+        description: 'Runner label: callers pass vars.RUNNER. A public repo never passes `local`.'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.cwd }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: ${{ inputs.cwd }}
+          node: ${{ inputs.node }}
+          pnpm: ${{ inputs.pnpm }}
+          bun: ${{ inputs.bun }}
+
+      - name: Format
+        if: ${{ inputs.format != '' }}
+        run: pnpm "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.format }}
+
+      - name: Lint
+        if: ${{ inputs.lint != '' }}
+        run: pnpm "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.lint }}
+
+      - name: Typecheck
+        if: ${{ inputs.typecheck != '' }}
+        run: pnpm "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.typecheck }}
+
+      - name: Test
+        if: ${{ inputs.test != '' }}
+        run: pnpm "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.test }}
+
+      - name: Build
+        if: ${{ inputs.build != '' }}
+        run: pnpm "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.build }}

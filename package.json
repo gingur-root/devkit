@@ -1,0 +1,50 @@
+{
+  "name": "@gingur-root/devkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "bin": {
+    "devkit": "./bin/devkit.mjs"
+  },
+  "scripts": {
+    "hooks:install": "node bin/devkit.mjs hooks install",
+    "lint": "node bin/devkit.mjs lint",
+    "lint:fix": "node bin/devkit.mjs lint --fix",
+    "fmt": "node bin/devkit.mjs fmt",
+    "fmt:check": "node bin/devkit.mjs fmt --check",
+    "staged": "node bin/devkit.mjs staged",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./bin/loader.mjs --test 'bin/*.test.ts' 'test/*.test.ts'"
+  },
+  "exports": {
+    "./tsconfig": "./configs/tsconfig.base.json",
+    "./oxlint": "./configs/oxlintrc.base.json",
+    "./oxfmt": "./configs/oxfmt.config.mjs",
+    "./lint-staged": "./configs/lint-staged.config.js"
+  },
+  "files": [
+    "bin",
+    "configs",
+    "actions",
+    ".github"
+  ],
+  "peerDependencies": {
+    "typescript": "^6 || ^7"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "lint-staged": "^16",
+    "oxc-transform": "0.150.0",
+    "oxfmt": "0.58.0",
+    "oxlint": "^1.73"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "typescript": "^7",
+    "yaml": "^2"
+  }
+}
