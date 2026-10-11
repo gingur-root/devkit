@@ -1,6 +1,7 @@
 name: 'Fetch Bitwarden secrets'
 description: 'Fetch Bitwarden Secrets Manager secrets by UUID with bitwarden/sm-action.'
 
+# No floating `v3` tag exists, so the release is pinned.
 # sm-action exports every secret into the env of each later step in the job, so
 # a job fetches only the UUIDs it uses. With `setEnv: false` nothing is
 # exported; the values come back in `json` instead (see github.app.token).
@@ -26,7 +27,7 @@ runs:
   using: 'composite'
   steps:
     - id: fetch
-      uses: bitwarden/sm-action@v3
+      uses: bitwarden/sm-action@v3.0.1
       with:
         access_token: ${{ inputs.token }}
         secrets: ${{ inputs.secrets }}
