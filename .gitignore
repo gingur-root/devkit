@@ -1,0 +1,10 @@
+node_modules/
+.pnpm-store/
+.DS_Store
+*.log
+.env
+.env.local
+
+# Superpowers working docs (specs/plans) — local-only process artifacts, never committed
+docs/superpowers/
+.superpowers/

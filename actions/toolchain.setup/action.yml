@@ -1,0 +1,70 @@
+name: 'Setup toolchain'
+description: 'Install repo-declared runtimes and package managers with proto, cache them, and optionally install dependencies.'
+
+inputs:
+  cwd:
+    description: 'Directory containing the project version files and package.json.'
+    required: false
+    default: '.'
+  node:
+    description: 'Optional Node.js override. Prefer .nvmrc or package.json devEngines.'
+    required: false
+    default: ''
+  pnpm:
+    description: 'Optional pnpm override. Prefer package.json packageManager/devEngines.'
+    required: false
+    default: ''
+  bun:
+    description: 'Optional Bun override. Prefer .bun-version or package.json devEngines.'
+    required: false
+    default: ''
+  install:
+    description: 'Run pnpm install --frozen-lockfile after toolchain setup.'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Apply version overrides
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.node }}" ]; then echo "PROTO_NODE_VERSION=${{ inputs.node }}" >> "$GITHUB_ENV"; fi
+        if [ -n "${{ inputs.pnpm }}" ]; then echo "PROTO_PNPM_VERSION=${{ inputs.pnpm }}" >> "$GITHUB_ENV"; fi
+        if [ -n "${{ inputs.bun }}" ]; then echo "PROTO_BUN_VERSION=${{ inputs.bun }}" >> "$GITHUB_ENV"; fi
+
+    - name: Setup proto toolchain
+      uses: moonrepo/setup-toolchain@v0
+      with:
+        auto-install: true
+        workspace-root: ${{ inputs.cwd }}
+
+    - name: Resolve pnpm store
+      if: ${{ inputs.install == 'true' }}
+      id: pnpm-store
+      working-directory: ${{ inputs.cwd }}
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache pnpm store
+      if: ${{ inputs.install == 'true' }}
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-
+
+    - name: Install dependencies
+      if: ${{ inputs.install == 'true' }}
+      working-directory: ${{ inputs.cwd }}
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # Re-resolve the shared-config dep past the lockfile pin so CI always runs
+    # against what its specifier names. No-op when the dependency is absent.
+    - name: Refresh devkit
+      if: ${{ inputs.install == 'true' }}
+      working-directory: ${{ inputs.cwd }}
+      shell: bash
+      run: pnpm update @gingur-root/devkit

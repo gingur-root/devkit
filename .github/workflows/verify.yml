@@ -1,0 +1,64 @@
+name: Verify
+# devkit's own CI.
+#
+# Everything under actions/, configs/ and .github/workflows/ ships to every
+# enrolled repo on `@main`, so a regression here lands fleet-wide the moment it
+# merges — there is no staging step between this repo and production. Keep the
+# `actions` guard cheap and network-free so it can't false-fail a consumer's
+# deploy; `configs` needs an install, so it runs as its own job.
+#
+# No `paths:` filter. `fmt:check` covers the whole repo, so any filter narrower
+# than that lets a docs-only PR merge unchecked and surface its drift later as a
+# red build on someone else's unrelated change. The repo is ~30 files and both
+# jobs are cheap; running them always is simpler than keeping a filter in sync
+# with what the checks actually read.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  actions:
+    name: Actions
+    # A fork pull request never allocates a self-hosted runner: on a public repo
+    # that would run contributor code on the operator's machine. Forks fall back
+    # to GitHub-hosted rather than skipping, so they are still checked.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Catches shell breakage in composite actions before it ships fleet-wide.
+      # No-op until a composite adds a *.sh; kept so the guard exists the moment
+      # one does.
+      # bin/ is covered too: the git-hook shim ships as shell and a syntax error
+      # in it would disable a consumer's hooks.
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files 'actions/**/*.sh' 'bin/**/*.sh')
+          printf 'checking %s shell file(s)\n' "${#files[@]}"
+          for f in "${files[@]}"; do bash -n "$f"; done
+
+  # Dogfoods the reusable workflow, so its defaults are exercised on every PR.
+  # devkit declares no runtime version files of its own — it is a config
+  # package, not an app — so the versions are explicit.
+  #
+  # `test` runs the devkit CLI's suite. It is the only guard on tool resolution,
+  # and tool resolution is the one thing that breaks silently for every consumer
+  # at once: the ox tools are devkit's dependencies, so they are absent from a
+  # consumer's node_modules/.bin and a regression to a bare command would pass
+  # here (where they *are* linked) and fail everywhere else.
+  #
+  # `typecheck` is not optional now that bin/ is TypeScript. Node strips types
+  # at run time without checking them, and `erasableSyntaxOnly` lives in tsc —
+  # so this job is the only thing standing between an `enum` and an
+  # ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX in a consumer's terminal.
+  configs:
+    name: Configs
+    uses: ./.github/workflows/toolchain.verify.yml
+    with:
+      node: '22.23.2'
+      pnpm: '10.33.0'
+      build: ''

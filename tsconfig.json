@@ -1,0 +1,18 @@
+{
+  "extends": "./configs/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+
+    // Nothing here is compiled — bin/devkit.mjs installs a loader that
+    // transforms .ts at run time (see bin/loader.mjs). So the specifier is the
+    // real filename: './router.ts', not './router.js'.
+    "allowImportingTsExtensions": true,
+
+    // devkit's own bin/ only; the shared base deliberately declares no module
+    // system, so consumers pick their own.
+    "module": "nodenext",
+    "target": "esnext",
+    "types": ["node"]
+  },
+  "include": ["bin/**/*.ts", "bin/**/*.d.mts", "test/**/*.ts"]
+}

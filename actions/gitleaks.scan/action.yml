@@ -1,0 +1,35 @@
+name: 'Gitleaks scan'
+description: 'Scan git history for secrets with a pinned, checksum-verified gitleaks release.'
+
+# The release binary, not gitleaks/gitleaks-action: the action needs a
+# gitleaks.io license key for organization accounts. Bump `version` and `sha256`
+# together, from the release's gitleaks_<version>_checksums.txt.
+
+inputs:
+  logOpts:
+    description: 'git log options limiting the scan, e.g. `<base>..<head>`. Empty scans all history.'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install gitleaks
+      shell: bash
+      env:
+        VERSION: 8.30.1
+        SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/gitleaks.tar.gz"
+        curl -fsSL -o "$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+        echo "$SHA256  $archive" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/gitleaks"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks" gitleaks
+        echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
+    - name: Scan
+      shell: bash
+      env:
+        LOG_OPTS: ${{ inputs.logOpts }}
+      run: gitleaks git --redact --no-banner --log-opts "$LOG_OPTS" .
