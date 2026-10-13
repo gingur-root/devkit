@@ -258,6 +258,6 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           CHECKS_TOKEN: ${{ github.token }}
-          MERGE: ${{ inputs.merge && '--merge' || '' }}
+          MERGE: ${{ inputs.merge && 'true' || '' }}
         run: |
-          pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" $MERGE
+          pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" ${MERGE:+--merge}
