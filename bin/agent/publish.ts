@@ -15,6 +15,7 @@ import { graphql, rest, restAll } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
+  isStageComment,
   JOB_FILE,
   Job,
   marker,
@@ -45,7 +46,7 @@ interface Issue {
 interface Comment {
   id: number;
   body: string | null;
-  user: { type: string } | null;
+  user: { type: string; id: number } | null;
 }
 
 interface Pull {
@@ -149,7 +150,7 @@ function planComment(job: Job, result: Result, out: string): string {
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
   const head =
     result.status === 'complete'
-      ? `**Plan: ${result.outcome === 'ready' ? 'ready: reply `/approve` to build it' : 'needs your input'}**`
+      ? `**Plan: ${result.outcome === 'ready' ? 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk' : 'needs your input'}**`
       : `**Plan ${result.status}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
@@ -405,9 +406,7 @@ export async function publish(options: PublishOptions): Promise<void> {
 
   // One comment per stage, found by its marker and written by a bot (the App).
   const comments = await restAll<Comment>(`${path}/comments`);
-  const existing = comments.find(
-    (c) => c.user?.type === 'Bot' && c.body?.startsWith(marker(job.role)),
-  );
+  const existing = comments.find((c) => isStageComment(c, job.role));
   if (existing) await rest('PATCH', `/repos/${job.repo}/issues/comments/${existing.id}`, { body });
   else await rest('POST', `${path}/comments`, { body });
 

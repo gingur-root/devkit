@@ -1,13 +1,26 @@
 // GitHub REST and GraphQL over fetch, authenticated with GH_TOKEN (the App
 // installation token minted by `app.token`). Errors carry the API's own body.
 
+import { execFileSync } from 'node:child_process';
+
 const API = 'https://api.github.com';
 
+let token: string | undefined;
+
+/** GH_TOKEN, or on the WSL desk, where no App token is minted, the operator's own `gh` login. */
+function ghToken(): string {
+  if (process.env.GH_TOKEN) return process.env.GH_TOKEN;
+  try {
+    token ??= execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim();
+  } catch {
+    throw new Error('GH_TOKEN is not set and `gh` is not logged in.');
+  }
+  return token;
+}
+
 function headers(): Record<string, string> {
-  const token = process.env.GH_TOKEN;
-  if (!token) throw new Error('GH_TOKEN is not set.');
   return {
-    authorization: `Bearer ${token}`,
+    authorization: `Bearer ${ghToken()}`,
     accept: 'application/vnd.github+json',
     'x-github-api-version': '2022-11-28',
   };

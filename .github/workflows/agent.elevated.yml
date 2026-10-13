@@ -9,6 +9,8 @@ name: Elevated
 # Like a build, the agent only returns files: the App on the VPS pushes its
 # change and opens the draft PR. There is no review stage.
 # Callers set concurrency (one group per card) at their own workflow level.
+# With `runner: wsl` (a repo the App can't reach, infra#47) Start and Publish
+# run on the desk too, and his own `gh` pushes and opens the draft PR.
 
 on:
   workflow_call:
@@ -22,8 +24,9 @@ on:
         type: string
         required: true
     secrets:
+      # Unset on the WSL desk.
       PIPELINE_SECRETS_TOKEN:
-        required: true
+        required: false
 
 permissions: {}
 
@@ -45,7 +48,10 @@ jobs:
         with:
           cwd: devkit
 
+      # The WSL desk mints no App token: the operator's own `gh` writes there
+      # (bin/agent/github.ts), for repos the App can't reach (infra#47).
       - id: app
+        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -64,7 +70,7 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           SOURCE: ${{ github.sha }}
           APP_ID: ${{ inputs.appId }}
-          NOTE: '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.'
+          NOTE: ${{ inputs.runner == 'wsl' && '**Running on the WSL desk.**' || '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.' }}
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role elevated --source "$SOURCE" \
             --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
@@ -98,8 +104,14 @@ jobs:
     needs: [start, elevated]
     if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && github.event_name == 'issues' && github.event.label.name == 'agent:elevated' && needs.start.result == 'success'
     runs-on: ${{ inputs.runner }}
+    # For the desk's checkout of the push target, which has no App token.
+    permissions:
+      contents: read
     steps:
+      # The WSL desk mints no App token: the operator's own `gh` writes there
+      # (bin/agent/github.ts), for repos the App can't reach (infra#47).
       - id: app
+        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -115,12 +127,14 @@ jobs:
           path: devkit
           persist-credentials: false
 
-      # The push target. Its credentials stay in repo/.git for publish's git push.
+      # The push target. Its credentials stay in repo/.git for publish's git push;
+      # on the desk none are kept, so the push uses his git login.
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.start.outputs.source }}
           path: repo
-          token: ${{ steps.app.outputs.token }}
+          token: ${{ steps.app.outputs.token || github.token }}
+          persist-credentials: ${{ inputs.runner != 'wsl' }}
 
       - uses: gingur-root/devkit/actions/toolchain.setup@main
         with:

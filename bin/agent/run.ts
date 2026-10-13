@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,14 +27,44 @@ function resolveRole({ role: name, executor }: RunOptions): Role {
   return { ...role, executor, model: undefined };
 }
 
-/** The role's instruction files, each replaced by the repo's `.devkit/<path>` when it has one. */
-export function instructions(role: Role, cwd: string): string {
-  return role.instructions
-    .map((path) => {
+/** The role's instruction files, each replaced by the repo's `.devkit/<path>` when it has one, then its skills. */
+export function instructions(name: RoleName, role: Role, cwd: string): string {
+  return [
+    ...role.instructions.map((path) => {
       const override = join(cwd, '.devkit', path);
-      return readFileSync(existsSync(override) ? override : join(DEVKIT_ROOT, path), 'utf8').trim();
-    })
+      return readFileSync(existsSync(override) ? override : join(DEVKIT_ROOT, path), 'utf8');
+    }),
+    ...skills(name, cwd),
+  ]
+    .map((text) => text.trim())
     .join('\n\n');
+}
+
+/** The names on a skill's `roles: plan, build` frontmatter line. */
+export function skillRoles(text: string): string[] {
+  const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? '';
+  return (/^roles:(.*)$/m.exec(front)?.[1] ?? '')
+    .split(',')
+    .map((role) => role.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Every `skills/<name>/SKILL.md` whose `roles` names the role. The repo's
+ * `.devkit/skills/<name>/` replaces devkit's skill of that name or adds one.
+ */
+function skills(name: RoleName, cwd: string): string[] {
+  const files = new Map<string, string>();
+  for (const root of [join(DEVKIT_ROOT, 'skills'), join(cwd, '.devkit', 'skills')]) {
+    if (!existsSync(root)) continue;
+    for (const skill of readdirSync(root).sort()) {
+      const file = join(root, skill, 'SKILL.md');
+      if (existsSync(file)) files.set(skill, file);
+    }
+  }
+  return [...files.values()]
+    .map((file) => readFileSync(file, 'utf8'))
+    .filter((text) => skillRoles(text).includes(name));
 }
 
 function stagePrompt(prompt: string, dirs: { in?: string; out?: string }): string {
@@ -57,7 +87,7 @@ export async function run(options: RunOptions): Promise<void> {
   try {
     const output = await PROVIDERS[role.executor]({
       role,
-      instructions: instructions(role, cwd),
+      instructions: instructions(options.role, role, cwd),
       prompt: stagePrompt(options.prompt ?? role.objective, dirs),
       cwd,
       ...dirs,
