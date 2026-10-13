@@ -2,7 +2,8 @@
 
 Shared GitHub Actions, reusable workflows, configs and the `devkit` CLI for
 [gingur-root](https://github.com/gingur-root), and later the agent pipeline.
-Standards and conventions: [`AGENTS.md`](./AGENTS.md). Design:
+Standards and conventions: [`AGENTS.md`](./AGENTS.md). Using the pipeline:
+[`docs/pipeline.md`](./docs/pipeline.md). Design:
 gingur-root/devkit#1.
 
 | Piece                                                        | Use                                                                                     |
