@@ -18,9 +18,7 @@ const MERGE =
   /\/pulls\/\d+\/merge\b|\/merges\b|\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b/;
 
 export async function rest<T>(method: string, path: string, body?: unknown): Promise<T> {
-  if (MERGE.test(path) || MERGE.test(JSON.stringify(body ?? ''))) {
-    throw new Error(`${method} ${path}: the pipeline never merges.`);
-  }
+  if (MERGE.test(path)) throw new Error(`${method} ${path}: the pipeline never merges.`);
   const response = await fetch(`${API}${path}`, {
     method,
     headers: headers(),
@@ -46,6 +44,8 @@ export async function restAll<T>(path: string): Promise<T[]> {
 }
 
 export async function graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  // Only the query: variables carry PR and review text, which may mention a merge.
+  if (MERGE.test(query)) throw new Error('GraphQL: the pipeline never merges.');
   const { data, errors } = await rest<{ data: T; errors?: unknown[] }>('POST', '/graphql', {
     query,
     variables,
