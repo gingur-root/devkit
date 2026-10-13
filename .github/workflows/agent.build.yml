@@ -1,9 +1,9 @@
 name: Build
 
-# agent:build on an issue with a ready plan: render the job from the plan
-# comment, run the builder, then push its change to agent/issue-<n>, open a
-# draft PR and move the card to Ready. Only the operator can start it (the
-# admission gate), so adding the label is the plan approval.
+# An /approve comment (or agent:build) on an issue with a ready plan: render
+# the job from the plan comment, run the builder, then push its change to
+# agent/issue-<n>, open a draft PR and move the card to Ready. Only the
+# operator can start it (the admission gate), so that comment is the approval.
 # Callers set concurrency (one group per card) at their own workflow level.
 
 on:
@@ -44,7 +44,7 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build')
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request))
     runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
@@ -92,7 +92,7 @@ jobs:
   build:
     name: Build
     needs: start
-    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build')
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request))
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -109,7 +109,7 @@ jobs:
   publish:
     name: Publish
     needs: [start, build]
-    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build') && needs.start.result == 'success'
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request)) && needs.start.result == 'success'
     runs-on: ${{ inputs.runner }}
     steps:
       - id: app

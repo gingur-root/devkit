@@ -127,7 +127,7 @@ function planComment(job: Job, result: Result, out: string): string {
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
   const head =
     result.status === 'complete'
-      ? `**Plan: ${result.outcome === 'ready' ? 'ready for `agent:build`' : 'needs your input'}**`
+      ? `**Plan: ${result.outcome === 'ready' ? 'ready: reply `/approve` to build it' : 'needs your input'}**`
       : `**Plan ${result.status}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
