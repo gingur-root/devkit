@@ -1,16 +1,15 @@
 // The controller's write side for one stage: check the result against the live
 // contract, upsert the stage's marker comment, remove the trigger label and
 // move the card on. A build also pushes its candidate and opens a draft PR; a
-// review posts on that PR and, when it passes and merging is on, merges it once
-// CI is green. Only this writes GitHub, and only with the App.
+// review posts on that PR and marks it ready when it passes. The pipeline never
+// merges. Only this writes GitHub, and only with the App.
 
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import { setStatus } from './board.ts';
-import { CI_TIMEOUT_MINUTES, PIPELINE_BOT, STAGE_LABELS, type Status } from './constants.ts';
+import { PIPELINE_BOT, STAGE_LABELS, type Status } from './constants.ts';
 import { graphql, rest, restAll } from './github.ts';
 import {
   CANDIDATE_FILE,
@@ -32,8 +31,6 @@ export interface PublishOptions {
   out: string;
   /** A build's target repo, checked out at the job's source with push access. */
   checkout?: string;
-  /** Merge a PR whose review passes, once its checks are green. */
-  merge?: boolean;
 }
 
 interface Issue {
@@ -248,8 +245,8 @@ async function upsertPull(job: Job, branch: string, result: Result): Promise<Pul
   });
 }
 
-/** A review the pipeline may merge on: pass on every axis, nothing blocking, nothing to ask. */
-export function mergeable(result: Result): boolean {
+/** A review that hands the PR to the operator: pass on every axis, nothing blocking, nothing to ask. */
+export function passes(result: Result): boolean {
   return (
     result.outcome === 'pass' &&
     result.axes !== null &&
@@ -257,32 +254,6 @@ export function mergeable(result: Result): boolean {
     !(result.findings ?? []).some((finding) => finding.blocking) &&
     result.questions.length === 0
   );
-}
-
-const GREEN = ['success', 'neutral', 'skipped'];
-
-/**
- * Waits for every check run on the commit to finish; true when all are green.
- * Read with CHECKS_TOKEN (the job's own token): the App has no `checks` permission.
- * shortcut: a check that registers after the others finished is missed; the
- * ruleset's required checks still gate the merge itself.
- */
-async function checksGreen(repo: string, sha: string): Promise<boolean> {
-  const deadline = Date.now() + CI_TIMEOUT_MINUTES * 60_000;
-  for (;;) {
-    const { check_runs: runs } = await rest<{
-      check_runs: { status: string; conclusion: string | null }[];
-    }>(
-      'GET',
-      `/repos/${repo}/commits/${sha}/check-runs?per_page=100`,
-      undefined,
-      process.env.CHECKS_TOKEN,
-    );
-    if (runs.every((run) => run.status === 'completed'))
-      return runs.every((run) => GREEN.includes(run.conclusion ?? ''));
-    if (Date.now() > deadline) return false;
-    await sleep(15_000);
-  }
 }
 
 function reviewText(result: Result): string {
@@ -307,58 +278,47 @@ function reviewText(result: Result): string {
     .join('\n\n');
 }
 
-async function publishReview(job: Job, v: Verdict, merge: boolean): Promise<Outcome> {
+async function publishReview(job: Job, v: Verdict): Promise<Outcome> {
   if ('result' in v) {
     const pull = await openPull(job, branchOf(job));
     if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
     else if (pull.head.sha !== job.candidate)
       v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
-    else return landReview(job, v.result, pull, merge);
+    else return postReview(job, v.result, pull);
   }
   return { body: stopped(job, v), status: 'Needs you', stopped: true };
 }
 
-/** Posts the review on the PR, then merges it when it passes, merging is on and CI is green. */
-async function landReview(job: Job, result: Result, pull: Pull, merge: boolean): Promise<Outcome> {
+/** Posts the review on the PR; a pass marks it ready for the operator to merge. */
+async function postReview(job: Job, result: Result, pull: Pull): Promise<Outcome> {
   await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/reviews`, {
     commit_id: pull.head.sha,
     body: reviewText(result),
     event: 'COMMENT',
   });
+  const ok = passes(result);
+  if (ok)
+    await graphql(
+      `
+        mutation ($id: ID!) {
+          markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+            clientMutationId
+          }
+        }
+      `,
+      { id: pull.node_id },
+    );
   const link = `[#${pull.number}](${pull.html_url})`;
-  const comment = (head: string, status: Status): Outcome => ({
+  const head = ok
+    ? `**Review: passed. ${link} is ready to merge**`
+    : `**Review: ${link} needs your call**`;
+  return {
     body: [marker('review'), head, result.summary, numbered(result.questions)]
       .filter(Boolean)
       .join('\n\n'),
-    status,
+    status: ok ? 'Ready' : 'Needs you',
     stopped: false,
-  });
-  if (!mergeable(result)) return comment(`**Review: ${link} needs your call**`, 'Needs you');
-
-  await graphql(
-    `
-      mutation ($id: ID!) {
-        markPullRequestReadyForReview(input: { pullRequestId: $id }) {
-          clientMutationId
-        }
-      }
-    `,
-    { id: pull.node_id },
-  );
-  if (!merge) return comment(`**Review: passed. ${link} is ready to merge**`, 'Ready');
-  if (!(await checksGreen(job.repo, pull.head.sha)))
-    return comment(`**Review: passed, but ${link}'s checks failed or didn't finish**`, 'Needs you');
-  try {
-    await rest('PUT', `/repos/${job.repo}/pulls/${pull.number}/merge`, {
-      merge_method: 'squash',
-      // Merges only the reviewed commit.
-      sha: pull.head.sha,
-    });
-  } catch (error) {
-    console.error(error);
-    return comment(`**Review: passed, but merging ${link} failed; see the run log**`, 'Needs you');
-  }
-  return comment(`**Review: passed. Merged ${link}**`, 'Done');
+  };
 }
 
 async function publishBuildOrPlan(
@@ -397,7 +357,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
   const { body, status, stopped } =
     job.role === 'review'
-      ? await publishReview(job, v, options.merge ?? false)
+      ? await publishReview(job, v)
       : await publishBuildOrPlan(job, v, options.out, options.checkout);
 
   // One comment per stage, found by its marker and written by a bot (the App).

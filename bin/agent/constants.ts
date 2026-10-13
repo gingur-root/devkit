@@ -76,9 +76,6 @@ export const STAGE_LABELS = {
   review: 'agent:build',
 } as const;
 
-/** How long the merge waits for the PR's checks to finish. */
-export const CI_TIMEOUT_MINUTES = 30;
-
 /** The pipeline App's bot user, which authors the build's commits. */
 export const PIPELINE_BOT = {
   name: 'gingur-root-pipeline[bot]',

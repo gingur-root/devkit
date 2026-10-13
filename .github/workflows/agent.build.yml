@@ -2,11 +2,11 @@ name: Build
 
 # agent:build on an issue with a ready plan: render the job from the plan
 # comment, run the builder, then push its change to agent/issue-<n>, open a
-# draft PR and move the card to Ready. Then Claude reviews that exact commit;
-# a clean pass marks the PR ready and, when `merge` is on and its checks are
-# green, merges it and moves the card to Done. Anything else lands in Needs you.
+# draft PR and move the card to Ready. Then Claude reviews that exact commit:
+# a clean pass marks the PR ready and leaves the card in Ready for the operator
+# to merge; anything else moves it to Needs you. The pipeline never merges.
 # Only the operator can start it (the admission gate), so adding the label is
-# the plan approval, and the review stands in for the operator's own.
+# the plan approval.
 # Callers set concurrency (one group per card) at their own workflow level.
 
 on:
@@ -31,11 +31,6 @@ on:
         type: string
         required: false
         default: 'ready'
-      merge:
-        description: 'Merge a PR whose review passes, once its checks are green.'
-        type: boolean
-        required: false
-        default: false
       devkitRef:
         description: 'The devkit ref the jobs run.'
         type: string
@@ -201,7 +196,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - uses: gingur-root/devkit/actions/agent.run@feat/agent-review
         with:
           role: review
           prefix: review
@@ -211,21 +206,17 @@ jobs:
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
           devkitRef: ${{ inputs.devkitRef }}
 
-  merge:
-    name: Merge
+  verdict:
+    name: Verdict
     needs: [publish, review]
     if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build') && needs.publish.outputs.candidate != ''
     runs-on: ${{ inputs.runner }}
-    # CHECKS_TOKEN: the App has no `checks` permission.
-    permissions:
-      checks: read
     steps:
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
-          permissionContents: write
           permissionIssues: write
           permissionPullRequests: write
           permissionOrganizationProjects: write
@@ -257,7 +248,4 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          CHECKS_TOKEN: ${{ github.token }}
-          MERGE: ${{ inputs.merge && 'true' || '' }}
-        run: |
-          pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" ${MERGE:+--merge}
+        run: pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out"

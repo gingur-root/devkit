@@ -1,11 +1,11 @@
-// The merge gate: a review that lets a change through here ships it to main
-// with nobody looking, so only a clean pass may merge.
+// The review gate: a pass tells the operator the PR is safe to merge, so only a
+// clean pass may say so.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { mergeable } from './publish.ts';
+import { passes } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -24,13 +24,13 @@ const finding = {
   fix: '',
 } as const;
 
-test('only a clean pass is mergeable', () => {
-  assert.ok(mergeable(pass));
-  assert.ok(!mergeable({ ...pass, outcome: 'changes-requested' }));
-  assert.ok(!mergeable({ ...pass, outcome: 'inconclusive' }));
-  assert.ok(!mergeable({ ...pass, axes: null }));
-  assert.ok(!mergeable({ ...pass, axes: { ...pass.axes!, spec: 'changes-requested' } }));
-  assert.ok(!mergeable({ ...pass, findings: [finding] }), 'a blocking finding');
-  assert.ok(mergeable({ ...pass, findings: [{ ...finding, blocking: false }] }), 'advisory only');
-  assert.ok(!mergeable({ ...pass, questions: ['Ship it?'] }), 'a question for the operator');
+test('only a clean pass passes', () => {
+  assert.ok(passes(pass));
+  assert.ok(!passes({ ...pass, outcome: 'changes-requested' }));
+  assert.ok(!passes({ ...pass, outcome: 'inconclusive' }));
+  assert.ok(!passes({ ...pass, axes: null }));
+  assert.ok(!passes({ ...pass, axes: { ...pass.axes!, spec: 'changes-requested' } }));
+  assert.ok(!passes({ ...pass, findings: [finding] }), 'a blocking finding');
+  assert.ok(passes({ ...pass, findings: [{ ...finding, blocking: false }] }), 'advisory only');
+  assert.ok(!passes({ ...pass, questions: ['Ship it?'] }), 'a question for the operator');
 });

@@ -45,5 +45,5 @@ Review the change against the issue and repository at the supplied commits.
   job file's `plan.revision`, `base` and `candidate`, unchanged.
 - `axes` holds each axis's result and `findings` every confirmed finding, with
   `blocking` set only for a defect that must be fixed before merge.
-- A `pass` with no questions is merged once CI is green. Put anything that
-  needs the operator's decision in `questions`, and the PR waits for them.
+- A `pass` with no questions marks the PR ready for the operator to merge.
+  Put anything that needs the operator's decision in `questions`.
