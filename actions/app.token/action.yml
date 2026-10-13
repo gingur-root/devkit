@@ -55,7 +55,8 @@ runs:
     - id: app
       uses: actions/create-github-app-token@v3
       with:
-        app-id: ${{ inputs.appId }}
+        # The App ID works as client-id: GitHub accepts either as the JWT issuer.
+        client-id: ${{ inputs.appId }}
         private-key: ${{ fromJSON(steps.key.outputs.json).PIPELINE_APP_PRIVATE_KEY }}
         owner: gingur-root
         repositories: ${{ inputs.repositories || github.event.repository.name }}
