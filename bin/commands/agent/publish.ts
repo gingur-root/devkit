@@ -4,7 +4,7 @@ import type { ParsedCommand } from '../../command.ts';
 export default {
   kind: 'parsed',
   describe:
-    "Validate a stage's result and publish it: comment, label, Status, and a build's PR (GH_TOKEN)",
+    "Validate a stage's result and publish it: comment, label, Status, a build's PR, a review (GH_TOKEN)",
   configure(command) {
     command
       .requiredOption('--in <dir>', 'the job directory ($AGENT_IN)')

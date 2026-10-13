@@ -17,6 +17,7 @@ export default {
           .makeOptionMandatory(),
       )
       .requiredOption('--source <sha>', 'commit the stage works from')
+      .option('--base <sha>', "a review's base: the commit the candidate was built from")
       .requiredOption('--app-id <id>', "the pipeline App's ID; its text counts as trusted", Number)
       .requiredOption('--out <dir>', 'directory to write ($AGENT_IN)');
   },

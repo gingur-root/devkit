@@ -28,6 +28,10 @@ inputs:
     description: 'The devkit ref to run.'
     required: false
     default: 'main'
+  prefix:
+    description: "The artifacts' prefix: reads `<prefix>-in`, uploads `<prefix>-out`. A run's later stages each need their own."
+    required: false
+    default: 'agent'
 
 runs:
   using: 'composite'
@@ -51,7 +55,7 @@ runs:
 
     - uses: actions/download-artifact@v8
       with:
-        name: agent-in
+        name: ${{ inputs.prefix }}-in
         path: ${{ runner.temp }}/agent/in
 
     # CLAUDE_CODE_OAUTH_TOKEN in Bitwarden `agents` (infra runbook step 15).
@@ -101,6 +105,6 @@ runs:
     - if: ${{ always() }}
       uses: actions/upload-artifact@v7
       with:
-        name: agent-out
+        name: ${{ inputs.prefix }}-out
         path: ${{ runner.temp }}/agent/out
         if-no-files-found: ignore

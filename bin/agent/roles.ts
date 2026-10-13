@@ -65,6 +65,24 @@ export const ROLES = {
     timeoutMinutes: 60,
     result: true,
   },
+  review: {
+    // agents/sdlc.md: Claude reviews Codex's change, Opus 5.5 at High.
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'high',
+    objective:
+      'Review the candidate against the issue and approved plan: Correctness, Spec and Standards.',
+    instructions: [
+      'agents/worker.md',
+      'skills/plain-english/SKILL.md',
+      'agents/contract.md',
+      'agents/review.md',
+    ],
+    tools: ['Bash', 'Read', 'Glob', 'Grep'],
+    web: true,
+    timeoutMinutes: 30,
+    result: true,
+  },
 } as const satisfies Record<string, Role>;
 
 export type RoleName = keyof typeof ROLES;

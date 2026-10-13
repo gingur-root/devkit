@@ -1,0 +1,14 @@
+{
+  "job": "",
+  "role": "review",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "pass",
+  "summary": "Stub review with no outputs field, so it fails the schema."
+}

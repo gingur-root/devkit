@@ -1,0 +1,48 @@
+{
+  "job": "",
+  "role": "review",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "pass",
+  "summary": "Stub review: the change matches the plan, so it can merge.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": null,
+  "hypotheses": null,
+  "axes": {
+    "correctness": "pass",
+    "spec": "pass",
+    "standards": "pass"
+  },
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Merge the pull request.",
+  "findings": [],
+  "subtasks": null,
+  "followups": null,
+  "failure": null
+}

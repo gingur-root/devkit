@@ -1,15 +1,16 @@
 // The controller's write side for one stage: check the result against the live
 // contract, upsert the stage's marker comment, remove the trigger label and
-// move the card on. A build also pushes its candidate and opens a draft PR.
-// Only this writes GitHub, and only with the App.
+// move the card on. A build also pushes its candidate and opens a draft PR; a
+// review posts on that PR and marks it ready when it passes. The pipeline never
+// merges. Only this writes GitHub, and only with the App.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { setStatus } from './board.ts';
-import { PIPELINE_BOT, STAGE_LABELS } from './constants.ts';
-import { rest, restAll } from './github.ts';
+import { PIPELINE_BOT, STAGE_LABELS, type Status } from './constants.ts';
+import { graphql, rest, restAll } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
@@ -47,6 +48,15 @@ interface Comment {
 interface Pull {
   number: number;
   html_url: string;
+  node_id: string;
+  head: { sha: string };
+}
+
+/** What a stage publishes: the issue comment, the card's Status, and whether it stopped. */
+interface Outcome {
+  body: string;
+  status: Status;
+  stopped: boolean;
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
@@ -78,11 +88,12 @@ function verdict(job: Job, liveRevision: string, out: string): Verdict {
     result.job !== job.job ||
     result.role !== job.role ||
     result.inputs.issue !== job.issue.revision ||
-    (job.plan !== null && result.inputs.plan !== job.plan.revision)
+    (job.plan !== null && result.inputs.plan !== job.plan.revision) ||
+    (job.candidate !== null && result.inputs.candidate !== job.candidate)
   ) {
     return {
       stage: 'contract',
-      reason: 'the result is for a different job, issue revision or plan',
+      reason: 'the result is for a different job, issue revision, plan or candidate',
     };
   }
   if (liveRevision !== job.issue.revision) {
@@ -113,8 +124,8 @@ function verdict(job: Job, liveRevision: string, out: string): Verdict {
 function stopped(job: Job, v: { stage: string; reason: string }): string {
   return [
     marker(job.role),
-    `**${job.role === 'plan' ? 'Plan' : 'Build'} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then ${job.role === 'build' ? 'reply `/approve`' : `add \`${STAGE_LABELS[job.role as keyof typeof STAGE_LABELS]}\``} again.`,
+    `**${job.role[0]?.toUpperCase()}${job.role.slice(1)} stopped at \`${v.stage}\`:** ${v.reason}.`,
+    `Fix the cause, then ${job.role === 'plan' ? `add \`${STAGE_LABELS.plan}\`` : 'reply `/approve`'} again.`,
   ].join('\n\n');
 }
 
@@ -179,8 +190,12 @@ function git(cwd: string, args: string[]): string {
  * rejected (the App has no `workflows` permission); close the PR and delete the
  * branch first. Rebuild the branch instead if that happens often.
  */
-function pushCandidate(job: Job, checkout: string, patch: string): string {
-  const branch = `agent/issue-${job.issue.number}`;
+function pushCandidate(
+  job: Job,
+  checkout: string,
+  patch: string,
+): { branch: string; commit: string } {
+  const branch = branchOf(job);
   git(checkout, ['apply', '--index', patch]);
   const tree = git(checkout, ['write-tree']);
   let parent = job.source;
@@ -191,7 +206,20 @@ function pushCandidate(job: Job, checkout: string, patch: string): string {
   const message = `${job.issue.title}\n\nCloses #${job.issue.number}`;
   const commit = git(checkout, ['commit-tree', tree, '-p', parent, '-m', message]);
   git(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
-  return branch;
+  return { branch, commit };
+}
+
+function branchOf(job: Job): string {
+  return `agent/issue-${job.issue.number}`;
+}
+
+async function openPull(job: Job, branch: string): Promise<Pull | undefined> {
+  const owner = job.repo.slice(0, job.repo.indexOf('/'));
+  const [open] = await rest<Pull[]>(
+    'GET',
+    `/repos/${job.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`,
+  );
+  return open;
 }
 
 /** The branch's open PR with this body, opened as a draft when there is none. */
@@ -205,11 +233,7 @@ async function upsertPull(job: Job, branch: string, result: Result): Promise<Pul
   ]
     .filter(Boolean)
     .join('\n\n');
-  const owner = job.repo.slice(0, job.repo.indexOf('/'));
-  const [open] = await rest<Pull[]>(
-    'GET',
-    `/repos/${job.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`,
-  );
+  const open = await openPull(job, branch);
   if (open) return rest<Pull>('PATCH', `/repos/${job.repo}/pulls/${open.number}`, { body });
   const { default_branch } = await rest<{ default_branch: string }>('GET', `/repos/${job.repo}`);
   return rest<Pull>('POST', `/repos/${job.repo}/pulls`, {
@@ -221,18 +245,97 @@ async function upsertPull(job: Job, branch: string, result: Result): Promise<Pul
   });
 }
 
-export async function publish(options: PublishOptions): Promise<void> {
-  const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
-  const path = `/repos/${job.repo}/issues/${job.issue.number}`;
-  const issue = await rest<Issue>('GET', path);
-  let v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+/** A review that hands the PR to the operator: pass on every axis, nothing blocking, nothing to ask. */
+export function passes(result: Result): boolean {
+  return (
+    result.outcome === 'pass' &&
+    result.axes !== null &&
+    Object.values(result.axes).every((axis) => axis === 'pass') &&
+    !(result.findings ?? []).some((finding) => finding.blocking) &&
+    result.questions.length === 0
+  );
+}
 
+function reviewText(result: Result): string {
+  const axes = result.axes
+    ? ` (${Object.entries(result.axes)
+        .map(([axis, outcome]) => `${axis} ${outcome}`)
+        .join(', ')})`
+    : '';
+  const findings = (result.findings ?? [])
+    .map((f) => {
+      const where = f.path ? `, \`${f.path}${f.line ? `:${f.line}` : ''}\`` : '';
+      return `- **${f.id}** ${f.blocking ? 'blocking' : 'advisory'}, ${f.axis}${where}: ${f.scenario} ${f.impact} Fix: ${f.fix}`;
+    })
+    .join('\n');
+  return [
+    `**Review: ${result.outcome}**${axes}`,
+    result.summary,
+    findings,
+    numbered(result.questions),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+async function publishReview(job: Job, v: Verdict): Promise<Outcome> {
+  if ('result' in v) {
+    const pull = await openPull(job, branchOf(job));
+    if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
+    else if (pull.head.sha !== job.candidate)
+      v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
+    else return postReview(job, v.result, pull);
+  }
+  return { body: stopped(job, v), status: 'Needs you', stopped: true };
+}
+
+/** Posts the review on the PR; a pass marks it ready for the operator to merge. */
+async function postReview(job: Job, result: Result, pull: Pull): Promise<Outcome> {
+  await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/reviews`, {
+    commit_id: pull.head.sha,
+    body: reviewText(result),
+    event: 'COMMENT',
+  });
+  const ok = passes(result);
+  if (ok)
+    await graphql(
+      `
+        mutation ($id: ID!) {
+          markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+            clientMutationId
+          }
+        }
+      `,
+      { id: pull.node_id },
+    );
+  const link = `[#${pull.number}](${pull.html_url})`;
+  const head = ok
+    ? `**Review: passed. ${link} is ready to merge**`
+    : `**Review: ${link} needs your call**`;
+  return {
+    body: [marker('review'), head, result.summary, numbered(result.questions)]
+      .filter(Boolean)
+      .join('\n\n'),
+    status: ok ? 'Ready' : 'Needs you',
+    stopped: false,
+  };
+}
+
+async function publishBuildOrPlan(
+  job: Job,
+  v: Verdict,
+  out: string,
+  checkout: string | undefined,
+): Promise<Outcome> {
   let pull: Pull | null = null;
   if ('result' in v && v.result.outcome === 'implemented') {
     try {
-      if (!options.checkout) throw new Error('publish needs --checkout for a build.');
-      const branch = pushCandidate(job, options.checkout, join(options.out, CANDIDATE_FILE));
+      if (!checkout) throw new Error('publish needs --checkout for a build.');
+      const { branch, commit } = pushCandidate(job, checkout, join(out, CANDIDATE_FILE));
       pull = await upsertPull(job, branch, v.result);
+      // The review job's input.
+      if (process.env.GITHUB_OUTPUT)
+        appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${commit}\n`);
     } catch (error) {
       console.error(error);
       v = {
@@ -241,11 +344,21 @@ export async function publish(options: PublishOptions): Promise<void> {
       };
     }
   }
+  const status = pull ? 'Ready' : 'Needs you';
+  if ('stage' in v) return { body: stopped(job, v), status, stopped: true };
+  const body = job.role === 'plan' ? planComment(job, v.result, out) : buildComment(v.result, pull);
+  return { body, status, stopped: false };
+}
 
-  let body: string;
-  if ('stage' in v) body = stopped(job, v);
-  else if (job.role === 'plan') body = planComment(job, v.result, options.out);
-  else body = buildComment(v.result, pull);
+export async function publish(options: PublishOptions): Promise<void> {
+  const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
+  const path = `/repos/${job.repo}/issues/${job.issue.number}`;
+  const issue = await rest<Issue>('GET', path);
+  const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  const { body, status, stopped } =
+    job.role === 'review'
+      ? await publishReview(job, v)
+      : await publishBuildOrPlan(job, v, options.out, options.checkout);
 
   // One comment per stage, found by its marker and written by a bot (the App).
   const comments = await restAll<Comment>(`${path}/comments`);
@@ -257,10 +370,10 @@ export async function publish(options: PublishOptions): Promise<void> {
 
   const label = STAGE_LABELS[job.role as keyof typeof STAGE_LABELS];
   await rest('DELETE', `${path}/labels/${encodeURIComponent(label)}`).catch((error: Error) => {
-    // A `/plan` or `/approve` comment run has no label to remove.
+    // A `/plan` or `/approve` comment run, or a review after the build, has no label to remove.
     if (!error.message.includes(' 404 ')) throw error;
   });
-  await setStatus(job.repo, issue.node_id, pull ? 'Ready' : 'Needs you');
+  await setStatus(job.repo, issue.node_id, status);
 
-  if ('stage' in v) process.exitCode = 1;
+  if (stopped) process.exitCode = 1;
 }

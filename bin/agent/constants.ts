@@ -69,8 +69,12 @@ export const STATUS_FIELD = 'Status';
 export const STATUSES = ['Ask', 'Planning', 'Needs you', 'Building', 'Ready', 'Done'] as const;
 export type Status = (typeof STATUSES)[number];
 
-/** The label that starts each stage; the pipeline removes it when the run ends. */
-export const STAGE_LABELS = { plan: 'agent:plan', build: 'agent:build' } as const;
+/** The label that starts each stage; the pipeline removes it when the run ends. Review runs inside the build's run. */
+export const STAGE_LABELS = {
+  plan: 'agent:plan',
+  build: 'agent:build',
+  review: 'agent:build',
+} as const;
 
 /** The pipeline App's bot user, which authors the build's commits. */
 export const PIPELINE_BOT = {
