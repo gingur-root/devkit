@@ -13,7 +13,14 @@ function headers(): Record<string, string> {
   };
 }
 
+// The pipeline never merges: a clean review stops at Ready for the operator.
+const MERGE =
+  /\/pulls\/\d+\/merge\b|\/merges\b|\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b/;
+
 export async function rest<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (MERGE.test(path) || MERGE.test(JSON.stringify(body ?? ''))) {
+    throw new Error(`${method} ${path}: the pipeline never merges.`);
+  }
   const response = await fetch(`${API}${path}`, {
     method,
     headers: headers(),
