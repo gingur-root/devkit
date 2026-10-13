@@ -86,7 +86,8 @@ async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<boolean>
   const { Codex } = await import('@openai/codex-sdk');
   const env = agentEnv('codex', process.env);
   assertCodexHome(codexHome(env));
-  const codex = new Codex(codexOptions({ env, executable: resolveExecutable('codex', env.PATH) }));
+  const options = codexOptions({ env, executable: resolveExecutable('codex', env.PATH) });
+  const codex = new Codex(options);
   const thread = codex.startThread({
     model: role.executor === 'codex' ? role.model : undefined,
     modelReasoningEffort: role.effort,
@@ -100,7 +101,7 @@ async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<boolean>
   // Codex has no system-prompt option; the role's instructions lead the prompt.
   const { events } = await thread.runStreamed(`${role.instructions}\n\n${prompt}`, { signal });
   let ok = false;
-  emit({ type: 'init', config: codexOptions({ env, executable: '' }).config });
+  emit({ type: 'init', config: options.config });
   for await (const event of events) {
     if (event.type === 'item.completed') {
       const { item } = event;

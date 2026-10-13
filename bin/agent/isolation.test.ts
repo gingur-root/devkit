@@ -101,6 +101,11 @@ test('Codex turns off account apps, plugins, subagents and bundled skills', () =
 test('a Codex home with config or a non-ChatGPT login stops the run', () => {
   const home = scratch();
   assert.throws(() => assertCodexHome(home), /No Codex login/);
+  writeFileSync(join(home, 'auth.json'), '{"tokens": SECRETVALUE');
+  assert.throws(
+    () => assertCodexHome(home),
+    (error: Error) => /not readable JSON/.test(error.message) && !error.message.includes('SECRET'),
+  );
   writeFileSync(
     join(home, 'auth.json'),
     JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-x' }),
