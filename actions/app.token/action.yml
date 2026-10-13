@@ -12,7 +12,7 @@ inputs:
     description: 'The App ID: pass vars.PIPELINE_APP_ID.'
     required: true
   token:
-    description: 'BWS_PIPELINE_TOKEN, the pipeline-ci machine account token.'
+    description: 'PIPELINE_SECRETS_TOKEN, the pipeline-ci machine account token.'
     required: true
   repositories:
     description: 'Comma- or newline-separated repo names in gingur-root. Default: the current repo.'

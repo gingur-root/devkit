@@ -10,7 +10,7 @@ test('each executor sees only its own credential and none of the job env', () =>
   const job = {
     PATH: '/bin',
     ANTHROPIC_API_KEY: 'sk',
-    BWS_AGENTS_TOKEN: 'bws',
+    AGENTS_SECRETS_TOKEN: 'bws',
     CLAUDE_CODE_OAUTH_TOKEN: 'claude',
     CODEX_HOME: '/c',
   };

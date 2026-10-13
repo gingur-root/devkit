@@ -8,7 +8,7 @@ description: 'Fetch Bitwarden Secrets Manager secrets by UUID with bitwarden/sm-
 
 inputs:
   token:
-    description: 'Machine account access token (BWS_AGENTS_TOKEN or BWS_PIPELINE_TOKEN).'
+    description: 'Machine account access token (AGENTS_SECRETS_TOKEN or PIPELINE_SECRETS_TOKEN).'
     required: true
   secrets:
     description: 'One `<secret UUID> > <ENV_NAME>` per line.'

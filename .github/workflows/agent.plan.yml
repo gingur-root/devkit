@@ -32,9 +32,9 @@ on:
         required: false
         default: 'main'
     secrets:
-      BWS_AGENTS_TOKEN:
+      AGENTS_SECRETS_TOKEN:
         required: true
-      BWS_PIPELINE_TOKEN:
+      PIPELINE_SECRETS_TOKEN:
         required: true
 
 permissions: {}
@@ -60,7 +60,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
-          token: ${{ secrets.BWS_PIPELINE_TOKEN }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionIssues: write
           permissionOrganizationProjects: write
 
@@ -96,7 +96,7 @@ jobs:
           executor: ${{ inputs.executor }}
           fixture: ${{ inputs.fixture }}
           source: ${{ github.sha }}
-          token: ${{ secrets.BWS_AGENTS_TOKEN }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
           devkitRef: ${{ inputs.devkitRef }}
 
   publish:
@@ -132,7 +132,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
-          token: ${{ secrets.BWS_PIPELINE_TOKEN }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionIssues: write
           permissionOrganizationProjects: write
 

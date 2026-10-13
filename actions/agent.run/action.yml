@@ -22,7 +22,7 @@ inputs:
     description: 'The commit to check out, from the job contract.'
     required: true
   token:
-    description: 'BWS_AGENTS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login.'
+    description: 'AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login.'
     required: true
   devkitRef:
     description: 'The devkit ref to run.'
