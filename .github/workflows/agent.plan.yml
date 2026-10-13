@@ -90,7 +90,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - uses: gingur-root/devkit/actions/agent.run@feat/agent-plan
         with:
           role: plan
           executor: ${{ inputs.executor }}
