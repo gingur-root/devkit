@@ -49,9 +49,14 @@ function verdict(job: Job, liveRevision: string, out: string): Verdict {
   }
   const parsed = Result.safeParse(json);
   if (!parsed.success) {
+    console.error(parsed.error.message);
     return {
       stage: 'validate',
-      reason: parsed.error.issues.map((i) => `\`${i.path.join('.')}\` ${i.message}`).join('; '),
+      // The first few, so the comment stays short; the job log has them all.
+      reason: `${parsed.error.issues.length} schema errors, starting with ${parsed.error.issues
+        .slice(0, 3)
+        .map((i) => `\`${i.path.join('.')}\` ${i.message}`)
+        .join('; ')}`,
     };
   }
   const result = parsed.data;
