@@ -100,7 +100,7 @@ async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<boolean>
   // Codex has no system-prompt option; the role's instructions lead the prompt.
   const { events } = await thread.runStreamed(`${role.instructions}\n\n${prompt}`, { signal });
   let ok = false;
-  emit({ type: 'init', features: codexOptions({ env, executable: '' }).config });
+  emit({ type: 'init', config: codexOptions({ env, executable: '' }).config });
   for await (const event of events) {
     if (event.type === 'item.completed') {
       const { item } = event;

@@ -119,6 +119,12 @@ export function codexOptions(ctx: {
   return {
     codexPathOverride: ctx.executable,
     env: ctx.env,
-    config: { features: Object.fromEntries(CODEX_FEATURES_OFF.map((feature) => [feature, false])) },
+    config: {
+      features: Object.fromEntries(CODEX_FEATURES_OFF.map((feature) => [feature, false])),
+      // `features.multi_agent` alone leaves the collaboration tools registered.
+      agents: { enabled: false },
+      // imagegen, openai-docs, skill-creator and skill-installer ship inside Codex.
+      skills: { bundled: { enabled: false } },
+    },
   };
 }

@@ -80,7 +80,7 @@ test('Claude init outside the role stops the run', () => {
   );
 });
 
-test('Codex turns off every account- and home-loaded feature', () => {
+test('Codex turns off account apps, plugins, subagents and bundled skills', () => {
   const { config } = codexOptions({ executable: '/bin/codex', env: {} });
   assert.deepEqual(config, {
     features: {
