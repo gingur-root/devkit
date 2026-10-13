@@ -3,8 +3,7 @@
 
 const API = 'https://api.github.com';
 
-function headers(): Record<string, string> {
-  const token = process.env.GH_TOKEN;
+function headers(token: string | undefined): Record<string, string> {
   if (!token) throw new Error('GH_TOKEN is not set.');
   return {
     authorization: `Bearer ${token}`,
@@ -13,10 +12,16 @@ function headers(): Record<string, string> {
   };
 }
 
-export async function rest<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** `token` defaults to GH_TOKEN; the merge reads checks with the job's own token. */
+export async function rest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  token = process.env.GH_TOKEN,
+): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     method,
-    headers: headers(),
+    headers: headers(token),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {

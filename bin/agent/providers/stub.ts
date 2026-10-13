@@ -18,9 +18,11 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   if (!input.in || !input.out) throw new Error('The stub needs --in and --out.');
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
   const result = JSON.parse(readFileSync(new URL(`${job.role}.${fixture}.json`, FIXTURES), 'utf8'));
-  // A plan writes plan.md; a build changes the checkout.
-  const target = job.role === 'build' ? join(input.cwd, 'STUB.md') : join(input.out, PLAN_FILE);
-  copyFileSync(new URL(`${job.role}.md`, FIXTURES), target);
+  // A plan writes plan.md; a build changes the checkout; a review writes nothing.
+  if (job.role !== 'review') {
+    const target = job.role === 'build' ? join(input.cwd, 'STUB.md') : join(input.out, PLAN_FILE);
+    copyFileSync(new URL(`${job.role}.md`, FIXTURES), target);
+  }
   input.emit({ type: 'init', fixture });
   return {
     ok: true,
@@ -28,7 +30,13 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
       ...result,
       job: job.job,
       role: job.role,
-      inputs: { ...result.inputs, issue: job.issue.revision, plan: job.plan?.revision ?? null },
+      inputs: {
+        ...result.inputs,
+        issue: job.issue.revision,
+        plan: job.plan?.revision ?? null,
+        base: job.base,
+        candidate: job.candidate,
+      },
     },
   };
 }

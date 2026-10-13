@@ -41,6 +41,8 @@ export interface RenderOptions {
   issue: number;
   role: RoleName;
   source: string;
+  /** A review's base: the commit the candidate was built from. */
+  base?: string;
   appId: number;
   out: string;
 }
@@ -102,7 +104,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
   const approved =
-    options.role === 'build' ? approvedPlan(comments, options.appId, issueRevision) : null;
+    options.role === 'plan' ? null : approvedPlan(comments, options.appId, issueRevision);
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -120,8 +122,9 @@ export async function render(options: RenderOptions): Promise<Job> {
     // A build works from the default branch as it is now, not the plan's older
     // source: the App can't push a branch whose workflow files differ from it.
     source: options.source,
-    base: approved && options.source,
-    candidate: null,
+    base: approved && (options.base ?? options.source),
+    // A review checks out the candidate itself.
+    candidate: options.role === 'review' ? options.source : null,
     artifacts: [],
     operations: [],
     attemptLimit: null,
