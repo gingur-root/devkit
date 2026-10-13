@@ -103,7 +103,6 @@ export async function render(options: RenderOptions): Promise<Job> {
   const issueRevision = revision(issue.title, issue.body ?? '');
   const approved =
     options.role === 'build' ? approvedPlan(comments, options.appId, issueRevision) : null;
-  const source = approved?.contract.source ?? options.source;
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -118,9 +117,10 @@ export async function render(options: RenderOptions): Promise<Job> {
       revision: approved.contract.planRevision,
       criteria: Object.keys(approved.contract.checks),
     },
-    // A build works from the commit the plan was made on.
-    source,
-    base: approved && source,
+    // A build works from the default branch as it is now, not the plan's older
+    // source: the App can't push a branch whose workflow files differ from it.
+    source: options.source,
+    base: approved && options.source,
     candidate: null,
     artifacts: [],
     operations: [],

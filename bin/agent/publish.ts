@@ -175,6 +175,9 @@ function git(cwd: string, args: string[]): string {
 /**
  * Commits the candidate on top of the issue's branch, or on the source when the
  * branch is new, so a retry is a plain fast-forward push.
+ * shortcut: a retry after the default branch changed a workflow file is
+ * rejected (the App has no `workflows` permission); close the PR and delete the
+ * branch first. Rebuild the branch instead if that happens often.
  */
 function pushCandidate(job: Job, checkout: string, patch: string): string {
   const branch = `agent/issue-${job.issue.number}`;
