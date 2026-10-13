@@ -217,6 +217,8 @@ jobs:
         with:
           appId: ${{ inputs.appId }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          # Marking a draft ready needs contents: write as well as pull_requests.
+          permissionContents: write
           permissionIssues: write
           permissionPullRequests: write
           permissionOrganizationProjects: write
