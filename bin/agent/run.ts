@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 
-import { BACKENDS } from './backends.ts';
+import { PROVIDERS } from './providers/index.ts';
 import type { Executor } from './constants.ts';
 import { ROLES, type Role, type RoleName } from './roles.ts';
 
@@ -24,7 +24,7 @@ export async function run(options: RunOptions): Promise<void> {
     process.stdout.write(
       `${JSON.stringify({ role: options.role, executor: role.executor, ...event })}\n`,
     );
-  const ok = await BACKENDS[role.executor]({
+  const ok = await PROVIDERS[role.executor]({
     role,
     prompt: options.prompt,
     cwd: resolve(options.cwd ?? '.'),
