@@ -75,7 +75,9 @@ jobs:
           permissionIssues: read
 
       # Every stage's job file, result and transcript so far, one directory each.
+      # None when the run failed before its first upload.
       - uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           path: ${{ runner.temp }}/agent/in/run
 
@@ -91,6 +93,7 @@ jobs:
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role retro --source "$SOURCE" \
             --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+          mkdir -p "$RUNNER_TEMP/agent/in/run"
           printf '%s\n' "$JOBS" >"$RUNNER_TEMP/agent/in/run/jobs.json"
 
       - uses: actions/upload-artifact@v7

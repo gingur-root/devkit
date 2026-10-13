@@ -70,7 +70,7 @@ export function issueSnapshot(issue: Issue, comments: Authored[], appId: number)
 }
 
 /** The card's history for a retro: one line per timeline event. Comments are in the snapshot. */
-export function timeline(events: Event[]): string {
+function timeline(events: Event[]): string {
   return events
     .filter((e) => e.event !== 'commented')
     .map(
