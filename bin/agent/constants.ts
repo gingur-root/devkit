@@ -75,6 +75,7 @@ export const STAGE_LABELS = {
   build: 'agent:build',
   review: 'agent:build',
   repair: 'agent:build',
+  elevated: 'agent:elevated',
 } as const;
 
 /**
