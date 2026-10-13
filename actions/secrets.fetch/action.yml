@@ -4,7 +4,7 @@ description: 'Fetch Bitwarden Secrets Manager secrets by UUID with bitwarden/sm-
 # No floating `v3` tag exists, so the release is pinned.
 # sm-action exports every secret into the env of each later step in the job, so
 # a job fetches only the UUIDs it uses. With `setEnv: false` nothing is
-# exported; the values come back in `json` instead (see github.app.token).
+# exported; the values come back in `json` instead (see app.token).
 
 inputs:
   token:

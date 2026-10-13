@@ -24,19 +24,21 @@ These override anything below that conflicts with them.
 
 ## Naming
 
-| Tier                                                | Convention                                                                   | Examples                                                                        |
-| --------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **File names** (workflows, action dirs)             | `lowercase.dot.notation`, broad → specific: `<provider>.<service>.<action…>` | `toolchain.verify.yml`, `gitleaks.scan.yml`, `actions/bitwarden.secrets.fetch/` |
-| **Identifiers** (inputs, outputs, job and step ids) | `camelCase`, one word when possible                                          | `token`, `appId`, `repositories`, `verify`                                      |
-| **Env vars and secrets**                            | `SCREAMING_SNAKE_CASE`, spelled the way the provider spells itself           | `BWS_PIPELINE_TOKEN`, `PIPELINE_APP_ID`                                         |
+| Tier                                                | Convention                                                         | Examples                                                             |
+| --------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| **File names** (workflows, action dirs)             | `lowercase.dot.notation`, broad → specific: `<subject>.<action…>`  | `toolchain.verify.yml`, `secrets.scan.yml`, `actions/secrets.fetch/` |
+| **Identifiers** (inputs, outputs, job and step ids) | `camelCase`, one word when possible                                | `token`, `appId`, `repositories`, `verify`                           |
+| **Env vars and secrets**                            | `SCREAMING_SNAKE_CASE`, spelled the way the provider spells itself | `BWS_PIPELINE_TOKEN`, `PIPELINE_APP_ID`                              |
 
-- `<service>` drops when the provider has one surface (`toolchain.verify`);
-  compound lifecycles add dots, never hyphens.
+- Name by subject, never by provider: `secrets.fetch`, not
+  `bitwarden.secrets.fetch`. The provider is an internal detail, or an input
+  if a subject ever has more than one. Compound lifecycles add dots, never
+  hyphens.
 - Actions are named for intent (`verify`, `scan`, `fetch`), not trigger (`ci`).
 - No kebab-case or snake_case identifiers. Prefix an input with its provider
   only when a surface spans several providers.
-- A workflow and the composite under it share a name: `gitleaks.scan.yml` over
-  `actions/gitleaks.scan/`.
+- A workflow and the composite under it share a name: `secrets.scan.yml` over
+  `actions/secrets.scan/`.
 
 ## Repo structure
 
@@ -156,13 +158,13 @@ composite, so it's bumped once.
 
 ## Credentials
 
-- **Every secret comes from Bitwarden**, through `bitwarden.secrets.fetch` (in
+- **Every secret comes from Bitwarden**, through `secrets.fetch` (in
   CI, by UUID) or `bws` (on the box). No per-repo GitHub secrets.
 - **Two tokens, two tiers.** Agent jobs hold only `BWS_AGENTS_TOKEN` (the
   `agents` project). Pipeline jobs hold `BWS_PIPELINE_TOKEN` (`pipeline`: the
   App key, the run-records R2 keys). An agent job never references the pipeline
   token.
-- **GitHub writes** go through `github.app.token`: a short-lived installation
+- **GitHub writes** go through `app.token`: a short-lived installation
   token for the gingur-root pipeline App, narrowed per call by its
   `permission*` inputs. The App has no `workflows` permission.
 - Never print, echo or commit a secret value.
@@ -196,7 +198,7 @@ local development and CI. `actions/toolchain.setup` installs them with proto.
 | Goal                                 | Call                                                             |
 | ------------------------------------ | ---------------------------------------------------------------- |
 | Format, lint, typecheck, test, build | `gingur-root/devkit/.github/workflows/toolchain.verify.yml@main` |
-| Scan for secrets                     | `gingur-root/devkit/.github/workflows/gitleaks.scan.yml@main`    |
+| Scan for secrets                     | `gingur-root/devkit/.github/workflows/secrets.scan.yml@main`     |
 
 ### Shared configs are live
 
@@ -221,7 +223,7 @@ hook body lives at `.husky/<hook>`: `devkit staged`, then
 husky itself is gone: its generated, gitignored `.husky/_` doesn't exist in a
 `git worktree`, and git silently runs no hook when `core.hooksPath` is missing.
 The shim finds `devkit` in the worktree or the main checkout and fails loudly
-when it can't. CI (`gitleaks.scan.yml`) is the backstop for `--no-verify`.
+when it can't. CI (`secrets.scan.yml`) is the backstop for `--no-verify`.
 
 **`hooks install` sets the exec bit twice, and both are load-bearing.** Removing
 either one reproduces the silent skip this replaced husky to avoid, so do not

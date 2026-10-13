@@ -1,8 +1,8 @@
 name: Smoke
 
 # By hand only. Proves the credential chain end to end: the App key from
-# Bitwarden `pipeline` (bitwarden.secrets.fetch), a token for scratch
-# (github.app.token), and a read of scratch's issues with it.
+# Bitwarden `pipeline` (secrets.fetch), a token for scratch
+# (app.token), and a read of scratch's issues with it.
 
 on: workflow_dispatch
 
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: app
-        uses: gingur-root/devkit/actions/github.app.token@main
+        uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ vars.PIPELINE_APP_ID }}
           token: ${{ secrets.BWS_PIPELINE_TOKEN }}
