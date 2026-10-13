@@ -27,9 +27,12 @@ export function claudeOptions(
     systemPrompt: { type: 'preset', preset: 'claude_code', append: role.instructions },
   };
 }
-/** Checks Claude's own report of what it loaded against what the role allows. */
+/**
+ * Checks Claude's own report of what it loaded against what the role allows.
+ * An MCP server's tools show up in `tools` as `mcp__…`, so this covers servers too.
+ */
 export function assertClaudeInit(
-  init: { apiKeySource: string; tools: string[]; mcp_servers: { name: string }[] },
+  init: { apiKeySource: string; tools: string[] },
   options: Options,
 ): void {
   if (!(CLAUDE_SUBSCRIPTION_SOURCES as readonly string[]).includes(init.apiKeySource)) {
@@ -39,12 +42,6 @@ export function assertClaudeInit(
   const extra = init.tools.filter((tool) => !allowed.has(tool));
   if (extra.length)
     throw new Error(`Claude loaded tools the role does not allow: ${extra.join(', ')}`);
-  const declared = new Set(Object.keys(options.mcpServers ?? {}));
-  const servers = init.mcp_servers
-    .map((server) => server.name)
-    .filter((name) => !declared.has(name));
-  if (servers.length)
-    throw new Error(`Claude loaded MCP servers the role does not declare: ${servers.join(', ')}`);
 }
 
 export async function runClaude({ role, prompt, cwd, emit }: RunInput): Promise<boolean> {

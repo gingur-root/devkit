@@ -24,13 +24,12 @@ export function assertCodexHome(home: string): void {
       `${home} has ${present.join(', ')}; agent runs load config only from the role.`,
     );
   const auth = join(home, 'auth.json');
-  if (!existsSync(auth)) throw new Error(`No Codex login in ${home}.`);
   let mode: unknown;
   try {
     mode = (JSON.parse(readFileSync(auth, 'utf8')) as { auth_mode?: unknown }).auth_mode;
   } catch {
     // JSON.parse quotes the text near the error, which here is a token.
-    throw new Error(`Codex login in ${home} is not readable JSON.`);
+    throw new Error(`Codex login in ${home} is missing or not readable JSON.`);
   }
   if (mode !== CODEX_SUBSCRIPTION_MODE)
     throw new Error(`Codex login in ${home} is not a ChatGPT login.`);
