@@ -64,12 +64,13 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           SOURCE: ${{ github.sha }}
           APP_ID: ${{ inputs.appId }}
+          NOTE: '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.'
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role elevated --source "$SOURCE" \
             --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status 'Needs you' --role elevated \
-            --note '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.'
+            --note "$NOTE"
 
       - uses: actions/upload-artifact@v7
         with:
