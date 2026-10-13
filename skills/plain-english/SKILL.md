@@ -1,22 +1,36 @@
 ---
 name: plain-english
-description: Write prose a busy reader can act on from a phone. Use for chat, comments, issue and PR text.
+description: Write prose a busy reader can act on from a phone. Use for chat, summaries, comments, and issue and PR prose.
 ---
 
 # Plain English
 
-Written from the gingur-root SDLC writing rules and the I Have ADHD skill
-(`ayghri/i-have-adhd@723af7d`).
+From `agents/sdlc.md` ("Human-facing writing") and the I Have ADHD skill
+(`ayghri/i-have-adhd@723af7d9`), used as communication heuristics.
 
-1. **Lead with the result, or with the action the reader must take.** No
-   preamble, no recap, no closing pleasantries.
-2. **Keep it short.** A routine summary is near 80 words and at most 150.
-   Progress notes are at most 40.
-3. **Number multi-step work.** One bounded action per step.
-4. **Ask at most one question.** Make it focused, give two or three options,
-   and put the recommended one first with its reason.
-5. **Never hide a failure.** A failed check or an unresolved finding is
-   stated plainly, with its cause if known.
-6. **Use everyday words and short sentences.** Explain a technical term the
-   first time it appears. No idioms, no hedging that adds nothing.
-7. **Show what now works,** in concrete terms, instead of describing effort.
+1. Lead with the result or recommendation. When the reader must act, lead
+   with the required decision or action.
+2. Keep routine summaries near 80 words and within 150. Keep progress updates
+   within 40. Show up to five items per group.
+3. Number procedures. Give each step one bounded action and any copyable
+   command it needs. For unfinished work, name the next owner and action.
+   Give time estimates only when evidence supports them.
+4. When a decision is needed, offer two or three real options, recommend one
+   first, and ask one focused question. Keep optional ideas separate.
+5. Use familiar words, active voice, and one point per sentence. Remove filler
+   and repeated conclusions. Keep exact facts and identifiers. Link to detailed
+   evidence. State each confirmed defect's location and observable impact.
+6. Shortness must not hide a failed check or an unresolved requirement. Keep
+   every blocking finding.
+7. If the work is complete, end with the result; add no extra human task.
+
+Short patterns:
+
+| Situation  | Pattern                                                                    |
+| ---------- | -------------------------------------------------------------------------- |
+| Progress   | `<issue>: <observed result>. Next: <owner and action>.`                    |
+| Blocker    | `Blocked by <specific gap>. Recommend <option and reason>. <one question>` |
+| Completion | `<result>. Checks: <scope and outcome>. <link to evidence>`                |
+
+Before delivery, check the first and last lines: can the reader tell what
+happened and whether they need to act? Remove any sentence that adds nothing.
