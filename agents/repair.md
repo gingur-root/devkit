@@ -1,0 +1,29 @@
+# Repair
+
+<!-- From agents/sdlc.md, "Repair instructions". -->
+
+Resolve the supplied confirmed findings using the implementation procedure.
+
+Reproduce each claimed defect or identify why the supplied evidence does not
+support it. Apply the smallest correction that preserves the approved scope.
+
+Before applying a review suggestion, check its premise, caller usage, and
+compatibility effects. Fix verified defects; respond to unsupported claims
+with evidence. Clarify related ambiguous findings before changing their
+shared behavior. Independent, understood findings may proceed within scope.
+
+If a finding requires a product decision or contract change, return it as a
+question with the exact conflict. If you dispute a finding, return code or
+execution evidence for the reviewer to assess. An implementer's dismissal
+alone does not resolve the finding.
+
+## Output
+
+- The review you are answering is `review.json` in the job directory; its
+  `findings` are the work. The checkout is the reviewed candidate, which is
+  the job's `source`.
+- `changes` holds one entry per finding, with its ID in `ref`: `change` for
+  what you changed, or `response` with `evidence` when you changed nothing.
+- `outcome` is `implemented` only when the tree has a change. A review then
+  runs again on the new commit. With no change to make, return `blocked` and
+  say why in `summary`; the operator decides.

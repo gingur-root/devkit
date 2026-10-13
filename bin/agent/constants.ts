@@ -69,13 +69,20 @@ export const STATUS_FIELD = 'Status';
 export const STATUSES = ['Ask', 'Planning', 'Needs you', 'Building', 'Ready', 'Done'] as const;
 export type Status = (typeof STATUSES)[number];
 
-/** The label that starts each stage; the pipeline removes it when the run ends. Review runs inside the build's run. */
+/** The label that starts each stage; the pipeline removes it when the run ends. Review and repair run inside the build's run. */
 export const STAGE_LABELS = {
   plan: 'agent:plan',
   build: 'agent:build',
   review: 'agent:build',
+  repair: 'agent:build',
   elevated: 'agent:elevated',
 } as const;
+
+/**
+ * How many times Codex may fix a review's findings in one build run before the
+ * card goes to Needs you. agent.build.yml has one `repair-<n>` job per round.
+ */
+export const REPAIR_ROUNDS = 2;
 
 /** The pipeline App's bot user, which authors the build's commits. */
 export const PIPELINE_BOT = {

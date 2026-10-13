@@ -65,6 +65,24 @@ export const ROLES = {
     timeoutMinutes: 60,
     result: true,
   },
+  repair: {
+    // agents/sdlc.md: repair is the implementation role plus its addendum.
+    executor: 'codex',
+    effort: 'high',
+    objective:
+      "Fix the review's findings on the candidate, and recheck every criterion they touch.",
+    instructions: [
+      'agents/worker.md',
+      'skills/plain-english/SKILL.md',
+      'agents/contract.md',
+      'agents/build.md',
+      'agents/repair.md',
+    ],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
+    web: true,
+    timeoutMinutes: 60,
+    result: true,
+  },
   review: {
     // agents/sdlc.md: Claude reviews Codex's change, Opus 5.5 at High.
     executor: 'claude',
