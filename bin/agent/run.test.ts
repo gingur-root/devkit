@@ -22,6 +22,9 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
   const cwd = mkdtempSync(join(tmpdir(), 'devkit-skills-'));
   assert.match(instructions('plan', ROLES.plan, cwd), /# Plain English/);
   assert.doesNotMatch(instructions('hello', ROLES.hello, cwd), /# Plain English/);
+  // Only roles that write docs or instructions get Simple English.
+  assert.match(instructions('build', ROLES.build, cwd), /# Simple English/);
+  assert.doesNotMatch(instructions('review', ROLES.review, cwd), /# Simple English/);
 
   repoSkill(cwd, 'infra', 'elevated', 'INFRA SKILL');
   assert.match(instructions('elevated', ROLES.elevated, cwd), /INFRA SKILL/);

@@ -1,6 +1,7 @@
 ---
 name: simple-english
 description: Write technical docs, procedures and agent instructions any reader can follow, in pragmatic mode. Use for READMEs, runbooks, role instructions and skills.
+roles: build, repair, elevated
 ---
 
 # Simple English

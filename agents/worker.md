@@ -16,8 +16,8 @@ contradictory requirement, or unavailable capability prevents this stage.
 
 Use the repository's scripts and pinned tools. Discover commands from the
 repository rather than substituting a preferred runtime or inventing checks.
-Load only the skills whose triggers match this job and whose actions fit your
-role. Keep investigation tied to the assigned objective and applicable
+Your skills are the instruction files after these; apply each where its
+description says it fits. Keep investigation tied to the assigned objective and applicable
 acceptance criteria.
 
 Work within the supplied workspace, allowed operations, and attempt budget.
