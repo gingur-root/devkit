@@ -94,7 +94,11 @@ jobs:
         run: |
           # A manual run's sha is its proof branch, whose caller differs from the
           # default branch; the App could not push a build on top of it.
-          if [ -n "$DISPATCHED" ]; then SOURCE=$(gh api "repos/$REPO/commits/$DEFAULT_BRANCH" --jq .sha); fi
+          # The self-hosted runners have no `gh`.
+          if [ -n "$DISPATCHED" ]; then
+            SOURCE=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/commits/$DEFAULT_BRANCH" |
+              node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).sha')
+          fi
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build --source "$SOURCE" \
             --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
