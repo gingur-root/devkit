@@ -1,0 +1,83 @@
+name: Eval
+
+# By hand only, from a repo with an eval/ set (scratch's agents.eval.yml): runs
+# every case through plan, build, review and repair with the devkit ref it is
+# given, locally on the runner and with no GitHub writes, and puts the
+# scorecard in the run summary. A role-instruction or skill change compares a
+# run on main with a run on its branch (devkit#42).
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Self-hosted runner label: callers pass vars.RUNNER.'
+        type: string
+        required: true
+      devkitRef:
+        description: 'The devkit ref to evaluate.'
+        type: string
+        required: false
+        default: 'main'
+      cases:
+        description: 'Comma-separated case names; empty runs them all.'
+        type: string
+        required: false
+        default: ''
+    secrets:
+      AGENTS_SECRETS_TOKEN:
+        required: true
+
+permissions: {}
+
+jobs:
+  eval:
+    name: Eval
+    if: github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))
+    runs-on: ${{ inputs.runner }}
+    # Five cases, each up to plan, build and three reviews with two repairs.
+    timeout-minutes: 600
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: repo
+          persist-credentials: false
+
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      # CLAUDE_CODE_OAUTH_TOKEN in Bitwarden `agents`, as agent.run fetches it.
+      - id: secrets
+        uses: gingur-root/devkit/actions/secrets.fetch@main
+        with:
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          setEnv: 'false'
+          secrets: |
+            2cf223b6-0ed8-415b-a651-b4e2000da674 > CLAUDE_CODE_OAUTH_TOKEN
+
+      # Each stage runs `agent run` with only PATH, HOME, LANG and its executor's credential.
+      - name: Eval
+        working-directory: devkit
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ fromJSON(steps.secrets.outputs.json).CLAUDE_CODE_OAUTH_TOKEN }}
+          CASES: ${{ inputs.cases }}
+          DEVKIT_REF: ${{ inputs.devkitRef }}
+        run: |
+          pnpm agent eval --repo "$GITHUB_WORKSPACE/repo" --out "$RUNNER_TEMP/eval" ${CASES:+--only "$CASES"}
+          { echo "### Eval of devkit \`$DEVKIT_REF\`"; echo; cat "$RUNNER_TEMP/eval/scorecard.md"; } >>"$GITHUB_STEP_SUMMARY"
+
+      - if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval
+          path: ${{ runner.temp }}/eval
+          if-no-files-found: ignore

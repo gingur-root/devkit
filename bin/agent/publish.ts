@@ -66,7 +66,7 @@ interface Outcome {
 /** A result that may be published, or the stage it stopped at and why. */
 type Verdict = { result: Result } | { stage: string; reason: string };
 
-function verdict(job: Job, liveRevision: string, out: string): Verdict {
+export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const file = join(out, RESULT_FILE);
   if (!existsSync(file)) return { stage: job.role, reason: 'the agent ended without a result' };
   let json: unknown;

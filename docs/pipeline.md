@@ -74,6 +74,31 @@ same path under `.devkit/` (infra's `.devkit/agents/elevated.md`). A skill is
 `skills/<name>/SKILL.md` with a `roles: plan, elevated` frontmatter line; a
 repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
 
+## Measuring a prompt or skill change
+
+Every skill and instruction line costs tokens on every run, so a change to a
+role's instructions or skills should show it helps. scratch's `eval/` holds
+fixed cases (a feature, a bug, a docs change, a refactor, and one with a
+missing requirement where the plan should ask). `agent eval` runs each one
+through plan, build, review and repair the way the pipeline does, but locally
+on a fresh copy and with no GitHub writes, then scores it against a hidden
+check the agents never see.
+
+1. Run scratch's **Eval** workflow twice, from Actions or with:
+
+   ```bash
+   gh workflow run agents.eval.yml -R gingur-root/scratch -f devkitRef=main
+   gh workflow run agents.eval.yml -R gingur-root/scratch -f devkitRef=<your-branch>
+   ```
+
+2. Paste both scorecards from the runs' summaries into the PR.
+
+The scorecard has, per case: the plan's outcome, whether the hidden check
+passes, the last review, whether the review passed a change the check fails,
+repair rounds, tokens and minutes. Each run holds a runner for hours and runs
+one at a time, so a live pipeline run may wait behind it. Case format:
+scratch's `eval/README.md`.
+
 ## Known limits
 
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the
