@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
+import { OPERATOR_ID } from './constants.ts';
+
 export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
@@ -19,6 +21,20 @@ export const CONTRACT_PREFIX = '<!-- devkit:contract ';
 
 export function marker(role: string): string {
   return `<!-- devkit:${role} -->`;
+}
+
+/**
+ * The stage's own comment: the App's, or the operator's when his `gh` writes on
+ * the WSL desk (repos the App can't reach, infra#47).
+ */
+export function isStageComment(
+  comment: { body: string | null; user: { type: string; id: number } | null },
+  role: string,
+): boolean {
+  return (
+    (comment.user?.type === 'Bot' || comment.user?.id === OPERATOR_ID) &&
+    !!comment.body?.startsWith(marker(role))
+  );
 }
 
 /** The hidden fields under a plan comment, which the build stage reads back. */

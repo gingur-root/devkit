@@ -69,7 +69,7 @@ function between(body: string, start: string, end: string): string | null {
 }
 
 /**
- * The App's plan comment, if it is ready, unedited, and for the issue as it is now.
+ * The pipeline's plan comment, if it is ready, unedited, and for the issue as it is now.
  * shortcut: a missing or stale plan fails the Start job with no issue comment;
  * comment instead once someone other than the operator adds `agent:build`.
  */
@@ -78,9 +78,11 @@ export function approvedPlan(
   appId: number,
   issueRevision: string,
 ): { plan: string; contract: PlanContract } {
+  // The operator's own comment is the plan where his `gh` publishes (infra#47).
   const comment = comments.find(
     (c): c is Comment =>
-      c.performed_via_github_app?.id === appId && !!c.body?.startsWith(marker('plan')),
+      (c.performed_via_github_app?.id === appId || c.user?.id === OPERATOR_ID) &&
+      !!c.body?.startsWith(marker('plan')),
   );
   if (!comment) throw new Error('No plan comment from the pipeline. Add `agent:plan` first.');
   const body = comment.body.replace(/\r\n/g, '\n');

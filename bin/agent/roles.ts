@@ -8,7 +8,9 @@ export interface Role {
   objective: string;
   /**
    * Instruction files, relative to devkit's root, joined in order. A repo
-   * overrides one by committing the same path under `.devkit/`.
+   * overrides one by committing the same path under `.devkit/`. The role's
+   * skills follow: each `skills/<name>/SKILL.md` whose frontmatter `roles`
+   * line names it, from devkit or the repo's `.devkit/skills/` (bin/agent/run.ts).
    */
   instructions: readonly string[];
   /** Claude built-in tools the role gets. Anything else, including subagents and skills, is absent. */
@@ -37,12 +39,7 @@ export const ROLES = {
     effort: 'medium',
     objective:
       'Plan the issue: acceptance criteria with IDs, how each is checked, and the open questions.',
-    instructions: [
-      'agents/worker.md',
-      'skills/plain-english/SKILL.md',
-      'agents/contract.md',
-      'agents/plan.md',
-    ],
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/plan.md'],
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
     web: true,
     timeoutMinutes: 30,
@@ -54,12 +51,7 @@ export const ROLES = {
     effort: 'high',
     objective:
       'Implement the approved plan for the issue, and check every criterion assigned to you.',
-    instructions: [
-      'agents/worker.md',
-      'skills/plain-english/SKILL.md',
-      'agents/contract.md',
-      'agents/build.md',
-    ],
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/build.md'],
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
     web: true,
     timeoutMinutes: 60,
@@ -71,13 +63,7 @@ export const ROLES = {
     effort: 'high',
     objective:
       "Fix the review's findings on the candidate, and recheck every criterion they touch.",
-    instructions: [
-      'agents/worker.md',
-      'skills/plain-english/SKILL.md',
-      'agents/contract.md',
-      'agents/build.md',
-      'agents/repair.md',
-    ],
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/build.md', 'agents/repair.md'],
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
     web: true,
     timeoutMinutes: 60,
@@ -90,12 +76,7 @@ export const ROLES = {
     effort: 'high',
     objective:
       'Review the candidate against the issue and approved plan: Correctness, Spec and Standards.',
-    instructions: [
-      'agents/worker.md',
-      'skills/plain-english/SKILL.md',
-      'agents/contract.md',
-      'agents/review.md',
-    ],
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/review.md'],
     tools: ['Bash', 'Read', 'Glob', 'Grep'],
     web: true,
     timeoutMinutes: 30,
@@ -111,7 +92,6 @@ export const ROLES = {
       "Carry out the approved plan with the operator's admin access, and check every criterion.",
     instructions: [
       'agents/worker.md',
-      'skills/plain-english/SKILL.md',
       'agents/contract.md',
       'agents/build.md',
       'agents/elevated.md',

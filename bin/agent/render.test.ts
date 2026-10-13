@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { OPERATOR_ID } from './constants.ts';
 import { CONTRACT_PREFIX, marker, PLAN_END, PLAN_START, revision } from './job.ts';
 import { approvedPlan } from './render.ts';
 
@@ -37,6 +38,8 @@ test('only the App’s ready, unedited plan for the live issue is approved', () 
     'CRLF from GitHub still matches',
   );
   assert.throws(() => approvedPlan([comment(PLAN, {}, 99)], APP, ISSUE), /No plan comment/);
+  const desk = { ...comment(PLAN, {}, 99), user: { id: OPERATOR_ID } };
+  assert.equal(approvedPlan([desk], APP, ISSUE).plan, PLAN, 'the operator’s gh published it');
   assert.throws(() => approvedPlan([comment(`${PLAN}!`)], APP, ISSUE), /edited/);
   assert.throws(
     () => approvedPlan([comment(PLAN, { outcome: 'needs-input' })], APP, ISSUE),

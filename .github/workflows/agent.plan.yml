@@ -3,6 +3,8 @@ name: Plan
 # agent:plan on an issue, or a /plan comment: render the job, run the planner,
 # publish the plan as one marker comment and move the card to Needs you.
 # Callers set concurrency (one group per card) at their own workflow level.
+# With `runner: wsl` every job runs on the operator's WSL desk, as him, with no
+# pipeline or agent secrets: his `gh` publishes and his Claude login plans.
 
 on:
   workflow_call:
@@ -32,10 +34,11 @@ on:
         required: false
         default: 'main'
     secrets:
+      # Both unset on the WSL desk.
       AGENTS_SECRETS_TOKEN:
-        required: true
+        required: false
       PIPELINE_SECRETS_TOKEN:
-        required: true
+        required: false
 
 permissions: {}
 
@@ -56,7 +59,10 @@ jobs:
         with:
           cwd: devkit
 
+      # The WSL desk mints no App token: the operator's own `gh` writes there
+      # (bin/agent/github.ts), for repos the App can't reach (infra#47).
       - id: app
+        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -128,7 +134,10 @@ jobs:
           name: agent-out
           path: ${{ runner.temp }}/agent/out
 
+      # The WSL desk mints no App token: the operator's own `gh` writes there
+      # (bin/agent/github.ts), for repos the App can't reach (infra#47).
       - id: app
+        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}

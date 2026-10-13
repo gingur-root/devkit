@@ -18,7 +18,7 @@ gingur-root/devkit#1.
 | `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent …`.                                             |
 | `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                                     |
 | `.github/workflows/agent.build.yml`                          | The build stage: `/approve` (or `agent:build`) on a ready plan → draft PR on `agent/issue-<n>` → Ready. |
-| `agents/`, `skills/`                                         | Role instructions and the writing skills; a repo overrides any file under `.devkit/`.                   |
+| `agents/`, `skills/`                                         | Role instructions and per-role skills; a repo overrides or adds them under `.devkit/`.                  |
 
 ```yaml
 jobs:

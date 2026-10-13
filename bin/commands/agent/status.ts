@@ -15,7 +15,7 @@ interface StatusOptions {
 interface Comment {
   id: number;
   body: string | null;
-  user: { type: string } | null;
+  user: { type: string; id: number } | null;
 }
 
 export default {
@@ -38,14 +38,14 @@ export default {
   async run({ repo, issue, status, note, role }) {
     const { rest, restAll } = await import('../../agent/github.ts');
     const { setStatus } = await import('../../agent/board.ts');
-    const { marker } = await import('../../agent/job.ts');
+    const { isStageComment, marker } = await import('../../agent/job.ts');
     const path = `/repos/${repo}/issues/${issue}`;
     if (note !== undefined) {
       if (!role) throw new Error('--note needs --role.');
       // Same lookup as publish, so a retry edits one comment instead of adding another.
       const body = `${marker(role)}\n\n${note}`;
-      const existing = (await restAll<Comment>(`${path}/comments`)).find(
-        (c) => c.user?.type === 'Bot' && c.body?.startsWith(marker(role)),
+      const existing = (await restAll<Comment>(`${path}/comments`)).find((c) =>
+        isStageComment(c, role),
       );
       if (existing) await rest('PATCH', `/repos/${repo}/issues/comments/${existing.id}`, { body });
       else await rest('POST', `${path}/comments`, { body });
