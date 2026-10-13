@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { assertCodexHome } from './codex.ts';
+import { assertCodexHome, codexSandbox } from './codex.ts';
 
 test('a Codex home with config or a non-ChatGPT login stops the run', (t) => {
   const home = mkdtempSync(join(tmpdir(), 'devkit-agent-'));
@@ -25,4 +25,10 @@ test('a Codex home with config or a non-ChatGPT login stops the run', (t) => {
   assert.doesNotThrow(() => assertCodexHome(home));
   writeFileSync(join(home, 'config.toml'), '');
   assert.throws(() => assertCodexHome(home));
+});
+
+test("a Codex run gets no more access than the role's tools", () => {
+  assert.equal(codexSandbox(['Read']), 'read-only');
+  assert.equal(codexSandbox(['Read', 'Edit']), 'workspace-write');
+  assert.equal(codexSandbox(['Bash', 'Read']), 'danger-full-access');
 });

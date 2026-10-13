@@ -43,6 +43,9 @@ the role declares:
 - **Both:** the agent's env is an allowlist holding only its own credential, so
   an API key in the job never reaches it, and a run whose agent reports a
   non-subscription login stops.
+- **Callers:** an agent with a shell (a Bash role, or any Codex run) can read
+  its parent processes' env from `/proc`, so start the step with `exec env -i`
+  and only the variables the run needs, never the job's whole env.
 
 The SDKs are optional peer dependencies, so repos that use devkit only to
 lint never install them. Agent jobs run devkit from its own checkout, where

@@ -24,11 +24,16 @@ export async function run(options: RunOptions): Promise<void> {
     process.stdout.write(
       `${JSON.stringify({ role: options.role, executor: role.executor, ...event })}\n`,
     );
-  const ok = await PROVIDERS[role.executor]({
-    role,
-    prompt: options.prompt,
-    cwd: resolve(options.cwd ?? '.'),
-    emit,
-  });
+  let ok = false;
+  try {
+    ok = await PROVIDERS[role.executor]({
+      role,
+      prompt: options.prompt,
+      cwd: resolve(options.cwd ?? '.'),
+      emit,
+    });
+  } catch (error) {
+    emit({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+  }
   if (!ok) process.exitCode = 1;
 }
