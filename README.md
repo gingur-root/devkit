@@ -2,22 +2,23 @@
 
 Shared GitHub Actions, reusable workflows, configs and the `devkit` CLI for
 [gingur-root](https://github.com/gingur-root), and later the agent pipeline.
-Standards and conventions: [`AGENTS.md`](./AGENTS.md). Design:
+Standards and conventions: [`AGENTS.md`](./AGENTS.md). Using the pipeline:
+[`docs/pipeline.md`](./docs/pipeline.md). Design:
 gingur-root/devkit#1.
 
-| Piece                                                        | Use                                                                                     |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `actions/toolchain.setup`                                    | Install the repo's declared runtimes with proto, then `pnpm install`.                   |
-| `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                                   |
-| `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).                                |
-| `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                        |
-| `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.                              |
-| `.github/admission.txt`                                      | The admission gate every credential-holding job carries.                                |
-| `configs/`                                                   | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.                         |
-| `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent …`.                             |
-| `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                     |
-| `.github/workflows/agent.build.yml`                          | The build stage: `agent:build` on a ready plan → draft PR on `agent/issue-<n>` → Ready. |
-| `agents/`, `skills/`                                         | Role instructions and the writing skills; a repo overrides any file under `.devkit/`.   |
+| Piece                                                        | Use                                                                                                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `actions/toolchain.setup`                                    | Install the repo's declared runtimes with proto, then `pnpm install`.                                   |
+| `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                                                   |
+| `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).                                                |
+| `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                                        |
+| `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.                                              |
+| `.github/admission.txt`                                      | The admission gate every credential-holding job carries.                                                |
+| `configs/`                                                   | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.                                         |
+| `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent …`.                                             |
+| `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                                     |
+| `.github/workflows/agent.build.yml`                          | The build stage: `/approve` (or `agent:build`) on a ready plan → draft PR on `agent/issue-<n>` → Ready. |
+| `agents/`, `skills/`                                         | Role instructions and the writing skills; a repo overrides any file under `.devkit/`.                   |
 
 ```yaml
 jobs:
