@@ -17,6 +17,7 @@
     "fmt": "node bin/devkit.mjs fmt",
     "fmt:check": "node bin/devkit.mjs fmt --check",
     "staged": "node bin/devkit.mjs staged",
+    "agent": "node bin/devkit.mjs agent",
     "typecheck": "tsc --noEmit",
     "test": "node --import ./bin/loader.mjs --test 'bin/**/*.test.ts' 'test/*.test.ts'"
   },
