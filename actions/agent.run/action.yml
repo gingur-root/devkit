@@ -1,0 +1,90 @@
+name: 'Agent run'
+description: 'Run one agent role on the job file the controller rendered, and upload its result. Never writes to GitHub.'
+
+# Checks out the target repo at the job's source commit into `repo/` and devkit
+# into `devkit/`, so the agent's working tree holds only the target repo. The
+# agent starts under `env -i`: with a shell it could otherwise read the job's
+# whole env from /proc.
+
+inputs:
+  role:
+    description: 'The role to run (bin/agent/roles.ts).'
+    required: true
+  executor:
+    description: "Override the role's executor: `claude`, `codex`, or `stub` for smoke runs."
+    required: false
+    default: ''
+  fixture:
+    description: 'The stub fixture: `ready` or `invalid`.'
+    required: false
+    default: 'ready'
+  source:
+    description: 'The commit to check out, from the job contract.'
+    required: true
+  token:
+    description: 'BWS_AGENTS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login.'
+    required: true
+  devkitRef:
+    description: 'The devkit ref to run.'
+    required: false
+    default: 'main'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.source }}
+        path: repo
+        persist-credentials: false
+
+    - uses: actions/checkout@v6
+      with:
+        repository: gingur-root/devkit
+        ref: ${{ inputs.devkitRef }}
+        path: devkit
+        persist-credentials: false
+
+    - uses: gingur-root/devkit/actions/toolchain.setup@main
+      with:
+        cwd: devkit
+
+    - uses: actions/download-artifact@v8
+      with:
+        name: agent-in
+        path: ${{ runner.temp }}/agent/in
+
+    # CLAUDE_CODE_OAUTH_TOKEN in Bitwarden `agents` (infra runbook step 15).
+    - id: secrets
+      if: ${{ inputs.executor != 'stub' && inputs.executor != 'codex' }}
+      uses: gingur-root/devkit/actions/secrets.fetch@main
+      with:
+        token: ${{ inputs.token }}
+        setEnv: 'false'
+        secrets: |
+          2cf223b6-0ed8-415b-a651-b4e2000da674 > CLAUDE_CODE_OAUTH_TOKEN
+
+    - name: Run
+      shell: bash
+      working-directory: devkit
+      env:
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ steps.secrets.outputs.json && fromJSON(steps.secrets.outputs.json).CLAUDE_CODE_OAUTH_TOKEN }}
+        ROLE: ${{ inputs.role }}
+        EXECUTOR: ${{ inputs.executor }}
+        FIXTURE: ${{ inputs.fixture }}
+      run: |
+        out="$RUNNER_TEMP/agent/out"
+        mkdir -p "$out"
+        exec env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" \
+          ${CODEX_HOME:+CODEX_HOME="$CODEX_HOME"} \
+          ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+          DEVKIT_STUB_FIXTURE="$FIXTURE" \
+          pnpm agent run --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} \
+            --cwd "$GITHUB_WORKSPACE/repo" --in "$RUNNER_TEMP/agent/in" --out "$out"
+
+    - if: ${{ always() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: agent-out
+        path: ${{ runner.temp }}/agent/out
+        if-no-files-found: ignore

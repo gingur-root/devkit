@@ -2,15 +2,23 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 import { CLAUDE_SUBSCRIPTION_SOURCES } from '../constants.ts';
 import type { Role } from '../roles.ts';
-import { agentEnv, resolveExecutable, type RunInput } from './shared.ts';
+import { agentEnv, resolveExecutable, type RunInput, type RunOutput, stageDirs } from './shared.ts';
 
 export function claudeOptions(
   role: Role,
-  ctx: { cwd: string; executable: string; env: Record<string, string> },
+  ctx: {
+    cwd: string;
+    executable: string;
+    env: Record<string, string>;
+    instructions: string;
+    dirs?: string[];
+    schema?: Record<string, unknown>;
+  },
 ): Options {
   return {
     pathToClaudeCodeExecutable: ctx.executable,
     cwd: ctx.cwd,
+    additionalDirectories: ctx.dirs,
     env: ctx.env,
     model: role.model,
     effort: role.effort,
@@ -24,7 +32,8 @@ export function claudeOptions(
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     persistSession: false,
-    systemPrompt: { type: 'preset', preset: 'claude_code', append: role.instructions },
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: ctx.instructions },
+    outputFormat: ctx.schema && { type: 'json_schema', schema: ctx.schema },
   };
 }
 /**
@@ -39,22 +48,29 @@ export function assertClaudeInit(
     throw new Error(`Claude authenticated with ${init.apiKeySource}, not the subscription token.`);
   }
   const allowed = new Set(Array.isArray(options.tools) ? options.tools : []);
+  // The SDK's own tool for returning the result when an output schema is set.
+  if (options.outputFormat) allowed.add('StructuredOutput');
   const extra = init.tools.filter((tool) => !allowed.has(tool));
   if (extra.length)
     throw new Error(`Claude loaded tools the role does not allow: ${extra.join(', ')}`);
 }
 
-export async function runClaude({ role, prompt, cwd, emit }: RunInput): Promise<boolean> {
+export async function runClaude(input: RunInput): Promise<RunOutput> {
+  const { role, prompt, emit } = input;
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const env = agentEnv('claude', process.env);
   const options = claudeOptions(role, {
-    cwd,
+    cwd: input.cwd,
     env,
     executable: resolveExecutable('claude', env.PATH),
+    instructions: input.instructions,
+    dirs: stageDirs(input),
+    schema: input.schema,
   });
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), role.timeoutMinutes * 60_000);
   let ok = false;
+  let result: unknown;
   try {
     for await (const message of query({ prompt, options: { ...options, abortController } })) {
       if (message.type === 'system' && message.subtype === 'init') {
@@ -74,6 +90,7 @@ export async function runClaude({ role, prompt, cwd, emit }: RunInput): Promise<
         }
       } else if (message.type === 'result') {
         ok = message.subtype === 'success' && !message.is_error;
+        if (message.subtype === 'success') result = message.structured_output;
         emit({
           type: 'result',
           subtype: message.subtype,
@@ -87,5 +104,5 @@ export async function runClaude({ role, prompt, cwd, emit }: RunInput): Promise<
   } finally {
     clearTimeout(timer);
   }
-  return ok;
+  return { ok, result };
 }

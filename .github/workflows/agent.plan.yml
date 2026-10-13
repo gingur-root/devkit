@@ -1,0 +1,143 @@
+name: Plan
+
+# agent:plan on an issue, or a /plan comment: render the job, run the planner,
+# publish the plan as one marker comment and move the card to Needs you.
+# Callers set concurrency (one group per card) at their own workflow level.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner label: callers pass vars.RUNNER.'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+      appId:
+        description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
+        type: string
+        required: true
+      executor:
+        description: "Override the planner's executor; `stub` for smoke runs."
+        type: string
+        required: false
+        default: ''
+      fixture:
+        description: 'The stub fixture: `ready` or `invalid`.'
+        type: string
+        required: false
+        default: 'ready'
+      devkitRef:
+        description: 'The devkit ref the jobs run.'
+        type: string
+        required: false
+        default: 'main'
+    secrets:
+      BWS_AGENTS_TOKEN:
+        required: true
+      BWS_PIPELINE_TOKEN:
+        required: true
+
+permissions: {}
+
+jobs:
+  start:
+    name: Start
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request))
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.BWS_PIPELINE_TOKEN }}
+          permissionIssues: write
+          permissionOrganizationProjects: write
+
+      - name: Render
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          SOURCE: ${{ github.sha }}
+          APP_ID: ${{ inputs.appId }}
+        run: |
+          pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Planning
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role plan --source "$SOURCE" \
+            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/agent/in
+
+  plan:
+    name: Plan
+    needs: start
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request))
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: plan
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          source: ${{ github.sha }}
+          token: ${{ secrets.BWS_AGENTS_TOKEN }}
+          devkitRef: ${{ inputs.devkitRef }}
+
+  publish:
+    name: Publish
+    needs: [start, plan]
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request)) && needs.start.result == 'success'
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/agent/in
+
+      # Missing when the plan job died before writing anything; publish names that stage.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: agent-out
+          path: ${{ runner.temp }}/agent/out
+
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.BWS_PIPELINE_TOKEN }}
+          permissionIssues: write
+          permissionOrganizationProjects: write
+
+      - name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out"

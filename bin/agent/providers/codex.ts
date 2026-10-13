@@ -5,7 +5,14 @@ import type { CodexOptions, SandboxMode } from '@openai/codex-sdk';
 
 import { CODEX_FEATURES_OFF, CODEX_HOME_FORBIDDEN, CODEX_SUBSCRIPTION_MODE } from '../constants.ts';
 import type { Role } from '../roles.ts';
-import { agentEnv, type Env, resolveExecutable, type RunInput } from './shared.ts';
+import {
+  agentEnv,
+  type Env,
+  resolveExecutable,
+  type RunInput,
+  type RunOutput,
+  stageDirs,
+} from './shared.ts';
 
 function codexHome(env: Env): string {
   const home = env.CODEX_HOME ?? (env.HOME && join(env.HOME, '.codex'));
@@ -62,7 +69,8 @@ export function codexOptions(ctx: {
   };
 }
 
-export async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<boolean> {
+export async function runCodex(input: RunInput): Promise<RunOutput> {
+  const { role, prompt, emit } = input;
   const { Codex } = await import('@openai/codex-sdk');
   const env = agentEnv('codex', process.env);
   assertCodexHome(codexHome(env));
@@ -73,20 +81,27 @@ export async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<b
     modelReasoningEffort: role.effort,
     sandboxMode: codexSandbox(role.tools),
     approvalPolicy: 'never',
-    workingDirectory: cwd,
+    workingDirectory: input.cwd,
+    additionalDirectories: stageDirs(input),
     skipGitRepoCheck: true,
     webSearchMode: role.web ? 'live' : 'disabled',
   });
   const signal = AbortSignal.timeout(role.timeoutMinutes * 60_000);
   // Codex has no system-prompt option; the role's instructions lead the prompt.
-  const { events } = await thread.runStreamed(`${role.instructions}\n\n${prompt}`, { signal });
+  const { events } = await thread.runStreamed(`${input.instructions}\n\n${prompt}`, {
+    signal,
+    outputSchema: input.schema,
+  });
   let ok = false;
+  let last = '';
   emit({ type: 'init', config: options.config });
   for await (const event of events) {
     if (event.type === 'item.completed') {
       const { item } = event;
-      if (item.type === 'agent_message') emit({ type: 'message', text: item.text });
-      else if (item.type === 'mcp_tool_call')
+      if (item.type === 'agent_message') {
+        last = item.text;
+        emit({ type: 'message', text: item.text });
+      } else if (item.type === 'mcp_tool_call')
         emit({ type: 'tool', name: `${item.server}.${item.tool}` });
       else if (item.type === 'command_execution')
         emit({ type: 'tool', name: 'exec', exit: item.exit_code });
@@ -100,5 +115,6 @@ export async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<b
       emit({ type: 'error', message: event.message });
     }
   }
-  return ok;
+  // With an output schema, the final message is the result as JSON.
+  return { ok, result: ok && input.schema ? JSON.parse(last) : undefined };
 }

@@ -18,8 +18,10 @@ export default {
       .addOption(
         new Option('--executor <executor>', "override the role's executor").choices(EXECUTORS),
       )
-      .requiredOption('--prompt <text>', 'prompt text')
-      .option('--cwd <dir>', 'working directory for the agent', '.');
+      .option('--prompt <text>', "prompt text (default: the role's objective)")
+      .option('--cwd <dir>', 'working directory for the agent', '.')
+      .option('--in <dir>', 'job directory ($AGENT_IN), for a pipeline stage')
+      .option('--out <dir>', 'output directory ($AGENT_OUT), for a pipeline stage');
   },
   async run(options) {
     // The SDKs are optional peers; load them only when a run actually happens.
