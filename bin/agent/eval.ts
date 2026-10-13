@@ -5,7 +5,15 @@
 // branch.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -131,7 +139,19 @@ export function evaluate(options: EvalOptions): Score[] {
     : readdirSync(root).filter((name) => existsSync(join(root, name, 'case.json')));
   const scores: Score[] = [];
   for (const name of names.sort()) {
-    const score = runCase(repo, name, join(out, name), options.executor);
+    const expected = Case.parse(
+      JSON.parse(readFileSync(join(root, name, 'case.json'), 'utf8')),
+    ).plan;
+    let score: Score;
+    try {
+      score = runCase(repo, name, expected, join(out, name), options.executor);
+    } catch (error) {
+      // One broken case must not cost the rest of a run that takes hours.
+      score = {
+        ...emptyScore(name, expected),
+        stopped: `eval: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     console.log(JSON.stringify(score));
     scores.push(score);
   }
@@ -140,16 +160,8 @@ export function evaluate(options: EvalOptions): Score[] {
   return scores;
 }
 
-function runCase(repo: string, name: string, work: string, executor?: Executor): Score {
-  const started = Date.now();
-  const caseDir = join(repo, EVAL_DIR, name);
-  const expected = Case.parse(JSON.parse(readFileSync(join(caseDir, 'case.json'), 'utf8'))).plan;
-  const issue = readIssue(join(caseDir, ISSUE_FILE));
-  const issueText = `# ${issue.title}\n\n${issue.body}\n`;
-  const cwd = join(work, 'repo');
-  mkdirSync(cwd, { recursive: true });
-  const source = base(repo, caseDir, cwd);
-  const score: Score = {
+function emptyScore(name: string, expected: Score['expected']): Score {
+  return {
     case: name,
     expected,
     plan: null,
@@ -161,6 +173,24 @@ function runCase(repo: string, name: string, work: string, executor?: Executor):
     tokens: { input: 0, output: 0 },
     minutes: 0,
   };
+}
+
+function runCase(
+  repo: string,
+  name: string,
+  expected: Score['expected'],
+  work: string,
+  executor?: Executor,
+): Score {
+  const started = Date.now();
+  const caseDir = join(repo, EVAL_DIR, name);
+  const issue = readIssue(join(caseDir, ISSUE_FILE));
+  const issueText = `# ${issue.title}\n\n${issue.body}\n`;
+  const cwd = join(work, 'repo');
+  rmSync(work, { recursive: true, force: true });
+  mkdirSync(cwd, { recursive: true });
+  const source = base(repo, caseDir, cwd);
+  const score = emptyScore(name, expected);
 
   const stage = (
     role: RoleName,
@@ -246,7 +276,7 @@ function runCase(repo: string, name: string, work: string, executor?: Executor):
     git(cwd, ['commit', '--quiet', '--allow-empty', '-m', message]);
     const check = spawnSync('sh', [join(caseDir, 'check.sh')], {
       cwd,
-      env: { ...childEnv(), BASE: source },
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', BASE: source },
       encoding: 'utf8',
       timeout: 60_000,
     });
