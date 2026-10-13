@@ -5,16 +5,18 @@ Shared GitHub Actions, reusable workflows, configs and the `devkit` CLI for
 Standards and conventions: [`AGENTS.md`](./AGENTS.md). Design:
 gingur-root/devkit#1.
 
-| Piece                                                        | Use                                                                   |
-| ------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `actions/toolchain.setup`                                    | Install the repo's declared runtimes with proto, then `pnpm install`. |
-| `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                 |
-| `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).              |
-| `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.      |
-| `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.            |
-| `.github/admission.txt`                                      | The admission gate every credential-holding job carries.              |
-| `configs/`                                                   | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.       |
-| `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent run`.         |
+| Piece                                                        | Use                                                                                   |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `actions/toolchain.setup`                                    | Install the repo's declared runtimes with proto, then `pnpm install`.                 |
+| `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                                 |
+| `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).                              |
+| `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                      |
+| `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.                            |
+| `.github/admission.txt`                                      | The admission gate every credential-holding job carries.                              |
+| `configs/`                                                   | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.                       |
+| `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent …`.                           |
+| `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                   |
+| `agents/`, `skills/`                                         | Role instructions and the writing skills; a repo overrides any file under `.devkit/`. |
 
 ```yaml
 jobs:
@@ -55,6 +57,13 @@ they're dev dependencies.
 devkit agent run --role hello --prompt 'Say hello.'                  # role's executor
 devkit agent run --role hello --executor codex --prompt 'Say hello.' # override it
 ```
+
+A pipeline stage adds `--in` (the job file and `issue.md` from `devkit agent
+render`) and `--out`, where a role with a result writes `result.json`.
+`devkit agent publish` validates it against the live issue, upserts the
+stage's marker comment, removes the label and sets the card's Status.
+`--executor stub` writes a fixture result (`DEVKIT_STUB_FIXTURE=ready|invalid`)
+so a smoke run of the chain takes seconds.
 
 Output is one JSON object per line (`init`, `message`, `tool`, `result`,
 `error`); the exit code is non-zero when the run fails.

@@ -31,6 +31,8 @@
     "bin",
     "configs",
     "actions",
+    "agents",
+    "skills",
     ".github"
   ],
   "peerDependencies": {

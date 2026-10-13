@@ -41,7 +41,13 @@ type Verdict = { result: Result; plan: string } | { stage: string; reason: strin
 function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const file = join(out, RESULT_FILE);
   if (!existsSync(file)) return { stage: job.role, reason: 'the agent ended without a result' };
-  const parsed = Result.safeParse(JSON.parse(readFileSync(file, 'utf8')));
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return { stage: 'validate', reason: `${RESULT_FILE} is not JSON` };
+  }
+  const parsed = Result.safeParse(json);
   if (!parsed.success) {
     return {
       stage: 'validate',
