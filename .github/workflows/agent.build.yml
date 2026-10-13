@@ -3,8 +3,10 @@ name: Build
 # An /approve comment (or agent:build) on an issue with a ready plan: render
 # the job from the plan comment, run the builder, then push its change to
 # agent/issue-<n>, open a draft PR and move the card to Ready. Then Claude
-# reviews that exact commit: a clean pass marks the PR ready and leaves the
-# card in Ready for the operator to merge; anything else moves it to Needs you.
+# reviews that exact commit (agent.review.yml): a clean pass marks the PR ready
+# and leaves the card in Ready for the operator to merge. Findings Codex can fix
+# get up to REPAIR_ROUNDS (bin/agent/constants.ts) repair rounds on the same PR,
+# one `repair-<n>` job each; anything else moves the card to Needs you.
 # The pipeline never merges. Only the operator can start it (the admission
 # gate), so that comment is the approval.
 # Callers set concurrency (one group per card) at their own workflow level.
@@ -185,69 +187,65 @@ jobs:
       - if: steps.publish.outputs.candidate != ''
         uses: actions/upload-artifact@v7
         with:
-          name: review-in
+          name: review-0-in
           path: ${{ runner.temp }}/review/in
 
   review:
     name: Review
     needs: publish
     if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request)) && needs.publish.outputs.candidate != ''
-    runs-on: ${{ inputs.runner }}
+    # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
-    steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
-        with:
-          role: review
-          prefix: review
-          executor: ${{ inputs.executor }}
-          fixture: ${{ inputs.fixture }}
-          source: ${{ needs.publish.outputs.candidate }}
-          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
-          devkitRef: ${{ inputs.devkitRef }}
+    uses: ./.github/workflows/agent.review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      executor: ${{ inputs.executor }}
+      fixture: ${{ inputs.fixture }}
+      devkitRef: ${{ inputs.devkitRef }}
+      round: 0
+      candidate: ${{ needs.publish.outputs.candidate }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
 
-  verdict:
-    name: Verdict
-    needs: [publish, review]
-    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request)) && needs.publish.outputs.candidate != ''
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - id: app
-        uses: gingur-root/devkit/actions/app.token@main
-        with:
-          appId: ${{ inputs.appId }}
-          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
-          # Marking a draft ready needs contents: write as well as pull_requests.
-          permissionContents: write
-          permissionIssues: write
-          permissionPullRequests: write
-          permissionOrganizationProjects: write
+  repair-1:
+    name: Repair 1
+    needs: review
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request)) && needs.review.outputs.repair == 'true'
+    # The ceiling for the nested jobs: the agents check out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      executor: ${{ inputs.executor }}
+      fixture: ${{ inputs.fixture }}
+      devkitRef: ${{ inputs.devkitRef }}
+      round: 1
+      candidate: ${{ needs.review.outputs.candidate }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
 
-      - uses: actions/checkout@v6
-        with:
-          repository: gingur-root/devkit
-          ref: ${{ inputs.devkitRef }}
-          path: devkit
-          persist-credentials: false
-
-      - uses: gingur-root/devkit/actions/toolchain.setup@main
-        with:
-          cwd: devkit
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: review-in
-          path: ${{ runner.temp }}/review/in
-
-      # Missing when the review job died before writing anything; publish names that stage.
-      - uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: review-out
-          path: ${{ runner.temp }}/review/out
-
-      - name: Publish
-        working-directory: devkit
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out"
+  repair-2:
+    name: Repair 2
+    needs: repair-1
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request)) && needs.repair-1.outputs.repair == 'true'
+    # The ceiling for the nested jobs: the agents check out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      executor: ${{ inputs.executor }}
+      fixture: ${{ inputs.fixture }}
+      devkitRef: ${{ inputs.devkitRef }}
+      round: 2
+      candidate: ${{ needs.repair-1.outputs.candidate }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}

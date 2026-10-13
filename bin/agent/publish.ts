@@ -1,7 +1,8 @@
 // The controller's write side for one stage: check the result against the live
 // contract, upsert the stage's marker comment, remove the trigger label and
 // move the card on. A build also pushes its candidate and opens a draft PR; a
-// review posts on that PR and marks it ready when it passes. The pipeline never
+// review posts on that PR and marks it ready when it passes, or hands its
+// findings to a repair, which pushes a fix to the same PR. The pipeline never
 // merges. Only this writes GitHub, and only with the App.
 
 import { execFileSync } from 'node:child_process';
@@ -9,7 +10,7 @@ import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { setStatus } from './board.ts';
-import { PIPELINE_BOT, STAGE_LABELS, type Status } from './constants.ts';
+import { PIPELINE_BOT, REPAIR_ROUNDS, STAGE_LABELS, type Status } from './constants.ts';
 import { graphql, rest, restAll } from './github.ts';
 import {
   CANDIDATE_FILE,
@@ -31,6 +32,8 @@ export interface PublishOptions {
   out: string;
   /** A build's target repo, checked out at the job's source with push access. */
   checkout?: string;
+  /** A review's repair round: 0 reviews the build, n the nth repair. */
+  round?: number;
 }
 
 interface Issue {
@@ -116,7 +119,10 @@ function verdict(job: Job, liveRevision: string, out: string): Verdict {
     result.outcome === 'implemented' &&
     !(existsSync(candidate) && statSync(candidate).size > 0)
   ) {
-    return { stage: 'validate', reason: 'the build reported `implemented` but changed nothing' };
+    return {
+      stage: 'validate',
+      reason: `the ${job.role} reported \`implemented\` but changed nothing`,
+    };
   }
   return { result };
 }
@@ -160,11 +166,14 @@ function planComment(job: Job, result: Result, out: string): string {
     .join('\n\n');
 }
 
-function buildComment(result: Result, pull: Pull | null): string {
-  const head = pull
-    ? `**Build: [#${pull.number}](${pull.html_url}) is ready for review**`
-    : `**Build ${result.status}**`;
-  return [marker('build'), head, result.summary, numbered(result.questions)]
+function buildComment(job: Job, result: Result, pull: Pull | null): string {
+  const link = pull && `[#${pull.number}](${pull.html_url})`;
+  const head = !link
+    ? `**${job.role === 'repair' ? 'Repair' : 'Build'} ${result.status}**`
+    : job.role === 'repair'
+      ? `**Repair: pushed a fix to ${link}; reviewing it again**`
+      : `**Build: ${link} is ready for review**`;
+  return [marker(job.role), head, result.summary, numbered(result.questions)]
     .filter(Boolean)
     .join('\n\n');
 }
@@ -185,7 +194,8 @@ function git(cwd: string, args: string[]): string {
 
 /**
  * Commits the candidate on top of the issue's branch, or on the source when the
- * branch is new, so a retry is a plain fast-forward push.
+ * branch is new, so a retry is a plain fast-forward push. A repair commits on
+ * the commit it fixed, so a branch that moved since rejects the push.
  * shortcut: a retry after the default branch changed a workflow file is
  * rejected (the App has no `workflows` permission); close the PR and delete the
  * branch first. Rebuild the branch instead if that happens often.
@@ -199,11 +209,14 @@ function pushCandidate(
   git(checkout, ['apply', '--index', patch]);
   const tree = git(checkout, ['write-tree']);
   let parent = job.source;
-  if (git(checkout, ['ls-remote', '--heads', 'origin', branch])) {
+  if (job.role !== 'repair' && git(checkout, ['ls-remote', '--heads', 'origin', branch])) {
     git(checkout, ['fetch', '--depth=1', 'origin', branch]);
     parent = git(checkout, ['rev-parse', 'FETCH_HEAD']);
   }
-  const message = `${job.issue.title}\n\nCloses #${job.issue.number}`;
+  const message =
+    job.role === 'repair'
+      ? `Fix review findings for #${job.issue.number}`
+      : `${job.issue.title}\n\nCloses #${job.issue.number}`;
   const commit = git(checkout, ['commit-tree', tree, '-p', parent, '-m', message]);
   git(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
   return { branch, commit };
@@ -278,25 +291,40 @@ function reviewText(result: Result): string {
     .join('\n\n');
 }
 
-async function publishReview(job: Job, v: Verdict): Promise<Outcome> {
+async function publishReview(job: Job, v: Verdict, round: number): Promise<Outcome> {
   if ('result' in v) {
     const pull = await openPull(job, branchOf(job));
     if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
     else if (pull.head.sha !== job.candidate)
       v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
-    else return postReview(job, v.result, pull);
+    else return postReview(job, v.result, pull, round);
   }
   return { body: stopped(job, v), status: 'Needs you', stopped: true };
 }
 
-/** Posts the review on the PR; a pass marks it ready for the operator to merge. */
-async function postReview(job: Job, result: Result, pull: Pull): Promise<Outcome> {
+/** A review Codex may answer: changes requested, findings to fix, nothing for the operator to decide. */
+export function repairable(result: Result): boolean {
+  return (
+    result.outcome === 'changes-requested' &&
+    (result.findings ?? []).length > 0 &&
+    result.questions.length === 0
+  );
+}
+
+/**
+ * Posts the review on the PR. A pass marks it ready for the operator to merge;
+ * a repairable review with rounds left sets the `repair` output for the next round.
+ */
+async function postReview(job: Job, result: Result, pull: Pull, round: number): Promise<Outcome> {
   await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/reviews`, {
     commit_id: pull.head.sha,
     body: reviewText(result),
     event: 'COMMENT',
   });
   const ok = passes(result);
+  const repair = !ok && round < REPAIR_ROUNDS && repairable(result);
+  if (repair && process.env.GITHUB_OUTPUT)
+    appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
   if (ok)
     await graphql(
       `
@@ -311,12 +339,14 @@ async function postReview(job: Job, result: Result, pull: Pull): Promise<Outcome
   const link = `[#${pull.number}](${pull.html_url})`;
   const head = ok
     ? `**Review: passed. ${link} is ready to merge**`
-    : `**Review: ${link} needs your call**`;
+    : repair
+      ? `**Review: ${link} needs changes. Codex is fixing them (round ${round + 1} of ${REPAIR_ROUNDS})**`
+      : `**Review: ${link} needs your call${round > 0 ? ` after ${round} repair round${round > 1 ? 's' : ''}` : ''}**`;
   return {
     body: [marker('review'), head, result.summary, numbered(result.questions)]
       .filter(Boolean)
       .join('\n\n'),
-    status: ok ? 'Ready' : 'Needs you',
+    status: ok ? 'Ready' : repair ? 'Building' : 'Needs you',
     stopped: false,
   };
 }
@@ -332,7 +362,11 @@ async function publishBuildOrPlan(
     try {
       if (!checkout) throw new Error('publish needs --checkout for a build.');
       const { branch, commit } = pushCandidate(job, checkout, join(out, CANDIDATE_FILE));
-      pull = await upsertPull(job, branch, v.result);
+      // A repair keeps the build's PR text; its summary goes on the issue comment.
+      pull =
+        job.role === 'repair'
+          ? ((await openPull(job, branch)) ?? null)
+          : await upsertPull(job, branch, v.result);
       // The review job's input.
       if (process.env.GITHUB_OUTPUT)
         appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${commit}\n`);
@@ -344,9 +378,11 @@ async function publishBuildOrPlan(
       };
     }
   }
-  const status = pull ? 'Ready' : 'Needs you';
+  // A repair's card stays in Building until its review lands.
+  const status = !pull ? 'Needs you' : job.role === 'repair' ? 'Building' : 'Ready';
   if ('stage' in v) return { body: stopped(job, v), status, stopped: true };
-  const body = job.role === 'plan' ? planComment(job, v.result, out) : buildComment(v.result, pull);
+  const body =
+    job.role === 'plan' ? planComment(job, v.result, out) : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
 
@@ -357,7 +393,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
   const { body, status, stopped } =
     job.role === 'review'
-      ? await publishReview(job, v)
+      ? await publishReview(job, v, options.round ?? 0)
       : await publishBuildOrPlan(job, v, options.out, options.checkout);
 
   // One comment per stage, found by its marker and written by a bot (the App).

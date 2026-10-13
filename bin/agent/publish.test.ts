@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { passes } from './publish.ts';
+import { passes, repairable } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -33,4 +33,13 @@ test('only a clean pass passes', () => {
   assert.ok(!passes({ ...pass, findings: [finding] }), 'a blocking finding');
   assert.ok(passes({ ...pass, findings: [{ ...finding, blocking: false }] }), 'advisory only');
   assert.ok(!passes({ ...pass, questions: ['Ship it?'] }), 'a question for the operator');
+});
+
+test('only findings with nothing to ask go to repair', () => {
+  const asks = { ...pass, outcome: 'changes-requested' as const, findings: [finding] };
+  assert.ok(repairable(asks));
+  assert.ok(!repairable(pass), 'a pass');
+  assert.ok(!repairable({ ...asks, findings: [] }), 'nothing to fix');
+  assert.ok(!repairable({ ...asks, questions: ['Which API?'] }), 'a decision for the operator');
+  assert.ok(!repairable({ ...asks, outcome: 'inconclusive' }), 'an inconclusive review');
 });
