@@ -18,7 +18,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ vars.PIPELINE_APP_ID }}
-          token: ${{ secrets.BWS_PIPELINE_TOKEN }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           repositories: scratch
           permissionIssues: read
 

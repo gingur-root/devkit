@@ -24,11 +24,11 @@ These override anything below that conflicts with them.
 
 ## Naming
 
-| Tier                                                | Convention                                                         | Examples                                                             |
-| --------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| **File names** (workflows, action dirs)             | `lowercase.dot.notation`, broad → specific: `<subject>.<action…>`  | `toolchain.verify.yml`, `secrets.scan.yml`, `actions/secrets.fetch/` |
-| **Identifiers** (inputs, outputs, job and step ids) | `camelCase`, one word when possible                                | `token`, `appId`, `repositories`, `verify`                           |
-| **Env vars and secrets**                            | `SCREAMING_SNAKE_CASE`, spelled the way the provider spells itself | `BWS_PIPELINE_TOKEN`, `PIPELINE_APP_ID`                              |
+| Tier                                                | Convention                                                              | Examples                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **File names** (workflows, action dirs)             | `lowercase.dot.notation`, broad → specific: `<subject>.<action…>`       | `toolchain.verify.yml`, `secrets.scan.yml`, `actions/secrets.fetch/` |
+| **Identifiers** (inputs, outputs, job and step ids) | `camelCase`, one word when possible                                     | `token`, `appId`, `repositories`, `verify`                           |
+| **Env vars and secrets**                            | `SCREAMING_SNAKE_CASE`, by subject; a tool's own vars keep its spelling | `PIPELINE_SECRETS_TOKEN`, `PIPELINE_APP_ID`, `BWS_ACCESS_TOKEN`      |
 
 - Name by subject, never by provider: `secrets.fetch`, not
   `bitwarden.secrets.fetch`. The provider is an internal detail, or an input
@@ -160,8 +160,8 @@ composite, so it's bumped once.
 
 - **Every secret comes from Bitwarden**, through `secrets.fetch` (in
   CI, by UUID) or `bws` (on the box). No per-repo GitHub secrets.
-- **Two tokens, two tiers.** Agent jobs hold only `BWS_AGENTS_TOKEN` (the
-  `agents` project). Pipeline jobs hold `BWS_PIPELINE_TOKEN` (`pipeline`: the
+- **Two tokens, two tiers.** Agent jobs hold only `AGENTS_SECRETS_TOKEN` (the
+  `agents` project). Pipeline jobs hold `PIPELINE_SECRETS_TOKEN` (`pipeline`: the
   App key, the run-records R2 keys). An agent job never references the pipeline
   token.
 - **GitHub writes** go through `app.token`: a short-lived installation
