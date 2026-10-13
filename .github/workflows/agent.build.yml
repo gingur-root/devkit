@@ -97,7 +97,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - uses: gingur-root/devkit/actions/agent.run@feat/agent-build
         with:
           role: build
           executor: ${{ inputs.executor }}
