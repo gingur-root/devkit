@@ -10,13 +10,13 @@ and the `RUNNER` and `PIPELINE_APP_ID` vars.
 
 ## The flow
 
-| Step               | You do                                                                                                   | The pipeline does                                                                  | Board card       |
-| ------------------ | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------- |
-| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board. | The board adds the card.                                                           | Ask              |
-| 2. Plan            | Add `agent:plan`, or comment `/plan`.                                                                    | Writes one plan comment, removes the label.                                        | Planning         |
-| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.             | Rewrites the same plan comment.                                                    | Needs you        |
-| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval.           | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label. | Building → Ready |
-| 5. Review / merge  | Review and merge the PR, or have a project thread merge it.                                              | Board moves the card when the PR merges or the issue closes.                       | Done             |
+| Step               | You do                                                                                                   | The pipeline does                                                                               | Board card       |
+| ------------------ | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------- |
+| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board. | The board adds the card.                                                                        | Ask              |
+| 2. Plan            | Add `agent:plan`, or comment `/plan`.                                                                    | Writes one plan comment, removes the label.                                                     | Planning         |
+| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.             | Rewrites the same plan comment.                                                                 | Needs you        |
+| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval.           | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.              | Building → Ready |
+| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.    | In the same run, Claude reviews the PR: a pass marks it ready, anything else goes to Needs you. | Ready → Done     |
 
 Anything that stops a run (a failed check, a missing result, a push error)
 posts **"… stopped at `<stage>`"** on the stage's comment and moves the card
@@ -24,13 +24,19 @@ to **Needs you**. Fix the cause, then add the label again.
 
 ## Review and merge stage
 
-_Pending [devkit#32](https://github.com/gingur-root/devkit/pull/32)._ Once it
-lands, `agent:build` also reviews its own PR in the same run, so your plan
-approval stays the only label you add. A clean review leaves the card in
-**Ready**; anything else stops in **Needs you**.
+The build run also reviews its own PR, so your approval stays the only thing
+you add. Claude (Opus 5.5) reviews the exact commit the build pushed, checking
+Correctness, Spec and Standards, and posts the result as a PR review.
+
+- **Pass** (every axis passes, no blocking finding, no question): the PR is
+  marked ready for review and the card stays in **Ready**. The review comment
+  on the issue says it's ready to merge.
+- **Anything else:** the review comment says the PR needs your call, and the
+  card moves to **Needs you**.
 
 The pipeline never merges. Merging is yours, or a Claude project thread's under
-the project's merge policy.
+the project's merge policy. The board moves the card to **Done** when the PR
+merges.
 
 ## Known limits
 
@@ -42,6 +48,8 @@ the project's merge policy.
   anything under `.github/workflows/` since the branch was made, the push to
   `agent/issue-<n>` is rejected (the App has no `workflows` permission). Close
   the PR and delete the branch, then add `agent:build` again.
+- **No repair yet.** Codex doesn't fix review findings; a review that asks for
+  changes stops in Needs you.
 - **No `/revise` yet.** It passes the gate but no stage handles it; edit the
   issue and re-plan instead.
 - **One run per card at a time.** A second label while one runs waits in the
