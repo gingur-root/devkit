@@ -33,6 +33,11 @@ on:
         type: string
         required: false
         default: 'main'
+      issue:
+        description: 'A manual (workflow_dispatch) run: the issue to run on. Unset on issue events.'
+        type: string
+        required: false
+        default: ''
     secrets:
       # Both unset on the WSL desk.
       AGENTS_SECRETS_TOKEN:
@@ -45,7 +50,7 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request))
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
@@ -75,7 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
-          ISSUE: ${{ github.event.issue.number }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
           SOURCE: ${{ github.sha }}
           APP_ID: ${{ inputs.appId }}
         run: |
@@ -91,7 +96,7 @@ jobs:
   plan:
     name: Plan
     needs: start
-    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request))
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     permissions:
       contents: read
@@ -108,7 +113,7 @@ jobs:
   publish:
     name: Publish
     needs: [start, plan]
-    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request)) && needs.start.result == 'success'
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != '')) && needs.start.result == 'success'
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
@@ -150,3 +155,23 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out"
+
+  # A plan that asked questions is the normal flow; only a failed job gets a retro.
+  retro:
+    name: Retro
+    needs: [start, plan, publish]
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && contains(needs.*.result, 'failure')
+    # The ceiling for the nested jobs: the agent checks out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.retro.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      executor: ${{ inputs.executor }}
+      fixture: ${{ inputs.fixture }}
+      devkitRef: ${{ inputs.devkitRef }}
+      jobs: ${{ toJSON(needs) }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}

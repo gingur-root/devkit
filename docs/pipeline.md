@@ -44,6 +44,22 @@ The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
 merges.
 
+## Retros
+
+When a plan or build run fails, or a review leaves the card in **Needs you**,
+the same run ends with a retro (`agent.retro.yml`). Claude reads the issue
+thread, the card's history, each job's result and each agent's transcript,
+then posts one **Retro** comment: what went wrong and the fix it suggests for
+each finding (a check, a doc, a persona prompt, a setting).
+
+- It only suggests. It changes no label, card, branch or PR. To act on a
+  fix, open an issue for it and run it through plan and build as usual.
+- One retro per run. A plan that asks you questions gets none, since that is
+  the normal flow.
+- It can't read the Actions log, so a job that died before its agent wrote
+  anything shows up only as `failure`; the retro names the step to check.
+- Elevated runs get no retro yet.
+
 ## Elevated runs (the WSL desk)
 
 For a plan that needs Troy's own admin access (a new provider, an org setting,
@@ -99,6 +115,30 @@ repair rounds, tokens and minutes. A full run took about 11 minutes on
 the first try, more when reviews ask for repairs. Runs go one at a time, and
 a live pipeline run may wait behind one for a runner. Case format:
 scratch's `eval/README.md`.
+
+## Proving a devkit branch
+
+Never point scratch's main caller at a branch: every other run on scratch
+would run that branch too. Run the proof by hand from your own scratch branch
+instead. scratch's main and its issue events stay on devkit main.
+
+1. Branch scratch, and in `.github/workflows/agents.yml` change each
+   `agent.*.yml@main` and `devkitRef: main` to your devkit branch. Push it.
+   Don't open a PR.
+2. Run one stage on a scratch issue:
+
+   ```bash
+   gh workflow run agents.yml -R gingur-root/scratch --ref <scratch-branch> \
+     -f stage=plan -f issue=<n> -f executor=stub
+   ```
+
+   `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
+
+3. Delete the scratch branch when you are done.
+
+The build still starts from scratch's main, so its PR holds only the agent's
+change. Composite actions (`actions/*@main`) and `agent:elevated` always run
+devkit main.
 
 ## Known limits
 
