@@ -95,8 +95,9 @@ check the agents never see.
 
 The scorecard has, per case: the plan's outcome, whether the hidden check
 passes, the last review, whether the review passed a change the check fails,
-repair rounds, tokens and minutes. Each run holds a runner for hours and runs
-one at a time, so a live pipeline run may wait behind it. Case format:
+repair rounds, tokens and minutes. A full run took about 11 minutes on
+the first try, more when reviews ask for repairs. Runs go one at a time, and
+a live pipeline run may wait behind one for a runner. Case format:
 scratch's `eval/README.md`.
 
 ## Known limits
