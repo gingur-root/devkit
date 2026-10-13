@@ -28,10 +28,14 @@ runs:
   steps:
     - name: Apply version overrides
       shell: bash
+      env:
+        NODE: ${{ inputs.node }}
+        PNPM: ${{ inputs.pnpm }}
+        BUN: ${{ inputs.bun }}
       run: |
-        if [ -n "${{ inputs.node }}" ]; then echo "PROTO_NODE_VERSION=${{ inputs.node }}" >> "$GITHUB_ENV"; fi
-        if [ -n "${{ inputs.pnpm }}" ]; then echo "PROTO_PNPM_VERSION=${{ inputs.pnpm }}" >> "$GITHUB_ENV"; fi
-        if [ -n "${{ inputs.bun }}" ]; then echo "PROTO_BUN_VERSION=${{ inputs.bun }}" >> "$GITHUB_ENV"; fi
+        if [ -n "$NODE" ]; then echo "PROTO_NODE_VERSION=$NODE" >> "$GITHUB_ENV"; fi
+        if [ -n "$PNPM" ]; then echo "PROTO_PNPM_VERSION=$PNPM" >> "$GITHUB_ENV"; fi
+        if [ -n "$BUN" ]; then echo "PROTO_BUN_VERSION=$BUN" >> "$GITHUB_ENV"; fi
 
     - name: Setup proto toolchain
       uses: moonrepo/setup-toolchain@v0

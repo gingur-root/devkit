@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { CodexOptions } from '@openai/codex-sdk';
+import type { CodexOptions, SandboxMode } from '@openai/codex-sdk';
 
 import { CODEX_FEATURES_OFF, CODEX_HOME_FORBIDDEN, CODEX_SUBSCRIPTION_MODE } from '../constants.ts';
+import type { Role } from '../roles.ts';
 import { agentEnv, type Env, resolveExecutable, type RunInput } from './shared.ts';
 
 function codexHome(env: Env): string {
@@ -35,6 +36,13 @@ export function assertCodexHome(home: string): void {
     throw new Error(`Codex login in ${home} is not a ChatGPT login.`);
 }
 
+/** Codex has no tool allowlist, so the sandbox is the closest match to the role's tools. */
+export function codexSandbox(tools: Role['tools']): SandboxMode {
+  if (tools.includes('Bash')) return 'danger-full-access';
+  if (tools.includes('Edit') || tools.includes('Write')) return 'workspace-write';
+  return 'read-only';
+}
+
 export function codexOptions(ctx: {
   executable: string;
   env: Record<string, string>;
@@ -48,6 +56,8 @@ export function codexOptions(ctx: {
       agents: { enabled: false },
       // imagegen, openai-docs, skill-creator and skill-installer ship inside Codex.
       skills: { bundled: { enabled: false } },
+      // No AGENTS.md from the repo, matching Claude's `settingSources: []`.
+      project_doc_max_bytes: 0,
     },
   };
 }
@@ -59,9 +69,9 @@ export async function runCodex({ role, prompt, cwd, emit }: RunInput): Promise<b
   const options = codexOptions({ env, executable: resolveExecutable('codex', env.PATH) });
   const codex = new Codex(options);
   const thread = codex.startThread({
-    model: role.executor === 'codex' ? role.model : undefined,
+    model: role.model,
     modelReasoningEffort: role.effort,
-    sandboxMode: 'danger-full-access',
+    sandboxMode: codexSandbox(role.tools),
     approvalPolicy: 'never',
     workingDirectory: cwd,
     skipGitRepoCheck: true,

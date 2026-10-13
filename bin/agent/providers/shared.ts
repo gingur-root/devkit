@@ -38,6 +38,8 @@ export function agentEnv(executor: Executor, source: Env): Record<string, string
 /** The runner's own install, so the SDKs never fetch or run a bundled binary. */
 export function resolveExecutable(name: Executor, path: string | undefined): string {
   for (const dir of (path ?? '').split(delimiter)) {
+    // An empty entry means the current directory, which is the checked-out repo.
+    if (!dir) continue;
     const candidate = join(dir, name);
     try {
       accessSync(candidate, constants.X_OK);
