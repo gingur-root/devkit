@@ -5,16 +5,16 @@ Shared GitHub Actions, reusable workflows, configs and the `devkit` CLI for
 Standards and conventions: [`AGENTS.md`](./AGENTS.md). Design:
 gingur-root/devkit#1.
 
-| Piece                                                          | Use                                                                   |
-| -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `actions/toolchain.setup`                                      | Install the repo's declared runtimes with proto, then `pnpm install`. |
-| `.github/workflows/toolchain.verify.yml`                       | Format, lint, typecheck, test, build.                                 |
-| `actions/bitwarden.secrets.fetch`                              | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).              |
-| `actions/github.app.token`                                     | A short-lived, narrowed token from the gingur-root pipeline App.      |
-| `actions/gitleaks.scan`, `.github/workflows/gitleaks.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.            |
-| `.github/admission.txt`                                        | The admission gate every credential-holding job carries.              |
-| `configs/`                                                     | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.       |
-| `bin/`                                                         | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent run`.         |
+| Piece                                                        | Use                                                                   |
+| ------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `actions/toolchain.setup`                                    | Install the repo's declared runtimes with proto, then `pnpm install`. |
+| `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                 |
+| `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).              |
+| `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.      |
+| `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.            |
+| `.github/admission.txt`                                      | The admission gate every credential-holding job carries.              |
+| `configs/`                                                   | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.       |
+| `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent run`.         |
 
 ```yaml
 jobs:

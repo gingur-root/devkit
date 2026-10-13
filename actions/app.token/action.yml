@@ -46,7 +46,7 @@ runs:
     # The secret UUID of PIPELINE_APP_PRIVATE_KEY in Bitwarden `pipeline`
     # (gingur-root/infra runbook § Record). A UUID, not a secret.
     - id: key
-      uses: gingur-root/devkit/actions/bitwarden.secrets.fetch@main
+      uses: gingur-root/devkit/actions/secrets.fetch@main
       with:
         token: ${{ inputs.token }}
         secrets: 826a31e9-abed-4507-9a9f-b4df0181b5c2 > PIPELINE_APP_PRIVATE_KEY # gitleaks:allow
