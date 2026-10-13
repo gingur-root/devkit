@@ -94,6 +94,12 @@ function verdict(job: Job, liveRevision: string, out: string): Verdict {
   if (result.status === 'complete' && job.role === 'plan' && !existsSync(join(out, PLAN_FILE))) {
     return { stage: 'validate', reason: `the agent wrote no ${PLAN_FILE}` };
   }
+  if (result.status !== 'complete' && result.outcome !== null) {
+    return {
+      stage: 'validate',
+      reason: `a ${result.status} run set outcome \`${result.outcome}\``,
+    };
+  }
   const candidate = join(out, CANDIDATE_FILE);
   if (
     result.outcome === 'implemented' &&
