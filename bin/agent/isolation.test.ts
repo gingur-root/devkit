@@ -8,12 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 
-import { BILLING_KEYS } from './constants.ts';
 import {
   agentEnv,
   assertClaudeInit,
   assertCodexHome,
-  assertSubscriptionBilling,
   claudeOptions,
   codexOptions,
 } from './isolation.ts';
@@ -25,17 +23,10 @@ function scratch(): string {
   return dir;
 }
 
-test('every billing key blocks a run', () => {
-  for (const key of BILLING_KEYS) {
-    assert.throws(() => assertSubscriptionBilling({ [key]: 'x' }), new RegExp(key));
-  }
-  assert.doesNotThrow(() =>
-    assertSubscriptionBilling({ CLAUDE_CODE_OAUTH_TOKEN: 'x', PATH: '/bin' }),
-  );
-});
-
 test('each executor sees only its own credential and none of the job env', () => {
   const job = {
+    ANTHROPIC_API_KEY: 'sk-ant',
+    OPENAI_API_KEY: 'sk',
     PATH: '/bin',
     HOME: '/home/r',
     CLAUDE_CODE_OAUTH_TOKEN: 'claude',
@@ -57,7 +48,6 @@ test('Claude loads nothing from disk and only the role tools', () => {
   const options = claudeOptions(ROLES.hello, { cwd: '/w', executable: '/bin/claude', env: {} });
   assert.deepEqual(options.settingSources, []);
   assert.equal(options.strictMcpConfig, true);
-  assert.deepEqual(options.mcpServers, {});
   assert.deepEqual(options.tools, ['Bash', 'Read']);
   assert.equal(options.persistSession, false);
 });

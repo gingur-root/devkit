@@ -4,18 +4,6 @@ export type Executor = (typeof EXECUTORS)[number];
 export const EFFORTS = ['low', 'medium', 'high'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-/**
- * Any of these in an agent's environment moves billing off the Pro/Max and
- * ChatGPT subscriptions onto metered API usage, silently. A run refuses to
- * start if one is set.
- */
-export const BILLING_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'OPENAI_API_KEY',
-  'CODEX_API_KEY',
-] as const;
-
 /** Claude's `apiKeySource` values that mean the subscription OAuth token. */
 export const CLAUDE_SUBSCRIPTION_SOURCES = ['none', 'oauth'] as const;
 

@@ -40,17 +40,17 @@ the role declares:
 - **Codex:** account apps, remote plugins, hooks, memories, subagents and
   bundled skills off. The run stops if the Codex home holds a `config.toml` or
   `AGENTS.md`, or isn't a ChatGPT login.
-- **Both:** the agent's env is an allowlist holding only its own credential. Any
-  of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` or
-  `CODEX_API_KEY` stops the run, as does a non-subscription Claude auth source.
+- **Both:** the agent's env is an allowlist holding only its own credential, so
+  an API key in the job never reaches it, and a run whose agent reports a
+  non-subscription login stops.
 
 The SDKs are optional peer dependencies, so repos that use devkit only to
 lint never install them. Agent jobs run devkit from its own checkout, where
 they're dev dependencies.
 
 ```sh
-devkit agent run --role hello --prompt 'Say hello.'                    # role's executor
-devkit agent run --role hello --executor codex --prompt-file prompt.md # override it
+devkit agent run --role hello --prompt 'Say hello.'                  # role's executor
+devkit agent run --role hello --executor codex --prompt 'Say hello.' # override it
 ```
 
 Output is one JSON object per line (`init`, `message`, `tool`, `result`,

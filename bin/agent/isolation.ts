@@ -10,7 +10,6 @@ import type { CodexOptions } from '@openai/codex-sdk';
 
 import {
   BASE_ENV,
-  BILLING_KEYS,
   CLAUDE_SUBSCRIPTION_SOURCES,
   CODEX_FEATURES_OFF,
   CODEX_HOME_FORBIDDEN,
@@ -22,16 +21,11 @@ import type { Role } from './roles.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-export function assertSubscriptionBilling(env: Env): void {
-  const set = BILLING_KEYS.filter((key) => env[key]);
-  if (set.length) {
-    throw new Error(
-      `${set.join(', ')} set: agent runs bill only to the Pro/Max or ChatGPT subscription. Unset it.`,
-    );
-  }
-}
-
-/** The agent's whole environment: an allowlist, never the job's env. */
+/**
+ * The agent's whole environment: an allowlist, never the job's env. This is also
+ * what keeps billing on the subscriptions: an API key in the job never reaches
+ * the agent.
+ */
 export function agentEnv(executor: Executor, source: Env): Record<string, string> {
   const { pass, set } = EXECUTOR_ENV[executor];
   const env: Record<string, string> = {};
@@ -56,8 +50,6 @@ export function claudeOptions(
     // MCP servers from disk.
     settingSources: [],
     strictMcpConfig: true,
-    mcpServers: {},
-    skills: [],
     // The allowlist is what actually removes subagents (Task), skills (Skill)
     // and the scheduling and messaging tools: an absent tool cannot be called.
     tools: [...role.tools, ...(role.web ? ['WebSearch', 'WebFetch'] : [])],

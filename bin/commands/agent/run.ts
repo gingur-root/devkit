@@ -18,8 +18,7 @@ export default {
       .addOption(
         new Option('--executor <executor>', "override the role's executor").choices(EXECUTORS),
       )
-      .addOption(new Option('--prompt <text>', 'prompt text').conflicts('promptFile'))
-      .option('--prompt-file <path>', 'file holding the prompt')
+      .requiredOption('--prompt <text>', 'prompt text')
       .option('--cwd <dir>', 'working directory for the agent', '.');
   },
   async run(options) {
