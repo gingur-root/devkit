@@ -1,0 +1,14 @@
+{
+  "job": "",
+  "role": "retro",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "answered",
+  "summary": "Stub retro with no outputs field, so it fails the schema."
+}

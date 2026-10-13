@@ -150,3 +150,23 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out"
+
+  # A plan that asked questions is the normal flow; only a failed job gets a retro.
+  retro:
+    name: Retro
+    needs: [start, plan, publish]
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && contains(needs.*.result, 'failure')
+    # The ceiling for the nested jobs: the agent checks out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.retro.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      executor: ${{ inputs.executor }}
+      fixture: ${{ inputs.fixture }}
+      devkitRef: ${{ inputs.devkitRef }}
+      jobs: ${{ toJSON(needs) }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}

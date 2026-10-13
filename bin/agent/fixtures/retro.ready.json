@@ -1,0 +1,39 @@
+{
+  "job": "",
+  "role": "retro",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "answered",
+  "summary": "Stub retro: the run stopped because the stub fixture asked it to.",
+  "evidence": [],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Plan the suggested fix if you want it.",
+  "findings": null,
+  "subtasks": null,
+  "followups": [
+    {
+      "title": "Stub fix",
+      "body": "The stub fixture suggests no real change."
+    }
+  ],
+  "failure": null
+}
