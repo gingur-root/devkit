@@ -23,6 +23,9 @@ importers:
       oxlint:
         specifier: ^1.73
         version: 1.87.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.296

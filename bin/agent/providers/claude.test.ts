@@ -8,7 +8,12 @@ import { ROLES } from '../roles.ts';
 import { assertClaudeInit, claudeOptions } from './claude.ts';
 
 test('Claude init outside the role stops the run', () => {
-  const options = claudeOptions(ROLES.hello, { cwd: '/w', executable: '/bin/claude', env: {} });
+  const options = claudeOptions(ROLES.hello, {
+    cwd: '/w',
+    executable: '/bin/claude',
+    env: {},
+    instructions: '',
+  });
   const clean = { apiKeySource: 'none', tools: ['Bash', 'Read'] };
   assert.doesNotThrow(() => assertClaudeInit(clean, options));
   assert.throws(() => assertClaudeInit({ ...clean, apiKeySource: 'ANTHROPIC_API_KEY' }, options));

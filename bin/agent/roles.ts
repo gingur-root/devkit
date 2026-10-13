@@ -5,11 +5,18 @@ export interface Role {
   /** Omitted: the account's default model. */
   model?: string;
   effort: Effort;
-  instructions: string;
+  objective: string;
+  /**
+   * Instruction files, relative to devkit's root, joined in order. A repo
+   * overrides one by committing the same path under `.devkit/`.
+   */
+  instructions: readonly string[];
   /** Claude built-in tools the role gets. Anything else, including subagents and skills, is absent. */
   tools: readonly string[];
   web: boolean;
   timeoutMinutes: number;
+  /** Whether the run returns the result envelope (bin/agent/result.ts). */
+  result: boolean;
 }
 
 export const ROLES = {
@@ -17,11 +24,29 @@ export const ROLES = {
     executor: 'claude',
     model: 'claude-sonnet-5-5',
     effort: 'low',
-    instructions:
-      'You are a smoke test for the gingur-root agent runner. Answer in one short line.',
+    objective: 'Say hello.',
+    instructions: ['agents/hello.md'],
     tools: ['Bash', 'Read'],
     web: false,
     timeoutMinutes: 5,
+    result: false,
+  },
+  plan: {
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'medium',
+    objective:
+      'Plan the issue: acceptance criteria with IDs, how each is checked, and the open questions.',
+    instructions: [
+      'agents/worker.md',
+      'skills/plain-english/SKILL.md',
+      'agents/contract.md',
+      'agents/plan.md',
+    ],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
+    web: true,
+    timeoutMinutes: 30,
+    result: true,
   },
 } as const satisfies Record<string, Role>;
 

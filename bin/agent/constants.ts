@@ -1,4 +1,5 @@
-export const EXECUTORS = ['claude', 'codex'] as const;
+/** `stub` writes fixture results instead of calling a model, for smoke runs of the chain. */
+export const EXECUTORS = ['claude', 'codex', 'stub'] as const;
 export type Executor = (typeof EXECUTORS)[number];
 
 export const EFFORTS = ['low', 'medium', 'high'] as const;
@@ -31,6 +32,7 @@ export const EXECUTOR_ENV = {
     set: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', ENABLE_CLAUDEAI_MCP_SERVERS: 'false' },
   },
   codex: { pass: ['CODEX_HOME'], set: {} },
+  stub: { pass: ['DEVKIT_STUB_FIXTURE'], set: {} },
 } as const satisfies Record<
   Executor,
   { pass: readonly string[]; set: Readonly<Record<string, string>> }
@@ -54,3 +56,18 @@ export const CODEX_FEATURES_OFF = [
 
 /** Files in the Codex home the SDK cannot be told to ignore. */
 export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
+
+/** The stub's fixtures, in bin/agent/fixtures/. */
+export const STUB_FIXTURES = ['ready', 'invalid'] as const;
+export type StubFixture = (typeof STUB_FIXTURES)[number];
+
+/** The operator's GitHub user ID, as in the admission expression. */
+export const OPERATOR_ID = 2553213;
+
+export const BOARD_TITLE = 'Pipeline';
+export const STATUS_FIELD = 'Status';
+export const STATUSES = ['Ask', 'Planning', 'Needs you', 'Building', 'Ready', 'Done'] as const;
+export type Status = (typeof STATUSES)[number];
+
+/** The label that starts each stage; the pipeline removes it when the run ends. */
+export const STAGE_LABELS = { plan: 'agent:plan' } as const;
