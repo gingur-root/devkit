@@ -23,7 +23,12 @@ test('a Codex home with config or a non-ChatGPT login stops the run', (t) => {
   assert.throws(() => assertCodexHome(home));
   login(JSON.stringify({ auth_mode: 'chatgpt' }));
   assert.doesNotThrow(() => assertCodexHome(home));
-  writeFileSync(join(home, 'config.toml'), '');
+  const config = (body: string) => writeFileSync(join(home, 'config.toml'), body);
+  config('[projects."/work/repo"]\ntrust_level = "trusted"\n');
+  assert.doesNotThrow(() => assertCodexHome(home), 'the trust entry Codex writes itself');
+  config('[projects."/work/repo"]\ntrust_level = "trusted"\nmodel = "other"\n');
+  assert.throws(() => assertCodexHome(home));
+  config('[mcp_servers.x]\ncommand = "x"\n');
   assert.throws(() => assertCodexHome(home));
 });
 

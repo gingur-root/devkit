@@ -21,12 +21,28 @@ function codexHome(env: Env): string {
 }
 
 /**
+ * Codex writes `[projects."<dir>"] trust_level = …` to config.toml the first
+ * time it runs in a new workdir. That entry loads nothing, so it is allowed.
+ */
+function trustOnly(config: string): boolean {
+  return config
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .every((line) => /^\[projects\."[^"]*"\]$/.test(line) || /^trust_level = "\w+"$/.test(line));
+}
+
+/**
  * The SDK cannot pass `--ignore-user-config`, so the Codex home must hold
- * nothing but the login, and the login must be ChatGPT. Only `auth_mode` is
- * read from auth.json; nothing from it is printed.
+ * nothing but the login and trust entries, and the login must be ChatGPT. Only
+ * `auth_mode` is read from auth.json; nothing from it is printed.
  */
 export function assertCodexHome(home: string): void {
-  const present = CODEX_HOME_FORBIDDEN.filter((file) => existsSync(join(home, file)));
+  const present = CODEX_HOME_FORBIDDEN.filter((file) => {
+    const path = join(home, file);
+    if (!existsSync(path)) return false;
+    return file !== 'config.toml' || !trustOnly(readFileSync(path, 'utf8'));
+  });
   if (present.length)
     throw new Error(
       `${home} has ${present.join(', ')}; agent runs load config only from the role.`,
