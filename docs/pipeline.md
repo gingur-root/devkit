@@ -90,6 +90,30 @@ same path under `.devkit/` (infra's `.devkit/agents/elevated.md`). A skill is
 `skills/<name>/SKILL.md` with a `roles: plan, elevated` frontmatter line; a
 repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
 
+## Proving a devkit branch
+
+Never point scratch's main caller at a branch: every other run on scratch
+would run that branch too. Run the proof by hand from your own scratch branch
+instead. scratch's main and its issue events stay on devkit main.
+
+1. Branch scratch, and in `.github/workflows/agents.yml` change each
+   `agent.*.yml@main` and `devkitRef: main` to your devkit branch. Push it.
+   Don't open a PR.
+2. Run one stage on a scratch issue:
+
+   ```bash
+   gh workflow run agents.yml -R gingur-root/scratch --ref <scratch-branch> \
+     -f stage=plan -f issue=<n> -f executor=stub
+   ```
+
+   `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
+
+3. Delete the scratch branch when you are done.
+
+The build still starts from scratch's main, so its PR holds only the agent's
+change. Composite actions (`actions/*@main`) and `agent:elevated` always run
+devkit main.
+
 ## Known limits
 
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the
