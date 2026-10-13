@@ -86,7 +86,8 @@ test('every job that touches a secret, or names the gate, carries the exact admi
   for (const [name, job] of jobs()) {
     const text = JSON.stringify(job);
     const gated =
-      text.includes('secrets.') ||
+      // Inside an expression only: `secrets.scan.yml` and `secrets.fetch` are names, not secrets.
+      /\$\{\{[^}]*\bsecrets\./.test(text) ||
       job.secrets !== undefined ||
       text.includes('repository_owner_id');
     if (!gated) continue;
