@@ -22,7 +22,7 @@ inputs:
     description: 'The commit to check out, from the job contract.'
     required: true
   token:
-    description: 'AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login.'
+    description: "AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login. Empty: Claude uses the runner user's own login (the WSL desk)."
     required: true
   devkitRef:
     description: 'The devkit ref to run.'
@@ -60,7 +60,7 @@ runs:
 
     # CLAUDE_CODE_OAUTH_TOKEN in Bitwarden `agents` (infra runbook step 15).
     - id: secrets
-      if: ${{ inputs.executor != 'stub' && inputs.executor != 'codex' }}
+      if: ${{ inputs.token != '' && inputs.executor != 'stub' && inputs.executor != 'codex' }}
       uses: gingur-root/devkit/actions/secrets.fetch@main
       with:
         token: ${{ inputs.token }}

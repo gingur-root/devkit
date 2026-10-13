@@ -38,6 +38,24 @@ The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
 merges.
 
+## Elevated runs (the WSL desk)
+
+For a plan that needs Troy's own admin access (a new provider, an org setting,
+his browser), add `agent:elevated` instead of `agent:build`. The run goes to
+the one runner on his WSL desk, which runs as him and which GitHub lets only
+`agent.elevated.yml` on main use.
+
+1. The card goes to **Needs you** with "Queued for the WSL desk".
+2. On WSL, run `elevated on` (setup in infra's runbook). It takes that one job
+   and exits. Until then the job waits in GitHub's queue, which cancels it
+   after 24 hours.
+3. Claude carries out the plan with his access, gating each outside write on a
+   named rollback. Repo changes come back as a draft PR from the App, as a
+   build would. There is no review stage.
+
+`needs:elevated` marks an issue an agent says needs the desk. It starts
+nothing; add `agent:elevated` yourself.
+
 ## Known limits
 
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the

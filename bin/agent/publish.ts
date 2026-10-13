@@ -121,11 +121,16 @@ function verdict(job: Job, liveRevision: string, out: string): Verdict {
   return { result };
 }
 
+function retry(role: string): string {
+  if (role === 'plan' || role === 'elevated') return `add \`${STAGE_LABELS[role]}\``;
+  return 'reply `/approve`';
+}
+
 function stopped(job: Job, v: { stage: string; reason: string }): string {
   return [
     marker(job.role),
     `**${job.role[0]?.toUpperCase()}${job.role.slice(1)} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then ${job.role === 'plan' ? `add \`${STAGE_LABELS.plan}\`` : 'reply `/approve`'} again.`,
+    `Fix the cause, then ${retry(job.role)} again.`,
   ].join('\n\n');
 }
 
@@ -160,11 +165,12 @@ function planComment(job: Job, result: Result, out: string): string {
     .join('\n\n');
 }
 
-function buildComment(result: Result, pull: Pull | null): string {
+function buildComment(job: Job, result: Result, pull: Pull | null): string {
+  const stage = job.role === 'elevated' ? 'Elevated run' : 'Build';
   const head = pull
-    ? `**Build: [#${pull.number}](${pull.html_url}) is ready for review**`
-    : `**Build ${result.status}**`;
-  return [marker('build'), head, result.summary, numbered(result.questions)]
+    ? `**${stage}: [#${pull.number}](${pull.html_url}) is ready for review**`
+    : `**${stage} ${result.status}**`;
+  return [marker(job.role), head, result.summary, numbered(result.questions)]
     .filter(Boolean)
     .join('\n\n');
 }
@@ -346,7 +352,8 @@ async function publishBuildOrPlan(
   }
   const status = pull ? 'Ready' : 'Needs you';
   if ('stage' in v) return { body: stopped(job, v), status, stopped: true };
-  const body = job.role === 'plan' ? planComment(job, v.result, out) : buildComment(v.result, pull);
+  const body =
+    job.role === 'plan' ? planComment(job, v.result, out) : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
 
