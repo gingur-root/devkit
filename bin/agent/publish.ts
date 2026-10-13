@@ -114,7 +114,7 @@ function stopped(job: Job, v: { stage: string; reason: string }): string {
   return [
     marker(job.role),
     `**${job.role === 'plan' ? 'Plan' : 'Build'} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then add \`${STAGE_LABELS[job.role as keyof typeof STAGE_LABELS]}\` again.`,
+    `Fix the cause, then ${job.role === 'build' ? 'reply `/approve`' : `add \`${STAGE_LABELS[job.role as keyof typeof STAGE_LABELS]}\``} again.`,
   ].join('\n\n');
 }
 
@@ -127,7 +127,7 @@ function planComment(job: Job, result: Result, out: string): string {
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
   const head =
     result.status === 'complete'
-      ? `**Plan: ${result.outcome === 'ready' ? 'ready for `agent:build`' : 'needs your input'}**`
+      ? `**Plan: ${result.outcome === 'ready' ? 'ready: reply `/approve` to build it' : 'needs your input'}**`
       : `**Plan ${result.status}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
@@ -257,7 +257,7 @@ export async function publish(options: PublishOptions): Promise<void> {
 
   const label = STAGE_LABELS[job.role as keyof typeof STAGE_LABELS];
   await rest('DELETE', `${path}/labels/${encodeURIComponent(label)}`).catch((error: Error) => {
-    // A `/plan` comment run has no label to remove.
+    // A `/plan` or `/approve` comment run has no label to remove.
     if (!error.message.includes(' 404 ')) throw error;
   });
   await setStatus(job.repo, issue.node_id, pull ? 'Ready' : 'Needs you');
