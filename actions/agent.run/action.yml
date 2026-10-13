@@ -82,6 +82,22 @@ runs:
           pnpm agent run --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} \
             --cwd "$GITHUB_WORKSPACE/repo" --in "$RUNNER_TEMP/agent/in" --out "$out"
 
+    # The agent's whole change against the source, its commits included, for the
+    # controller to publish. Under `env -i` too: git runs whatever hooks or
+    # filters the agent left in repo/.git, so it gets the agent's access only.
+    - name: Candidate
+      if: ${{ always() }}
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+      run: |
+        out="$RUNNER_TEMP/agent/out"
+        mkdir -p "$out"
+        git() { env -i PATH="$PATH" HOME="$HOME" git -C "$GITHUB_WORKSPACE/repo" "$@"; }
+        git add -A
+        git diff --cached --binary "$SOURCE" >"$out/candidate.patch"
+        [ -s "$out/candidate.patch" ] || rm "$out/candidate.patch"
+
     - if: ${{ always() }}
       uses: actions/upload-artifact@v7
       with:

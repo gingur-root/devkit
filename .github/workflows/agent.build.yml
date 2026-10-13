@@ -1,0 +1,161 @@
+name: Build
+
+# agent:build on an issue with a ready plan: render the job from the plan
+# comment, run the builder, then push its change to agent/issue-<n>, open a
+# draft PR and move the card to Ready. Only the operator can start it (the
+# admission gate), so adding the label is the plan approval.
+# Callers set concurrency (one group per card) at their own workflow level.
+
+on:
+  workflow_call:
+    inputs:
+      # Required: the builder needs the runners' Codex login, so never GitHub-hosted.
+      runner:
+        description: 'Self-hosted runner label: callers pass vars.RUNNER.'
+        type: string
+        required: true
+      appId:
+        description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
+        type: string
+        required: true
+      executor:
+        description: "Override the builder's executor; `stub` for smoke runs."
+        type: string
+        required: false
+        default: ''
+      fixture:
+        description: 'The stub fixture: `ready` or `invalid`.'
+        type: string
+        required: false
+        default: 'ready'
+      devkitRef:
+        description: 'The devkit ref the jobs run.'
+        type: string
+        required: false
+        default: 'main'
+    secrets:
+      AGENTS_SECRETS_TOKEN:
+        required: true
+      PIPELINE_SECRETS_TOKEN:
+        required: true
+
+permissions: {}
+
+jobs:
+  start:
+    name: Start
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build')
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      source: ${{ steps.render.outputs.source }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionIssues: write
+          permissionOrganizationProjects: write
+
+      # Render first: it fails, leaving the card alone, when there is no ready plan.
+      - id: render
+        name: Render
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          SOURCE: ${{ github.sha }}
+          APP_ID: ${{ inputs.appId }}
+        run: |
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build --source "$SOURCE" \
+            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+          echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
+          pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/agent/in
+
+  build:
+    name: Build
+    needs: start
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build')
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: build
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          source: ${{ needs.start.outputs.source }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          devkitRef: ${{ inputs.devkitRef }}
+
+  publish:
+    name: Publish
+    needs: [start, build]
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise'))))) && (github.event_name == 'issues' && github.event.label.name == 'agent:build') && needs.start.result == 'success'
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionContents: write
+          permissionIssues: write
+          permissionPullRequests: write
+          permissionOrganizationProjects: write
+
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      # The push target. Its credentials stay in repo/.git for publish's git push.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.start.outputs.source }}
+          path: repo
+          token: ${{ steps.app.outputs.token }}
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/agent/in
+
+      # Missing when the build job died before writing anything; publish names that stage.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: agent-out
+          path: ${{ runner.temp }}/agent/out
+
+      - name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" \
+            --checkout "$GITHUB_WORKSPACE/repo"

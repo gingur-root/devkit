@@ -70,4 +70,10 @@ export const STATUSES = ['Ask', 'Planning', 'Needs you', 'Building', 'Ready', 'D
 export type Status = (typeof STATUSES)[number];
 
 /** The label that starts each stage; the pipeline removes it when the run ends. */
-export const STAGE_LABELS = { plan: 'agent:plan' } as const;
+export const STAGE_LABELS = { plan: 'agent:plan', build: 'agent:build' } as const;
+
+/** The pipeline App's bot user, which authors the build's commits. */
+export const PIPELINE_BOT = {
+  name: 'gingur-root-pipeline[bot]',
+  email: '340770692+gingur-root-pipeline[bot]@users.noreply.github.com',
+} as const;
