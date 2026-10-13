@@ -44,6 +44,22 @@ The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
 merges.
 
+## Retros
+
+When a plan or build run fails, or a review leaves the card in **Needs you**,
+the same run ends with a retro (`agent.retro.yml`). Claude reads the issue
+thread, the card's history, each job's result and each agent's transcript,
+then posts one **Retro** comment: what went wrong and the fix it suggests for
+each finding (a check, a doc, a persona prompt, a setting).
+
+- It only suggests. It changes no label, card, branch or PR. To act on a
+  fix, open an issue for it and run it through plan and build as usual.
+- One retro per run. A plan that asks you questions gets none, since that is
+  the normal flow.
+- It can't read the Actions log, so a job that died before its agent wrote
+  anything shows up only as `failure`; the retro names the step to check.
+- Elevated runs get no retro yet.
+
 ## Elevated runs (the WSL desk)
 
 For a plan that needs Troy's own admin access (a new provider, an org setting,

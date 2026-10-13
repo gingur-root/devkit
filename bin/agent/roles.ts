@@ -82,6 +82,20 @@ export const ROLES = {
     timeoutMinutes: 30,
     result: true,
   },
+  retro: {
+    // devkit#39: reads a failed or Needs-you run and only suggests fixes, so it
+    // gets no edit tools; publish posts its one comment.
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'medium',
+    objective:
+      'Run a retro on this pipeline run: what went wrong, and the fix that would stop it next time.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/retro.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep'],
+    web: false,
+    timeoutMinutes: 20,
+    result: true,
+  },
   elevated: {
     // Runs on the operator's WSL desk as him (infra#43), on his own Claude
     // login: the one role whose job holds admin credentials.

@@ -1,0 +1,158 @@
+name: Retro
+
+# The pipeline's retro on its own run (devkit#39). agent.plan.yml and
+# agent.build.yml call this as their last job when a job failed or the card
+# ended in Needs you. Claude reads the run (the issue thread, the card's
+# history, each job's result and each agent's transcript and result) and posts
+# one comment of suggested fixes. It only suggests: it changes no label, card,
+# branch or PR, and the operator plans any fix himself. One retro per run,
+# since jobs run only on a run's first attempt.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner label: callers pass vars.RUNNER.'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+      appId:
+        description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
+        type: string
+        required: true
+      executor:
+        description: "Override the retro's executor; `stub` for smoke runs."
+        type: string
+        required: false
+        default: ''
+      fixture:
+        description: 'The stub fixture: `ready` or `invalid`.'
+        type: string
+        required: false
+        default: 'ready'
+      devkitRef:
+        description: 'The devkit ref the jobs run.'
+        type: string
+        required: false
+        default: 'main'
+      jobs:
+        description: "The calling workflow's `toJSON(needs)`: each job's result and outputs."
+        type: string
+        required: true
+    secrets:
+      # Both unset on the WSL desk.
+      AGENTS_SECRETS_TOKEN:
+        required: false
+      PIPELINE_SECRETS_TOKEN:
+        required: false
+
+permissions: {}
+
+jobs:
+  start:
+    name: Start
+    if: github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      # The WSL desk mints no App token: the operator's own `gh` reads there.
+      - id: app
+        if: inputs.runner != 'wsl'
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionIssues: read
+
+      # Every stage's job file, result and transcript so far, one directory each.
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/agent/in/run
+
+      - name: Render
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          SOURCE: ${{ github.sha }}
+          APP_ID: ${{ inputs.appId }}
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role retro --source "$SOURCE" \
+            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+          printf '%s\n' "$JOBS" >"$RUNNER_TEMP/agent/in/run/jobs.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: retro-in
+          path: ${{ runner.temp }}/agent/in
+
+  retro:
+    name: Retro
+    needs: start
+    if: github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: retro
+          prefix: retro
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          source: ${{ github.sha }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          devkitRef: ${{ inputs.devkitRef }}
+
+  publish:
+    name: Publish
+    needs: retro
+    if: github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: retro-in
+          path: ${{ runner.temp }}/agent/in
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: retro-out
+          path: ${{ runner.temp }}/agent/out
+
+      - id: app
+        if: inputs.runner != 'wsl'
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionIssues: write
+
+      - name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out"

@@ -3,7 +3,8 @@
 // move the card on. A build also pushes its candidate and opens a draft PR; a
 // review posts on that PR and marks it ready when it passes, or hands its
 // findings to a repair, which pushes a fix to the same PR. The pipeline never
-// merges. Only this writes GitHub, and only with the App.
+// merges. A retro only adds its one comment. Only this writes GitHub, and only
+// with the App.
 
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
@@ -394,11 +395,35 @@ async function publishBuildOrPlan(
   return { body, status, stopped: false };
 }
 
+/**
+ * A retro's findings, each with the fix it suggests, as a new comment: one per
+ * run. It never touches labels or the card, and a failed retro posts nothing,
+ * so it can't loop.
+ */
+export function retroComment(result: Result, runUrl: string): string {
+  const findings = (result.followups ?? []).map((f) => `- **${f.title}:** ${f.body}`).join('\n');
+  return [
+    marker('retro'),
+    `**Retro on [this run](${runUrl})**. These are suggestions only: plan any you want with a new issue.`,
+    result.summary,
+    findings,
+    numbered(result.questions),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 export async function publish(options: PublishOptions): Promise<void> {
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  if (job.role === 'retro') {
+    if ('stage' in v) throw new Error(`Retro stopped at ${v.stage}: ${v.reason}.`);
+    const runUrl = `${process.env.GITHUB_SERVER_URL}/${job.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+    await rest('POST', `${path}/comments`, { body: retroComment(v.result, runUrl) });
+    return;
+  }
   const { body, status, stopped } =
     job.role === 'review'
       ? await publishReview(job, v, options.round ?? 0)
@@ -417,5 +442,9 @@ export async function publish(options: PublishOptions): Promise<void> {
   });
   await setStatus(job.repo, issue.node_id, status);
 
+  // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
+  // A plan that asks questions is the normal flow, not trouble.
+  if (status === 'Needs you' && job.role !== 'plan' && process.env.GITHUB_OUTPUT)
+    appendFileSync(process.env.GITHUB_OUTPUT, 'retro=true\n');
   if (stopped) process.exitCode = 1;
 }

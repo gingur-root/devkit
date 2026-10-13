@@ -10,6 +10,7 @@ import {
   CONTRACT_PREFIX,
   ISSUE_FILE,
   JOB_FILE,
+  TIMELINE_FILE,
   type Job,
   marker,
   PLAN_END,
@@ -29,6 +30,13 @@ interface Authored {
 
 interface Comment extends Authored {
   body: string;
+}
+
+interface Event {
+  event: string;
+  created_at?: string;
+  actor?: { login: string } | null;
+  label?: { name: string };
 }
 
 interface Issue extends Authored {
@@ -59,6 +67,17 @@ export function issueSnapshot(issue: Issue, comments: Authored[], appId: number)
     .filter((comment) => trusted(comment, appId))
     .map((comment) => `## Comment, ${comment.created_at}\n\n${comment.body ?? ''}`);
   return [head, ...thread].join('\n\n');
+}
+
+/** The card's history for a retro: one line per timeline event. Comments are in the snapshot. */
+export function timeline(events: Event[]): string {
+  return events
+    .filter((e) => e.event !== 'commented')
+    .map(
+      (e) =>
+        `- ${e.created_at ?? ''} ${e.event}${e.label ? ` \`${e.label.name}\`` : ''}${e.actor ? ` by ${e.actor.login}` : ''}`,
+    )
+    .join('\n');
 }
 
 /** Text between two markers in a comment, or null. */
@@ -105,8 +124,11 @@ export async function render(options: RenderOptions): Promise<Job> {
     restAll<Authored>(`${path}/comments`),
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
+  // A retro reads whatever the run left, ready plan or not.
   const approved =
-    options.role === 'plan' ? null : approvedPlan(comments, options.appId, issueRevision);
+    options.role === 'plan' || options.role === 'retro'
+      ? null
+      : approvedPlan(comments, options.appId, issueRevision);
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -138,5 +160,10 @@ export async function render(options: RenderOptions): Promise<Job> {
     `${issueSnapshot(issue, comments, options.appId)}\n`,
   );
   if (approved) writeFileSync(join(options.out, PLAN_FILE), `${approved.plan}\n`);
+  if (options.role === 'retro')
+    writeFileSync(
+      join(options.out, TIMELINE_FILE),
+      `${timeline(await restAll<Event>(`${path}/timeline`))}\n`,
+    );
   return job;
 }

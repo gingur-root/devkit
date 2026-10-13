@@ -18,8 +18,8 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   if (!input.in || !input.out) throw new Error('The stub needs --in and --out.');
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
   const result = JSON.parse(readFileSync(new URL(`${job.role}.${fixture}.json`, FIXTURES), 'utf8'));
-  // A plan writes plan.md; a build changes the checkout; a review writes nothing.
-  if (job.role !== 'review') {
+  // A plan writes plan.md; a build changes the checkout; a review or retro writes nothing.
+  if (job.role !== 'review' && job.role !== 'retro') {
     const target = job.role === 'build' ? join(input.cwd, 'STUB.md') : join(input.out, PLAN_FILE);
     copyFileSync(new URL(`${job.role}.md`, FIXTURES), target);
   }

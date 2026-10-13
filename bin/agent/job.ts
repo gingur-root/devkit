@@ -11,6 +11,10 @@ export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
+/** A retro's view of the card's history. */
+export const TIMELINE_FILE = 'timeline.md';
+/** Each agent's event stream, as `agent run` printed it. */
+export const TRANSCRIPT_FILE = 'transcript.jsonl';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
 

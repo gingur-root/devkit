@@ -1,10 +1,10 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PROVIDERS } from './providers/index.ts';
 import type { Executor } from './constants.ts';
-import { RESULT_FILE } from './job.ts';
+import { RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
 import { RESULT_JSON_SCHEMA } from './result.ts';
 import { ROLES, type Role, type RoleName } from './roles.ts';
 
@@ -79,10 +79,12 @@ export async function run(options: RunOptions): Promise<void> {
     in: options.in && resolve(options.in),
     out: options.out && resolve(options.out),
   };
-  const emit = (event: Record<string, unknown>) =>
-    process.stdout.write(
-      `${JSON.stringify({ role: options.role, executor: role.executor, ...event })}\n`,
-    );
+  // Also kept in the output directory, for a retro to read (devkit#39).
+  const emit = (event: Record<string, unknown>) => {
+    const line = `${JSON.stringify({ role: options.role, executor: role.executor, ...event })}\n`;
+    process.stdout.write(line);
+    if (dirs.out) appendFileSync(join(dirs.out, TRANSCRIPT_FILE), line);
+  };
   let ok = false;
   try {
     const output = await PROVIDERS[role.executor]({

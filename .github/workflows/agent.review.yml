@@ -53,6 +53,9 @@ on:
       candidate:
         description: 'The commit this round reviewed.'
         value: ${{ jobs.verdict.outputs.candidate }}
+      retro:
+        description: '`true` when this round left the card in Needs you.'
+        value: ${{ jobs.verdict.outputs.retro }}
 
 permissions: {}
 
@@ -180,6 +183,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       repair: ${{ steps.publish.outputs.repair }}
+      retro: ${{ steps.publish.outputs.retro }}
       candidate: ${{ steps.next.outputs.candidate }}
     steps:
       - id: app
