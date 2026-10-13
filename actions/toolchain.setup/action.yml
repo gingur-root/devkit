@@ -50,9 +50,11 @@ runs:
       shell: bash
       run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
+    # Self-hosted runners keep their pnpm store on disk, and Actions refuses
+    # cache writes from their issue-triggered jobs anyway.
     - name: Cache pnpm store
-      if: ${{ inputs.install == 'true' }}
-      uses: actions/cache@v4
+      if: ${{ inputs.install == 'true' && runner.environment == 'github-hosted' }}
+      uses: actions/cache@v6
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
         key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
