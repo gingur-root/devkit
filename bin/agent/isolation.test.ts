@@ -93,6 +93,8 @@ test('Codex turns off account apps, plugins, subagents and bundled skills', () =
       goals: false,
       image_generation: false,
     },
+    agents: { enabled: false },
+    skills: { bundled: { enabled: false } },
   });
 });
 
