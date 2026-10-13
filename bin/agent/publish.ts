@@ -114,7 +114,7 @@ function stopped(job: Job, v: { stage: string; reason: string }): string {
   return [
     marker(job.role),
     `**${job.role === 'plan' ? 'Plan' : 'Build'} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then ${job.role === 'build' ? 'reply `/approve`' : 'add `agent:plan`'} again.`,
+    `Fix the cause, then ${job.role === 'build' ? 'reply `/approve`' : `add \`${STAGE_LABELS[job.role as keyof typeof STAGE_LABELS]}\``} again.`,
   ].join('\n\n');
 }
 
