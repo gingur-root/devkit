@@ -83,6 +83,26 @@ export const ROLES = {
     timeoutMinutes: 30,
     result: true,
   },
+  elevated: {
+    // Runs on the operator's WSL desk as him (infra#43), on his own Claude
+    // login: the one role whose job holds admin credentials.
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'high',
+    objective:
+      "Carry out the approved plan with the operator's admin access, and check every criterion.",
+    instructions: [
+      'agents/worker.md',
+      'skills/plain-english/SKILL.md',
+      'agents/contract.md',
+      'agents/build.md',
+      'agents/elevated.md',
+    ],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
+    web: true,
+    timeoutMinutes: 60,
+    result: true,
+  },
 } as const satisfies Record<string, Role>;
 
 export type RoleName = keyof typeof ROLES;

@@ -74,6 +74,7 @@ export const STAGE_LABELS = {
   plan: 'agent:plan',
   build: 'agent:build',
   review: 'agent:build',
+  elevated: 'agent:elevated',
 } as const;
 
 /** The pipeline App's bot user, which authors the build's commits. */

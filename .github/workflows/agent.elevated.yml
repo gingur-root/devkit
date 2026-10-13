@@ -1,0 +1,146 @@
+name: Elevated
+
+# agent:elevated on an issue with a ready plan: carry the plan out on the
+# operator's WSL desk (infra#43), as him, with his admin access. The one job
+# that holds admin credentials, so only his label starts it (the admission
+# gate) and GitHub lets only this workflow on main use the `wsl` runner group.
+# The desk is off until he runs `elevated on`; until then the job waits in
+# GitHub's queue (cancelled after 24h) and the card sits in Needs you.
+# Like a build, the agent only returns files: the App on the VPS pushes its
+# change and opens the draft PR. There is no review stage.
+# Callers set concurrency (one group per card) at their own workflow level.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Self-hosted runner label for the controller jobs: callers pass vars.RUNNER.'
+        type: string
+        required: true
+      appId:
+        description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
+        type: string
+        required: true
+    secrets:
+      PIPELINE_SECRETS_TOKEN:
+        required: true
+
+permissions: {}
+
+jobs:
+  start:
+    name: Start
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && github.event_name == 'issues' && github.event.label.name == 'agent:elevated'
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      source: ${{ steps.render.outputs.source }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionIssues: write
+          permissionOrganizationProjects: write
+
+      # Render first: it fails, leaving the card alone, when there is no ready plan.
+      # The queued note is the stage's comment, so publish replaces it with the result.
+      - id: render
+        name: Render
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          SOURCE: ${{ github.sha }}
+          APP_ID: ${{ inputs.appId }}
+        run: |
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role elevated --source "$SOURCE" \
+            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+          echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
+          pnpm agent status --repo "$REPO" --issue "$ISSUE" --status 'Needs you' --role elevated \
+            --note '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/agent/in
+
+  # No secrets: the agent runs on the operator's own Claude login and access.
+  elevated:
+    name: Elevated
+    needs: start
+    if: (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && github.event_name == 'issues' && github.event.label.name == 'agent:elevated'
+    runs-on: wsl
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: elevated
+          source: ${{ needs.start.outputs.source }}
+          token: ''
+
+  publish:
+    name: Publish
+    needs: [start, elevated]
+    if: always() && (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && github.event_name == 'issues' && github.event.label.name == 'agent:elevated' && needs.start.result == 'success'
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionContents: write
+          permissionIssues: write
+          permissionPullRequests: write
+          permissionOrganizationProjects: write
+
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          path: devkit
+          persist-credentials: false
+
+      # The push target. Its credentials stay in repo/.git for publish's git push.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.start.outputs.source }}
+          path: repo
+          token: ${{ steps.app.outputs.token }}
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/agent/in
+
+      # Missing when the elevated job never ran or died first; publish names that stage.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: agent-out
+          path: ${{ runner.temp }}/agent/out
+
+      - name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" \
+            --checkout "$GITHUB_WORKSPACE/repo"
