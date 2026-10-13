@@ -1,0 +1,14 @@
+{
+  "job": "",
+  "role": "build",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "implemented",
+  "summary": "Stub build with no outputs field, so it fails the schema."
+}

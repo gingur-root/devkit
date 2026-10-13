@@ -1,0 +1,51 @@
+{
+  "job": "",
+  "role": "build",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "implemented",
+  "summary": "Stub build: adds STUB.md, so the pipeline has a change to publish.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": [
+    {
+      "ref": "A1",
+      "change": "Added STUB.md.",
+      "response": null,
+      "evidence": null
+    }
+  ],
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Review the pull request.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "failure": null
+}

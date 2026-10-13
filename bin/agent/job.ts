@@ -9,6 +9,28 @@ export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
+/** The build's change against `source`, as a binary git patch. */
+export const CANDIDATE_FILE = 'candidate.patch';
+
+/** Each stage's comment starts with its marker; the plan's text sits between these. */
+export const PLAN_START = '<!-- devkit:plan:start -->';
+export const PLAN_END = '<!-- devkit:plan:end -->';
+export const CONTRACT_PREFIX = '<!-- devkit:contract ';
+
+export function marker(role: string): string {
+  return `<!-- devkit:${role} -->`;
+}
+
+/** The hidden fields under a plan comment, which the build stage reads back. */
+export const PlanContract = z.object({
+  planRevision: z.string(),
+  outcome: z.string().nullable(),
+  source: z.string(),
+  issueRevision: z.string(),
+  checks: z.record(z.string(), z.string()),
+  critique: z.boolean().nullable(),
+});
+export type PlanContract = z.infer<typeof PlanContract>;
 
 export const Job = z.object({
   job: z.string(),

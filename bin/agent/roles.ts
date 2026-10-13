@@ -48,6 +48,23 @@ export const ROLES = {
     timeoutMinutes: 30,
     result: true,
   },
+  build: {
+    // agents/sdlc.md: Codex at High implements; the account default model.
+    executor: 'codex',
+    effort: 'high',
+    objective:
+      'Implement the approved plan for the issue, and check every criterion assigned to you.',
+    instructions: [
+      'agents/worker.md',
+      'skills/plain-english/SKILL.md',
+      'agents/contract.md',
+      'agents/build.md',
+    ],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
+    web: true,
+    timeoutMinutes: 60,
+    result: true,
+  },
 } as const satisfies Record<string, Role>;
 
 export type RoleName = keyof typeof ROLES;
