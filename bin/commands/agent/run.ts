@@ -1,14 +1,24 @@
-import type { ParsedCommand } from '../../command.ts';
+import { Option } from 'commander';
+
 import type { RunOptions } from '../../agent/run.ts';
+import { EXECUTORS } from '../../agent/constants.ts';
+import { ROLES } from '../../agent/roles.ts';
+import type { ParsedCommand } from '../../command.ts';
 
 export default {
   kind: 'parsed',
   describe: 'Run one agent role, isolated to what the role declares, on the subscription login',
   configure(command) {
     command
-      .requiredOption('--role <role>', 'role to run')
-      .option('--executor <executor>', "override the role's executor (claude or codex)")
-      .option('--prompt <text>', 'prompt text')
+      .addOption(
+        new Option('--role <role>', 'role to run')
+          .choices(Object.keys(ROLES))
+          .makeOptionMandatory(),
+      )
+      .addOption(
+        new Option('--executor <executor>', "override the role's executor").choices(EXECUTORS),
+      )
+      .addOption(new Option('--prompt <text>', 'prompt text').conflicts('promptFile'))
       .option('--prompt-file <path>', 'file holding the prompt')
       .option('--cwd <dir>', 'working directory for the agent', '.');
   },

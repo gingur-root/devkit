@@ -26,7 +26,3 @@ export const ROLES = {
 } as const satisfies Record<string, Role>;
 
 export type RoleName = keyof typeof ROLES;
-
-export function isRoleName(name: string): name is RoleName {
-  return Object.hasOwn(ROLES, name);
-}
