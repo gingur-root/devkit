@@ -33,6 +33,11 @@ on:
         type: string
         required: false
         default: 'main'
+      issue:
+        description: 'A manual (workflow_dispatch) run: the issue to run on. Unset on issue events.'
+        type: string
+        required: false
+        default: ''
       round:
         description: '0 reviews the build; n repairs, then reviews, for the nth time.'
         type: number
@@ -138,7 +143,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
-          ISSUE: ${{ github.event.issue.number }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
           CANDIDATE: ${{ steps.publish.outputs.candidate }}
           APP_ID: ${{ inputs.appId }}
         run: |
@@ -234,7 +239,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
-          ISSUE: ${{ github.event.issue.number }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
           APP_ID: ${{ inputs.appId }}
           ROUND: ${{ inputs.round }}
         run: |
