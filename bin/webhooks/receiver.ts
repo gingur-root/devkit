@@ -5,8 +5,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 export const WEBHOOK_PATH = '/github';
-// GitHub caps a payload at 25 MB.
-const MAX_BODY = 25 * 1024 * 1024;
+// Anyone can post here, and the body is read before its signature can be
+// checked, so it is capped well under GitHub's 25 MB: the events subscribed
+// to (issues, comments, items, PRs, runs) are far smaller.
+const MAX_BODY = 1024 * 1024;
 // shortcut: dedupe lives in memory and forgets on restart; make it durable when a handler starts runs.
 const SEEN_MAX = 10_000;
 
@@ -58,6 +60,7 @@ export function createReceiver(secret: string, handlers: WebhookHandler[]): Serv
     const text = (status: number, message: string) =>
       res.writeHead(status, { 'content-type': 'text/plain' }).end(`${message}\n`);
     if (req.method !== 'POST' || req.url !== WEBHOOK_PATH) return text(404, 'Not found');
+    if (!req.headers['x-hub-signature-256']) return text(401, 'Bad signature');
     const body = await readBody(req);
     if (!body) return text(413, 'Too large');
     const header = (name: string) => {
