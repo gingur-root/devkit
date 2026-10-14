@@ -2,7 +2,7 @@
 // didn't; this pins the guard that stops it.
 
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 
 import { ROLES } from '../roles.ts';
 import { assertClaudeInit, claudeOptions } from './claude.ts';

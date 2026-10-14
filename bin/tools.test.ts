@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 
 import { toolArgv, toolBin, toolCommand } from './tools.mjs';
 

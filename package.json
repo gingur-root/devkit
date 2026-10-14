@@ -19,7 +19,7 @@
     "staged": "node bin/devkit.mjs staged",
     "agent": "node bin/devkit.mjs agent",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ./bin/loader.mjs --test 'bin/**/*.test.ts' 'test/*.test.ts'"
+    "test": "vp test run"
   },
   "exports": {
     "./tsconfig": "./configs/tsconfig.base.json",
@@ -61,6 +61,7 @@
     "@openai/codex-sdk": "0.162.1",
     "@types/node": "^24.19.2",
     "typescript": "^7",
+    "vite-plus": "1.1.0",
     "yaml": "^2"
   }
 }

@@ -23,7 +23,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, test } from 'node:test';
+import { onTestFinished, test } from 'vite-plus/test';
 import { fileURLToPath } from 'node:url';
 
 const CLI = fileURLToPath(new URL('./devkit.mjs', import.meta.url));
@@ -46,7 +46,7 @@ function git(cwd: string, ...args: string[]): string {
 /** A temp directory removed when the suite finishes, so runs do not leak. */
 function scratch(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
-  after(() => rmSync(dir, { recursive: true, force: true }));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
