@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { passes, repairable } from './publish.ts';
+import { commitMessage, passes, repairable } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -42,4 +42,16 @@ test('only findings with nothing to ask go to repair', () => {
   assert.ok(!repairable({ ...asks, findings: [] }), 'nothing to fix');
   assert.ok(!repairable({ ...asks, questions: ['Which API?'] }), 'a decision for the operator');
   assert.ok(!repairable({ ...asks, outcome: 'inconclusive' }), 'an inconclusive review');
+});
+
+test('every pushed commit lists the operator as co-author', () => {
+  const issue = { number: 76, title: 'Add a thing', revision: '' };
+  for (const role of ['build', 'repair', 'elevated']) {
+    const trailers = commitMessage({ role, issue }).split('\n\n').at(-1);
+    assert.equal(
+      trailers,
+      'Co-authored-by: Troy Rhinehart <2553213+gingur@users.noreply.github.com>',
+      role,
+    );
+  }
 });
