@@ -13,6 +13,7 @@
         --line: #e7e5e4;
         --me: #e0f2fe;
         --accent: #0369a1;
+        --card: #f5f5f4;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -22,6 +23,7 @@
           --line: #44403c;
           --me: #0c4a6e;
           --accent: #7dd3fc;
+          --card: #292524;
         }
       }
       * {
@@ -47,7 +49,7 @@
         font-size: 0.8rem;
         text-transform: uppercase;
         color: var(--muted);
-        margin: 0 0 0.5rem;
+        margin: 1rem 0 0.5rem;
       }
       aside a {
         display: block;
@@ -55,6 +57,9 @@
         color: var(--fg);
         text-decoration: none;
         border-bottom: 1px solid var(--line);
+      }
+      aside a.here {
+        color: var(--accent);
       }
       aside small {
         color: var(--muted);
@@ -64,6 +69,22 @@
         display: flex;
         flex-direction: column;
         min-width: 0;
+      }
+      header {
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      header a {
+        color: var(--accent);
+      }
+      #status {
+        color: var(--muted);
+        font-size: 0.85rem;
       }
       #log {
         flex: 1;
@@ -86,6 +107,22 @@
       .tool {
         color: var(--muted);
         font-size: 0.85rem;
+      }
+      details.comment {
+        background: var(--card);
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        margin: 0 0 0.5rem;
+        max-width: 46rem;
+      }
+      details.comment summary {
+        color: var(--muted);
+        font-size: 0.85rem;
+        cursor: pointer;
+      }
+      details.comment div {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       form {
         display: flex;
@@ -145,17 +182,22 @@
   </head>
   <body>
     <aside>
+      <a href="#" id="home-link">Home</a>
       <h2>Threads</h2>
       <div id="threads">Loading…</div>
     </aside>
     <main>
       <button id="menu" type="button">☰ Threads</button>
+      <header>
+        <h1 id="title">Home</h1>
+        <div id="status">Ask, queue, start, or follow up on an issue.</div>
+      </header>
       <div id="log" aria-live="polite"></div>
       <form id="ask">
         <textarea
           id="prompt"
           rows="2"
-          placeholder="Ask, queue, start, or follow up on an issue"
+          placeholder="Message the coordinator"
           aria-label="Prompt"
         ></textarea>
         <button>Send</button>
@@ -163,39 +205,100 @@
     </main>
     <script>
       const log = document.getElementById('log');
-      let session;
-      try {
-        session = localStorage.getItem('session') ?? undefined;
-      } catch {}
+      function el(tag, props = {}, ...children) {
+        const node = Object.assign(document.createElement(tag), props);
+        node.append(...children);
+        return node;
+      }
+
+      // The open thread: null for home, or { repo, number } from the URL hash.
+      function current() {
+        const [repo, number] = decodeURIComponent(location.hash.slice(1)).split('/');
+        return repo && number ? { repo, number: Number(number) } : null;
+      }
 
       function add(text, cls) {
-        const el = document.createElement('p');
-        el.className = `msg ${cls}`;
-        el.textContent = text;
-        log.append(el);
+        log.append(el('p', { className: `msg ${cls}`, textContent: text }));
         log.scrollTop = log.scrollHeight;
-        return el;
+      }
+
+      function line({ role, text }) {
+        add(role === 'tool' ? `· ${text.replace('mcp__github__', '')}` : text, role);
+      }
+
+      // The status line: board column plus what is running now.
+      function statusLine(issue) {
+        if (issue.state === 'closed') return 'Done';
+        const running = issue.labels.find((l) => l.startsWith('agent:'));
+        const column = issue.status ?? 'Not on the board';
+        return running ? `${column} · ${running} running` : column;
+      }
+
+      async function openThread() {
+        const ref = current();
+        document.body.classList.remove('open');
+        log.replaceChildren();
+        const query = ref ? `?repo=${encodeURIComponent(ref.repo)}&number=${ref.number}` : '';
+        document.getElementById('title').textContent = ref ? `${ref.repo}#${ref.number}` : 'Home';
+        document.getElementById('status').textContent = 'Loading…';
+        try {
+          const { issue, lines } = await (await fetch(`/api/thread${query}`)).json();
+          if (issue) {
+            const title = document.getElementById('title');
+            title.replaceChildren(
+              el('a', {
+                href: issue.url,
+                target: '_blank',
+                textContent: `${issue.repo}#${issue.number}`,
+              }),
+              ` ${issue.title}`,
+            );
+            document.getElementById('status').textContent = statusLine(issue);
+            // The issue's comments are the record; the live lines follow them.
+            for (const c of issue.comments.slice(-10)) {
+              log.append(
+                el(
+                  'details',
+                  { className: 'comment' },
+                  el('summary', {
+                    textContent: `${c.author} · ${new Date(c.at).toLocaleString()}`,
+                  }),
+                  el('div', { textContent: c.body }),
+                ),
+              );
+            }
+          } else {
+            document.getElementById('status').textContent =
+              'Ask, queue, start, or follow up on an issue.';
+          }
+          lines.forEach(line);
+          log.scrollTop = log.scrollHeight;
+        } catch {
+          document.getElementById('status').textContent = 'Could not load this thread.';
+        }
+        loadThreads();
       }
 
       async function loadThreads() {
         const box = document.getElementById('threads');
+        const ref = current();
         try {
           const list = await (await fetch('/api/threads')).json();
           box.replaceChildren(
             ...list.map((t) => {
-              const a = document.createElement('a');
-              a.href = t.url;
-              a.target = '_blank';
-              a.textContent = t.title;
-              const meta = document.createElement('small');
-              meta.textContent = `${t.repo}#${t.number} ${t.labels.join(' ')}`;
-              a.append(meta);
+              const a = el(
+                'a',
+                { href: `#${t.repo}/${t.number}`, textContent: t.title },
+                el('small', { textContent: `${t.repo}#${t.number} ${t.labels.join(' ')}` }),
+              );
+              if (ref && ref.repo === t.repo && ref.number === t.number) a.className = 'here';
               // Queued asks wait in Ask until the coordinator or this button starts them.
               if (!t.labels.some((l) => l.startsWith('agent:'))) {
-                const start = document.createElement('button');
-                start.type = 'button';
-                start.className = 'start';
-                start.textContent = 'Start';
+                const start = el('button', {
+                  type: 'button',
+                  className: 'start',
+                  textContent: 'Start',
+                });
                 start.onclick = async (e) => {
                   e.preventDefault();
                   start.disabled = true;
@@ -234,7 +337,7 @@
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ prompt, session }),
+          body: JSON.stringify({ prompt, ...current() }),
         });
         if (!response.ok) {
           add(`Error: ${await response.text()}`, 'tool');
@@ -248,23 +351,18 @@
           buffer += value;
           const lines = buffer.split('\n');
           buffer = lines.pop();
-          for (const line of lines.filter(Boolean)) {
-            const event = JSON.parse(line);
-            if (event.type === 'session') {
-              session = event.id;
-              try {
-                localStorage.setItem('session', session);
-              } catch {}
-            } else if (event.type === 'text') add(event.text, 'bot');
-            else if (event.type === 'tool')
-              add(`· ${event.name.replace('mcp__github__', '')}`, 'tool');
+          for (const raw of lines.filter(Boolean)) {
+            const event = JSON.parse(raw);
+            if (event.type === 'text') line({ role: 'bot', text: event.text });
+            else if (event.type === 'tool') line({ role: 'tool', text: event.name });
             else if (event.type === 'error') add(`Error: ${event.message}`, 'tool');
           }
         }
         loadThreads();
       };
 
-      loadThreads();
+      window.addEventListener('hashchange', openThread);
+      openThread();
     </script>
   </body>
 </html>
