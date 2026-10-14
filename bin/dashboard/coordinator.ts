@@ -182,6 +182,18 @@ export function coordinatorOptions(env: NodeJS.ProcessEnv, resume?: string): Opt
   };
 }
 
+/** The thread a tool call hands the message to: only a valid `open_thread` call. */
+export function routeOf(
+  name: string,
+  input: unknown,
+): Extract<CoordinatorEvent, { type: 'route' }> | null {
+  if (name !== OPEN_THREAD_TOOL) return null;
+  const { repo, number } = (input ?? {}) as { repo?: unknown; number?: unknown };
+  if (typeof repo !== 'string' || !REPO_NAME.test(repo)) return null;
+  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) return null;
+  return { type: 'route', repo, number };
+}
+
 /** One turn of the conversation. `resume` continues an earlier one. */
 export async function* coordinate(
   prompt: string,
@@ -197,18 +209,8 @@ export async function* coordinate(
         if (block.type === 'text') yield { type: 'text', text: block.text };
         else if (block.type === 'tool_use') {
           yield { type: 'tool', name: block.name };
-          if (block.name === OPEN_THREAD_TOOL) {
-            const target = block.input as { repo?: unknown; number?: unknown };
-            if (
-              typeof target.repo === 'string' &&
-              REPO_NAME.test(target.repo) &&
-              Number.isInteger(target.number) &&
-              (target.number as number) > 0
-            ) {
-              yield { type: 'route', repo: target.repo, number: target.number as number };
-            }
-          }
-          yield { type: 'route', ...(block.input as { repo: string; number: number }) };
+          const route = routeOf(block.name, block.input);
+          if (route) yield route;
         }
       }
     } else if (message.type === 'result') {
