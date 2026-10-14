@@ -12,7 +12,7 @@ import { rest } from '../agent/github.ts';
 import { assertClaudeInit } from '../agent/providers/claude.ts';
 import { agentEnv, resolveExecutable } from '../agent/providers/shared.ts';
 import { refreshGhToken } from './app-token.ts';
-import { LEFT_OUT, readThread } from './issue.ts';
+import { forModel, LEFT_OUT, readPull, readThread } from './issue.ts';
 import { ORG, REPO_NAME } from './constants.ts';
 
 export const ASK_MODES = ['queue', 'start'] as const;
@@ -67,6 +67,7 @@ interface Issue {
   state: string;
   body?: string | null;
   labels: { name: string }[];
+  pull_request?: { merged_at: string | null };
 }
 
 const brief = ({ number, title, html_url, state, labels }: Issue) => ({
@@ -80,24 +81,27 @@ const brief = ({ number, title, html_url, state, labels }: Issue) => ({
 const githubTools = [
   tool(
     'search_issues',
-    `Search issues in ${ORG} (GitHub search syntax).`,
+    `Search issues and pull requests in ${ORG} (GitHub search syntax; add is:issue or is:pr to narrow).`,
     { q: z.string() },
     async ({ q }) => {
       const found = await github<{ items: (Issue & { repository_url: string })[] }>(
         'GET',
-        `/search/issues?per_page=20&q=${encodeURIComponent(`org:${ORG} is:issue ${q}`)}`,
+        `/search/issues?per_page=20&q=${encodeURIComponent(`org:${ORG} ${q}`)}`,
       );
       return reply(
         found.items.map((issue) => ({
           repo: issue.repository_url.split('/').pop(),
           ...brief(issue),
+          pull: Boolean(issue.pull_request),
+          merged: Boolean(issue.pull_request?.merged_at),
+          merged_at: issue.pull_request?.merged_at ?? null,
         })),
       );
     },
   ),
   tool(
     'read_issue',
-    'Read an issue and its comments.',
+    'Read an issue or pull request and its comments. For merge, review and check state, use read_pull.',
     { repo, number: z.number().int() },
     async (args) => {
       const issue = await readThread(args.repo, args.number);
@@ -109,12 +113,15 @@ const githubTools = [
         status: issue.status,
         labels: issue.labels,
         body: issue.bodyTrusted ? issue.body : LEFT_OUT,
-        comments: issue.comments.map((c) => ({
-          author: c.author,
-          body: c.trusted ? c.body : LEFT_OUT,
-        })),
+        comments: issue.comments.map(forModel),
       });
     },
+  ),
+  tool(
+    'read_pull',
+    'Read a pull request: merged or not, draft, branches, issues it closes, reviews, checks, comments and review comments.',
+    { repo, number: z.number().int() },
+    async (args) => reply(await readPull(args.repo, args.number)),
   ),
   tool(
     'file_ask',
