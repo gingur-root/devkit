@@ -3,6 +3,8 @@
 
 import { execFileSync } from 'node:child_process';
 
+import { isStageComment } from './job.ts';
+
 const API = 'https://api.github.com';
 
 let token: string | undefined;
@@ -65,4 +67,34 @@ export async function graphql<T>(query: string, variables: Record<string, unknow
   });
   if (errors?.length) throw new Error(`GraphQL: ${JSON.stringify(errors)}`);
   return data;
+}
+
+interface Comment {
+  id: number;
+  body: string | null;
+  user: { type: string; id: number } | null;
+}
+
+/** A stage's one comment, found by its marker: edited in place, so a retry doesn't add another. */
+export async function upsertStageComment(
+  repo: string,
+  issue: number,
+  role: string,
+  body: string,
+): Promise<void> {
+  const path = `/repos/${repo}/issues/${issue}`;
+  const existing = (await restAll<Comment>(`${path}/comments`)).find((c) =>
+    isStageComment(c, role),
+  );
+  if (existing) await rest('PATCH', `/repos/${repo}/issues/comments/${existing.id}`, { body });
+  else await rest('POST', `${path}/comments`, { body });
+}
+
+/** Removes the trigger label; a `/plan` or `/approve` comment run has none. */
+export async function removeLabel(repo: string, issue: number, label: string): Promise<void> {
+  await rest('DELETE', `/repos/${repo}/issues/${issue}/labels/${encodeURIComponent(label)}`).catch(
+    (error: Error) => {
+      if (!error.message.includes(' 404 ')) throw error;
+    },
+  );
 }
