@@ -80,7 +80,7 @@ function admitted(jobs: Record<string, Job>, id: string, seen = new Set<string>(
   const condition = typeof job.if === 'string' ? job.if : '';
   if (condition && admits(condition)) return true;
   const needs = [job.needs ?? []].flat();
-  if (!STATUS_FN.test(condition)) return needs.some((n) => admitted(jobs, n, seen));
+  if (!STATUS_FN.test(condition)) return needs.some((n) => admitted(jobs, n, new Set(seen)));
   const clauses = topLevel(condition.replace(/^\$\{\{([\s\S]*)\}\}$/, '$1'), '&&');
   if (topLevel(condition, '||').length > 1) return false;
   return needs.some(
