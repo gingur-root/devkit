@@ -220,6 +220,9 @@ Hooks are Vite+'s dispatcher (`vp config` sets `core.hooksPath` to
   `gitleaks git --pre-commit --staged --redact --no-banner` (gitleaks on PATH).
 - `post-checkout`: on `git worktree add`, runs `pnpm install` and `vp config`
   in the new worktree.
+- `post-commit`: merges the latest base into the branch: the open PR's base
+  (so a stacked branch follows its parent), else the default branch. Merge,
+  never rebase. A conflict is aborted and reported; the commit stands.
 
 **Why `post-checkout` exists.** `.vite-hooks/_` is generated and gitignored, so
 a new worktree doesn't have it, and git silently runs no hook when

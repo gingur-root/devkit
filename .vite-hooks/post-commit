@@ -1,0 +1,27 @@
+# Keep the branch current with its base: after each commit, merge in the latest
+# base. That's the PR's base when there is one, so a stacked branch follows its
+# parent, and otherwise the default branch. Merge, never rebase. A conflict is
+# aborted and reported, so the commit itself always stands.
+branch=$(git symbolic-ref --quiet --short HEAD) || exit 0
+git rev-parse --quiet --verify HEAD^2 >/dev/null && exit 0
+for dir in rebase-merge rebase-apply; do
+  [ -d "$(git rev-parse --git-path "$dir")" ] && exit 0
+done
+
+base=$(gh pr view "$branch" --json state,baseRefName -q 'select(.state == "OPEN") | .baseRefName' 2>/dev/null) || base=''
+[ -n "$base" ] || base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || base=''
+base=${base#origin/}
+[ -n "$base" ] && [ "$base" != "$branch" ] || exit 0
+
+if ! git fetch --quiet origin "$base"; then
+  echo "post-commit: couldn't fetch origin/$base, so it wasn't merged in." >&2
+  exit 0
+fi
+git merge-base --is-ancestor "origin/$base" HEAD && exit 0
+
+if git merge --quiet --no-edit "origin/$base" >/dev/null 2>&1; then
+  echo "post-commit: merged origin/$base into $branch."
+else
+  git merge --abort
+  echo "post-commit: origin/$base conflicts with $branch. Merge it by hand: git merge origin/$base" >&2
+fi
