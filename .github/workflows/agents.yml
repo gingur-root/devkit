@@ -1,0 +1,38 @@
+name: Agents
+
+# Enrolls devkit in its own pipeline on the WSL desk only, like infra's caller:
+# plan and elevated, no build, so retro issues and pipeline fixes get planned
+# where the pipeline lives (devkit#115). Every job runs on the desk as the
+# operator and his own `gh` publishes; nothing here holds a secret. The `wsl`
+# runner group accepts only devkit's workflows on main.
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: ${{ (github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) && format('agent-{0}-{1}', github.event.repository.name, github.event.issue.number) || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  plan:
+    # The ceiling for the nested jobs: the agent job checks out this repo.
+    permissions:
+      contents: read
+    uses: gingur-root/devkit/.github/workflows/agent.plan.yml@main
+    with:
+      runner: wsl
+      appId: ${{ vars.PIPELINE_APP_ID }}
+
+  elevated:
+    permissions:
+      contents: read
+    uses: gingur-root/devkit/.github/workflows/agent.elevated.yml@main
+    with:
+      runner: wsl
+      appId: ${{ vars.PIPELINE_APP_ID }}

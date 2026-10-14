@@ -113,7 +113,7 @@ the one runner on his WSL desk, which runs as him and which GitHub lets only
 `needs:elevated` marks an issue an agent says needs the desk. It starts
 nothing; add `agent:elevated` yourself.
 
-**Desk-only repos (infra).** A repo the App must never reach passes
+**Desk-only repos (infra, devkit).** A repo the App must never reach passes
 `runner: wsl` to `agent.plan.yml` and `agent.elevated.yml` (see
 [infra's caller](https://github.com/gingur-root/infra/blob/main/.github/workflows/agents.yml)).
 Every job then runs on the desk, so nothing happens until `elevated on`, and
