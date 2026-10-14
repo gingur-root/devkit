@@ -194,6 +194,8 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       ref: ${{ needs.push.outputs.candidate || inputs.candidate }}
+      # Red CI is a finding for the repair, not a failed run.
+      report: true
 
   verdict:
     name: Verdict
@@ -245,7 +247,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           ROUND: ${{ inputs.round }}
-          VERIFIED: ${{ needs.verify.result == 'success' && needs.verify.outputs.sha || '' }}
+          VERIFIED: ${{ needs.verify.outputs.verified }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
             --round "$ROUND" --verified "$VERIFIED"

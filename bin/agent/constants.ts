@@ -72,6 +72,8 @@ export type StubFixture = (typeof STUB_FIXTURES)[number];
 export const OPERATOR_ID = 2553213;
 /** The operator's login, which Needs-you and Ready comments mention so the notification reaches him. */
 export const OPERATOR_LOGIN = 'gingur';
+/** Every pipeline commit lists the operator as co-author; the ID-based noreply address links it to his account (devkit#76). */
+export const OPERATOR_COAUTHOR = `Co-authored-by: Troy Rhinehart <${OPERATOR_ID}+${OPERATOR_LOGIN}@users.noreply.github.com>`;
 
 /** The operator's "put it on the board" label, and his consent for the loop to plan the card (devkit#47). */
 export const READY_LABEL = 'ready-for-agent';
