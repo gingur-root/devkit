@@ -35,6 +35,7 @@ import {
   TRANSCRIPT_FILE,
   usage,
 } from './job.ts';
+import { uploadRecords } from './records.ts';
 import { type Failure, Result } from './result.ts';
 
 export interface PublishOptions {
@@ -444,9 +445,37 @@ function summarizeUsage(stage: string, out: string): void {
   );
 }
 
+/** Saves the stage's job and output to R2 and names the key prefix in the run summary. */
+async function saveRecords(job: Job, stage: string, options: PublishOptions): Promise<void> {
+  const prefix = `${job.repo}/${job.issue.number}/${process.env.GITHUB_RUN_ID ?? 'local'}/${stage}`;
+  let line: string;
+  try {
+    const url = await uploadRecords(process.env.R2_RUNS, prefix, {
+      in: options.in,
+      out: options.out,
+    });
+    if (!url) return;
+    line = `**Run records:** \`${url}\``;
+  } catch (error) {
+    // A lost record must not fail the stage it records.
+    console.error(error);
+    line = '**Run records:** the upload failed; see the publish log.';
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+}
+
 export async function publish(options: PublishOptions): Promise<void> {
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
-  summarizeUsage(stageName(job.role, options.round), options.out);
+  const stage = stageName(job.role, options.round);
+  summarizeUsage(stage, options.out);
+  try {
+    await publishStage(job, options);
+  } finally {
+    await saveRecords(job, stage, options);
+  }
+}
+
+async function publishStage(job: Job, options: PublishOptions): Promise<void> {
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
