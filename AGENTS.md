@@ -170,6 +170,10 @@ top-level `&&` with `(<admission>)` as one operand, e.g.
 - Callers route with `runner: ${{ vars.RUNNER }}` (the org variable, `local`).
   A caller repo's variables don't resolve inside a cross-repo reusable workflow,
   so a caller that omits the input runs GitHub-hosted.
+- Every other gingur-root job runs self-hosted (`vars.RUNNER`, or `wsl` for the
+  desk), throwaway probes included. Outside devkit's own CI, only infra's
+  `vps.scan.yml` and its manual `RUNNER=ubuntu-latest` fallback run
+  GitHub-hosted (gingur-root/infra `docs/runbook.md`).
 
 ## Consumer standards
 
