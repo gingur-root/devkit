@@ -1,5 +1,8 @@
 name: 'Setup toolchain'
-description: 'Install repo-declared runtimes and package managers with proto, cache them, and optionally install dependencies.'
+description: "Install Vite+, the repo's declared Node.js and package manager, and optionally its dependencies."
+
+# Vite+ reads Node.js from .node-version and the package manager from
+# package.json `packageManager`, the same files `vp` uses on a dev machine.
 
 inputs:
   cwd:
@@ -7,65 +10,26 @@ inputs:
     required: false
     default: '.'
   node:
-    description: 'Optional Node.js override. Prefer .nvmrc or package.json devEngines.'
-    required: false
-    default: ''
-  pnpm:
-    description: 'Optional pnpm override. Prefer package.json packageManager/devEngines.'
-    required: false
-    default: ''
-  bun:
-    description: 'Optional Bun override. Prefer .bun-version or package.json devEngines.'
+    description: 'Optional Node.js override. Prefer .node-version.'
     required: false
     default: ''
   install:
-    description: 'Run pnpm install --frozen-lockfile after toolchain setup.'
+    description: 'Run vp install (frozen lockfile in CI) after toolchain setup.'
     required: false
     default: 'true'
 
 runs:
   using: 'composite'
   steps:
-    - name: Apply version overrides
-      shell: bash
-      env:
-        NODE: ${{ inputs.node }}
-        PNPM: ${{ inputs.pnpm }}
-        BUN: ${{ inputs.bun }}
-      run: |
-        if [ -n "$NODE" ]; then echo "PROTO_NODE_VERSION=$NODE" >> "$GITHUB_ENV"; fi
-        if [ -n "$PNPM" ]; then echo "PROTO_PNPM_VERSION=$PNPM" >> "$GITHUB_ENV"; fi
-        if [ -n "$BUN" ]; then echo "PROTO_BUN_VERSION=$BUN" >> "$GITHUB_ENV"; fi
-
-    - name: Setup proto toolchain
-      uses: moonrepo/setup-toolchain@v0
+    # Self-hosted runners keep their store on disk, and Actions refuses cache
+    # writes from their issue-triggered jobs anyway.
+    - name: Setup Vite+
+      uses: voidzero-dev/setup-vp@v1.21.2
       with:
-        auto-install: true
-        workspace-root: ${{ inputs.cwd }}
-
-    - name: Resolve pnpm store
-      if: ${{ inputs.install == 'true' }}
-      id: pnpm-store
-      working-directory: ${{ inputs.cwd }}
-      shell: bash
-      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-    # Self-hosted runners keep their pnpm store on disk, and Actions refuses
-    # cache writes from their issue-triggered jobs anyway.
-    - name: Cache pnpm store
-      if: ${{ inputs.install == 'true' && runner.environment == 'github-hosted' }}
-      uses: actions/cache@v6
-      with:
-        path: ${{ steps.pnpm-store.outputs.path }}
-        key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-
-
-    - name: Install dependencies
-      if: ${{ inputs.install == 'true' }}
-      working-directory: ${{ inputs.cwd }}
-      shell: bash
-      run: pnpm install --frozen-lockfile
+        working-directory: ${{ inputs.cwd }}
+        node-version: ${{ inputs.node }}
+        run-install: ${{ inputs.install }}
+        cache: ${{ inputs.install == 'true' && runner.environment == 'github-hosted' }}
 
     # Re-resolve the shared-config dep past the lockfile pin so CI always runs
     # against what its specifier names. No-op when the dependency is absent.
