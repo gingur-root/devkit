@@ -6,10 +6,10 @@
 // merges. A retro only adds its one comment. Only this writes GitHub, and only
 // with the App.
 
-import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { git } from '../git.ts';
 import { setStatus } from './board.ts';
 import { PIPELINE_BOT, REPAIR_ROUNDS, STAGE_LABELS, type Status } from './constants.ts';
 import { graphql, rest, restAll } from './github.ts';
@@ -187,20 +187,6 @@ function buildComment(job: Job, result: Result, pull: Pull | null): string {
     .join('\n\n');
 }
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      GIT_AUTHOR_NAME: PIPELINE_BOT.name,
-      GIT_AUTHOR_EMAIL: PIPELINE_BOT.email,
-      GIT_COMMITTER_NAME: PIPELINE_BOT.name,
-      GIT_COMMITTER_EMAIL: PIPELINE_BOT.email,
-    },
-  }).trim();
-}
-
 /**
  * Commits the candidate on top of the issue's branch, or on the source when the
  * branch is new, so a retry is a plain fast-forward push. A repair commits on
@@ -226,7 +212,7 @@ function pushCandidate(
     job.role === 'repair'
       ? `Fix review findings for #${job.issue.number}`
       : `${job.issue.title}\n\nCloses #${job.issue.number}`;
-  const commit = git(checkout, ['commit-tree', tree, '-p', parent, '-m', message]);
+  const commit = git(checkout, ['commit-tree', tree, '-p', parent, '-m', message], PIPELINE_BOT);
   git(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
   return { branch, commit };
 }

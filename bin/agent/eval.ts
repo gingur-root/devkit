@@ -4,7 +4,7 @@
 // skills shows its effect as two scorecards, one from main and one from its
 // branch.
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
 
+import { git, gitBytes } from '../git.ts';
 import { EXECUTOR_ENV, type Executor, REPAIR_ROUNDS } from './constants.ts';
 import {
   CANDIDATE_FILE,
@@ -66,14 +67,9 @@ export interface Score {
   minutes: number;
 }
 
-const DEVKIT_BIN = fileURLToPath(new URL('../devkit.mjs', import.meta.url));
+const EVAL_IDENTITY = { name: 'eval', email: 'eval@localhost' };
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', ['-c', 'user.name=eval', '-c', 'user.email=eval@localhost', ...args], {
-    cwd,
-    encoding: 'utf8',
-  }).trim();
-}
+const DEVKIT_BIN = fileURLToPath(new URL('../devkit.mjs', import.meta.url));
 
 /**
  * A fresh repo with one commit: the target repo with the case's `seed/` laid
@@ -86,10 +82,10 @@ function base(repo: string, caseDir: string, cwd: string): string {
   });
   const seed = join(caseDir, 'seed');
   if (existsSync(seed)) cpSync(seed, cwd, { recursive: true });
-  git(cwd, ['init', '--quiet']);
-  git(cwd, ['add', '-A']);
-  git(cwd, ['commit', '--quiet', '-m', 'eval base']);
-  return git(cwd, ['rev-parse', 'HEAD']);
+  git(cwd, ['init', '--quiet'], EVAL_IDENTITY);
+  git(cwd, ['add', '-A'], EVAL_IDENTITY);
+  git(cwd, ['commit', '--quiet', '-m', 'eval base'], EVAL_IDENTITY);
+  return git(cwd, ['rev-parse', 'HEAD'], EVAL_IDENTITY);
 }
 
 /** The issue file: a `# title` line, then the body. */
@@ -243,8 +239,8 @@ function runCase(
     score.tokens.output += used.output;
     // As agent.run's Candidate step: the whole change against the job's source.
     if (role === 'build' || role === 'repair') {
-      git(cwd, ['add', '-A']);
-      const patch = execFileSync('git', ['diff', '--cached', '--binary', job.source], { cwd });
+      git(cwd, ['add', '-A'], EVAL_IDENTITY);
+      const patch = gitBytes(cwd, ['diff', '--cached', '--binary', job.source]);
       if (patch.length) writeFileSync(join(outDir, CANDIDATE_FILE), patch);
     }
     const v = verdict(job, job.issue.revision, outDir);
@@ -273,7 +269,7 @@ function runCase(
 
   // Commits what the build or repair left, then runs the hidden check on it.
   const commit = (message: string): string => {
-    git(cwd, ['commit', '--quiet', '--allow-empty', '-m', message]);
+    git(cwd, ['commit', '--quiet', '--allow-empty', '-m', message], EVAL_IDENTITY);
     const check = spawnSync('sh', [join(caseDir, 'check.sh')], {
       cwd,
       env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', BASE: source },
@@ -282,9 +278,9 @@ function runCase(
     });
     writeFileSync(join(work, 'check.log'), `${check.stdout ?? ''}${check.stderr ?? ''}`);
     score.check = check.status === 0;
-    git(cwd, ['reset', '--quiet', '--hard']);
-    git(cwd, ['clean', '-fdxq']);
-    return git(cwd, ['rev-parse', 'HEAD']);
+    git(cwd, ['reset', '--quiet', '--hard'], EVAL_IDENTITY);
+    git(cwd, ['clean', '-fdxq'], EVAL_IDENTITY);
+    return git(cwd, ['rev-parse', 'HEAD'], EVAL_IDENTITY);
   };
 
   const build = stage('build', 'build', { plan: approved, base: source }, planFiles);
@@ -293,7 +289,7 @@ function runCase(
   let candidate = commit('build');
 
   for (let round = 0; ; round++) {
-    const patch = execFileSync('git', ['diff', '--binary', source, candidate], { cwd });
+    const patch = gitBytes(cwd, ['diff', '--binary', source, candidate]);
     const review = stage(
       'review',
       `review-${round}`,
@@ -301,8 +297,8 @@ function runCase(
       { ...planFiles, [CANDIDATE_FILE]: patch },
     );
     // The review has Bash: drop anything it left before the next stage.
-    git(cwd, ['reset', '--quiet', '--hard']);
-    git(cwd, ['clean', '-fdxq']);
+    git(cwd, ['reset', '--quiet', '--hard'], EVAL_IDENTITY);
+    git(cwd, ['clean', '-fdxq'], EVAL_IDENTITY);
     if ('stopped' in review) return finish(review.stopped);
     score.review = review.result.outcome;
     if (passes(review.result)) {

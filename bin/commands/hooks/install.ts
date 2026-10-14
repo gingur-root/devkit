@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ParsedCommand } from '../../command.ts';
+import { git } from '../../git.ts';
 
 const HOOKS_DIR = '.githooks';
 const BODY_DIR = '.husky';
@@ -11,16 +11,6 @@ const SHIM = fileURLToPath(new URL('./shim.sh', import.meta.url));
 
 /** Hooks devkit installs a shim for. The shim dispatches on its own basename. */
 const HOOKS = ['pre-commit'];
-
-/**
- * Run git from `cwd`. Every call after the first passes the resolved repo root,
- * because `update-index` takes a path relative to the process's directory —
- * and `prepare` runs wherever dependencies are installed, which in a workspace
- * is a package subdirectory, not the root.
- */
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-}
 
 export default {
   kind: 'parsed',
@@ -30,9 +20,13 @@ export default {
     // with no git repository at all, such as a Docker build that copies source
     // without .git. That is a normal condition, not a miswiring, and it must
     // not fail the install.
+    // Every git call after this one runs from the repo root, because
+    // `update-index` takes a path relative to the process's directory, and
+    // `prepare` runs wherever dependencies are installed, which in a workspace
+    // is a package subdirectory, not the root.
     let root: string;
     try {
-      root = git(process.cwd(), 'rev-parse', '--show-toplevel');
+      root = git(process.cwd(), ['rev-parse', '--show-toplevel']);
     } catch {
       console.log('devkit: not a git repository — skipping hook install');
       return;
@@ -59,7 +53,7 @@ export default {
       // cannot set a POSIX bit and Git for Windows runs core.filemode=false,
       // so the recorded mode would be 100644 and the shim inert for everyone.
       // update-index --chmod is honoured regardless of core.filemode.
-      git(root, 'update-index', '--add', '--chmod=+x', `${HOOKS_DIR}/${hook}`);
+      git(root, ['update-index', '--add', '--chmod=+x', `${HOOKS_DIR}/${hook}`]);
 
       // The shim runs the body and refuses when it is missing, so say so at
       // install time rather than at the first commit.
@@ -82,7 +76,7 @@ export default {
       );
     }
 
-    git(root, 'config', 'core.hooksPath', HOOKS_DIR);
+    git(root, ['config', 'core.hooksPath', HOOKS_DIR]);
 
     console.log(`devkit: installed ${HOOKS.map((h) => `${HOOKS_DIR}/${h}`).join(', ')}`);
     console.log(`devkit: core.hooksPath -> ${HOOKS_DIR}`);
