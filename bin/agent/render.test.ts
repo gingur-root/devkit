@@ -2,7 +2,7 @@
 // App's ready plan, unedited, for the issue as it is now.
 
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 
 import { OPERATOR_ID } from './constants.ts';
 import { CONTRACT_PREFIX, marker, PLAN_END, PLAN_START, revision } from './job.ts';

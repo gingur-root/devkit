@@ -4,7 +4,7 @@
 // .github/admission.txt) and every job is checked against it.
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { parse } from 'yaml';
 
 const ADMISSION =

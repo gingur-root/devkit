@@ -5,13 +5,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { onTestFinished, test } from 'vite-plus/test';
 
 import { assertCodexHome, codexSandbox } from './codex.ts';
 
-test('a Codex home with config or a non-ChatGPT login stops the run', (t) => {
+test('a Codex home with config or a non-ChatGPT login stops the run', () => {
   const home = mkdtempSync(join(tmpdir(), 'devkit-agent-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  onTestFinished(() => rmSync(home, { recursive: true, force: true }));
   const login = (body: string) => writeFileSync(join(home, 'auth.json'), body);
 
   login('{"tokens": SECRET');
