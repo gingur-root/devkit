@@ -20,6 +20,8 @@ import { createRoot } from 'react-dom/client';
 
 import { READY_LABEL, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
+import { BOARD_EVENT } from '../constants.ts';
+import type { BoardEvent } from '../events.ts';
 import type { DashboardMessage } from '../stream.ts';
 import {
   Conversation,
@@ -100,6 +102,34 @@ function useHash(): string {
     },
     () => location.hash,
   );
+}
+
+// One stream for the page's life; the browser reconnects it on its own.
+const boardEvents = new EventSource('/api/events');
+
+/**
+ * Calls `on` with the live updates the server sends. One poll can name many
+ * cards, so events that arrive together come as one batch and cost one refetch.
+ */
+function useBoardEvents(on: (events: BoardEvent[]) => void) {
+  useEffect(() => {
+    let batch: BoardEvent[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const listener = (message: MessageEvent<string>) => {
+      batch.push(JSON.parse(message.data) as BoardEvent);
+      timer ??= setTimeout(() => {
+        const events = batch;
+        batch = [];
+        timer = undefined;
+        on(events);
+      }, 200);
+    };
+    boardEvents.addEventListener('message', listener);
+    return () => {
+      clearTimeout(timer);
+      boardEvents.removeEventListener('message', listener);
+    };
+  }, [on]);
 }
 
 async function startPlan(t: Ref): Promise<boolean> {
@@ -395,14 +425,15 @@ interface Loaded {
 }
 
 /** A thread's issue and chat history, from the server's store. */
-function useThread(ref: Ref | null) {
+function useThread(ref: Ref | null, version = 0) {
   const key = ref ? `${ref.repo}#${ref.number}` : 'home';
   // Each response carries the thread it was for, so a slow load can't show in another.
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState(false);
+  // A reload of the same thread keeps it on screen, so a running chat is not torn down.
+  useEffect(() => setLoaded(null), [key]);
   useEffect(() => {
     let live = true;
-    setLoaded(null);
     setFailed(false);
     const query = ref ? `?repo=${encodeURIComponent(ref.repo)}&number=${ref.number}` : '';
     fetch(`/api/thread${query}`)
@@ -421,7 +452,7 @@ function useThread(ref: Ref | null) {
     return () => {
       live = false;
     };
-  }, [ref?.repo, ref?.number]);
+  }, [ref?.repo, ref?.number, version]);
   return { key, ready: loaded?.key === key ? loaded : null, failed };
 }
 
@@ -450,6 +481,7 @@ function Home({ onRoute }: { onRoute: Route }) {
   const [version, setVersion] = useState(0);
   // A coordinator turn may have moved cards.
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
+  useBoardEvents(refresh);
   const chat = <HomeChat onRoute={onRoute} onTurnEnd={refresh} />;
   return (
     <div className="flex h-dvh lg:grid lg:grid-cols-[1fr_24rem]">
@@ -498,10 +530,24 @@ function IssueView({
   setPending: (p: null) => void;
   onRoute: Route;
 }) {
-  const { key, ready, failed } = useThread(thread);
+  const [reloads, setReloads] = useState(0);
+  const { key, ready, failed } = useThread(thread, reloads);
   const [version, setVersion] = useState(0);
   const [drawer, setDrawer] = useState(false);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
+  useBoardEvents(
+    useCallback(
+      (events) => {
+        refresh();
+        const mine = (e: BoardEvent) =>
+          e.type === BOARD_EVENT.cardChanged &&
+          e.repo === thread.repo &&
+          e.number === thread.number;
+        if (events.some(mine)) setReloads((r) => r + 1);
+      },
+      [refresh, thread.repo, thread.number],
+    ),
+  );
 
   useEffect(() => setDrawer(false), [key]);
   useEffect(() => {

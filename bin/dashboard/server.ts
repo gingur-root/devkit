@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 import { type FetchKeys, verifyAccessToken } from './access.ts';
 import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, REPO_NAME } from './constants.ts';
+import { type BoardEventSource, pollBoard } from './events.ts';
 import { createStore, HOME_THREAD, threadKey } from './store.ts';
 import type { DashboardMessage } from './stream.ts';
 
@@ -11,6 +12,8 @@ export const WEB_DIST = new URL('./web/dist/', import.meta.url);
 const ASSET = /^\/assets\/[\w.-]+\.(js|css)$/;
 const TYPES = { js: 'text/javascript', css: 'text/css' } as const;
 const MAX_BODY = 64 * 1024;
+// Under Cloudflare's 100 s idle cutoff, so a quiet stream stays open.
+const KEEP_ALIVE_MS = 25_000;
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let body = '';
@@ -36,6 +39,7 @@ export function createDashboard(
   keys: FetchKeys,
   store = createStore(),
   web: URL = WEB_DIST,
+  events: BoardEventSource = pollBoard(),
 ): Server {
   return createServer(async (req, res) => {
     const header = req.headers[ACCESS_JWT_HEADER];
@@ -73,6 +77,22 @@ export function createDashboard(
         res
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify(await board()));
+      } else if (req.method === 'GET' && req.url === '/api/events') {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+        });
+        // A first line sends the headers now, so the page sees the stream open.
+        res.write(': open\n\n');
+        const unsubscribe = events.subscribe((event) =>
+          res.write(`data: ${JSON.stringify(event)}\n\n`),
+        );
+        const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), KEEP_ALIVE_MS);
+        res.once('close', () => {
+          clearInterval(keepAlive);
+          unsubscribe();
+        });
       } else if (req.method === 'POST' && req.headers.origin !== DASHBOARD_ORIGIN) {
         // The Access cookie rides along on cross-site requests too, so a write
         // must come from the dashboard's own page.

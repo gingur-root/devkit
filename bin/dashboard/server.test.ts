@@ -9,7 +9,8 @@ import { pathToFileURL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { test } from 'vite-plus/test';
 
-import { ACCESS_JWT_HEADER, ACCESS_TEAM_URL, OPERATOR_EMAIL } from './constants.ts';
+import { ACCESS_JWT_HEADER, ACCESS_TEAM_URL, BOARD_EVENT, OPERATOR_EMAIL } from './constants.ts';
+import { createHub } from './events.ts';
 import { createDashboard } from './server.ts';
 import { createStore } from './store.ts';
 
@@ -55,6 +56,40 @@ test('serves the page and its assets to Troy, nothing else, and refuses a chat f
     });
     assert.equal(chat.status, 403);
   } finally {
+    server.close();
+  }
+});
+
+test('streams board events to a connected page, and lets go when it leaves', async () => {
+  const hub = createHub(
+    () => {},
+    () => {},
+  );
+  const server = createDashboard(
+    'aud',
+    keys,
+    createStore(join(web, 'state.json')),
+    pathToFileURL(`${web}/`),
+    hub,
+  ).listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/events`;
+  const leave = new AbortController();
+  try {
+    assert.equal((await fetch(url)).status, 403);
+    const res = await fetch(url, { headers: { [ACCESS_JWT_HEADER]: jwt }, signal: leave.signal });
+    assert.equal(res.headers.get('content-type'), 'text/event-stream');
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    await reader.read();
+    hub.emit({ type: BOARD_EVENT.cardChanged, repo: 'devkit', number: 7 });
+    let text = '';
+    while (!/data: .*\n\n/.test(text)) text += (await reader.read()).value;
+    assert.match(text, /data: {"type":"card.changed","repo":"devkit","number":7}\n\n/);
+    leave.abort();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(hub.size, 0);
+  } finally {
+    leave.abort();
     server.close();
   }
 });
