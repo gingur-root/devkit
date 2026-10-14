@@ -31,9 +31,13 @@ import {
   PLAN_START,
   type PlanContract,
   RESULT_FILE,
+  REVIEW_FILE,
   revision,
+  TRANSCRIPT_FILE,
+  usage,
 } from './job.ts';
-import { Result } from './result.ts';
+import { uploadRecords } from './records.ts';
+import { type Failure, Result } from './result.ts';
 
 export interface PublishOptions {
   in: string;
@@ -91,6 +95,9 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     };
   }
   const result = parsed.data;
+  // The CLI's own failure says more than any later check could (devkit#14).
+  if (result.failure)
+    return { stage: job.role, reason: failureReason(result.failure, result.summary) };
   if (
     result.job !== job.job ||
     result.role !== job.role ||
@@ -129,6 +136,16 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     };
   }
   return { result };
+}
+
+/** The failure class, a rate limit's reset time, and the summary's account of it. */
+export function failureReason(failure: Failure, summary: string): string {
+  const resets = failure.resetsAt
+    ? `, resets ${failure.resetsAt.slice(0, 16).replace('T', ' ')} UTC`
+    : failure.class === 'rate_limit'
+      ? ', reset time unknown'
+      : '';
+  return `\`${failure.class}\`${resets}: ${summary.replace(/\.$/, '')}`;
 }
 
 function retry(role: string): string {
@@ -310,8 +327,8 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
       v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
     else {
       const result = gated(v.result, job.candidate, options.verified ?? '');
-      // The next round's repair reads this file, so it sees the CI finding too.
-      writeFileSync(join(options.out, RESULT_FILE), JSON.stringify(result, null, 2));
+      // The next round's repair answers this, CI's finding included; result.json stays the reviewer's own.
+      writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
       return postReview(job, result, pull, options.round ?? 0);
     }
   }
@@ -449,8 +466,53 @@ export function retroComment(result: Result, runUrl: string): string {
     .join('\n\n');
 }
 
+/** The stage's name in the run summary: its role, and its round when it repeats. */
+export function stageName(role: string, round = 0): string {
+  return round > 0 ? `${role}.r${round}` : role;
+}
+
+/** Adds the stage's token use to the run summary (devkit#10). */
+function summarizeUsage(stage: string, out: string): void {
+  const transcript = join(out, TRANSCRIPT_FILE);
+  if (!process.env.GITHUB_STEP_SUMMARY || !existsSync(transcript)) return;
+  const { input, output } = usage(readFileSync(transcript, 'utf8'));
+  appendFileSync(
+    process.env.GITHUB_STEP_SUMMARY,
+    `**\`${stage}\` tokens:** ${input.toLocaleString('en-US')} input, ${output.toLocaleString('en-US')} output.\n`,
+  );
+}
+
+/** Saves the stage's job and output to R2 and names the key prefix in the run summary. */
+async function saveRecords(job: Job, stage: string, options: PublishOptions): Promise<void> {
+  const prefix = `${job.repo}/${job.issue.number}/${process.env.GITHUB_RUN_ID ?? 'local'}/${stage}`;
+  let line: string;
+  try {
+    const url = await uploadRecords(process.env.R2_RUNS, prefix, {
+      in: options.in,
+      out: options.out,
+    });
+    if (!url) return;
+    line = `**Run records:** \`${url}\``;
+  } catch (error) {
+    // A lost record must not fail the stage it records.
+    console.error(error);
+    line = '**Run records:** the upload failed; see the publish log.';
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+}
+
 export async function publish(options: PublishOptions): Promise<void> {
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
+  const stage = stageName(job.role, options.round);
+  summarizeUsage(stage, options.out);
+  try {
+    await publishStage(job, options);
+  } finally {
+    await saveRecords(job, stage, options);
+  }
+}
+
+async function publishStage(job: Job, options: PublishOptions): Promise<void> {
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);

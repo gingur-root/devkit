@@ -15,6 +15,8 @@ export const PLAN_FILE = 'plan.md';
 export const TIMELINE_FILE = 'timeline.md';
 /** Each agent's event stream, as `agent run` printed it. */
 export const TRANSCRIPT_FILE = 'transcript.jsonl';
+/** The review a repair answers, CI's finding included (devkit#9). */
+export const REVIEW_FILE = 'review.json';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
 
@@ -74,4 +76,25 @@ export function revision(...parts: string[]): string {
   return createHash('sha256')
     .update(parts.map((part) => part.replace(/\r\n/g, '\n')).join('\n'))
     .digest('hex');
+}
+
+/** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */
+export function usage(events: string): { input: number; output: number } {
+  const total = { input: 0, output: 0 };
+  for (const line of events.split('\n')) {
+    let event: { type?: string; usage?: Record<string, number> };
+    try {
+      event = JSON.parse(line) as typeof event;
+    } catch {
+      continue;
+    }
+    if (event.type !== 'result' || !event.usage) continue;
+    const u = event.usage;
+    total.input +=
+      (u.input_tokens ?? 0) +
+      (u.cache_creation_input_tokens ?? 0) +
+      (u.cache_read_input_tokens ?? 0);
+    total.output += u.output_tokens ?? 0;
+  }
+  return total;
 }
