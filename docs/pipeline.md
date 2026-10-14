@@ -21,7 +21,9 @@ and the `RUNNER` and `PIPELINE_APP_ID` vars.
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
-stage's comment and moves the card to **Needs you**. Fix the cause, then add
+stage's comment and moves the card to **Needs you**. When the agent's CLI said
+why it stopped, the comment names the class (`rate_limit` with its reset time,
+`overloaded`, `server_error`, `timeout` or `unknown`). Fix the cause, then add
 the label again. Every comment that leaves a card in **Needs you** or
 **Ready** mentions @gingur, so the notification arrives then.
 

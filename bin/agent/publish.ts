@@ -35,7 +35,7 @@ import {
   TRANSCRIPT_FILE,
   usage,
 } from './job.ts';
-import { Result } from './result.ts';
+import { type Failure, Result } from './result.ts';
 
 export interface PublishOptions {
   in: string;
@@ -91,6 +91,9 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     };
   }
   const result = parsed.data;
+  // The CLI's own failure says more than any later check could (devkit#14).
+  if (result.failure)
+    return { stage: job.role, reason: failureReason(result.failure, result.summary) };
   if (
     result.job !== job.job ||
     result.role !== job.role ||
@@ -129,6 +132,16 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     };
   }
   return { result };
+}
+
+/** The failure class, a rate limit's reset time, and the summary's account of it. */
+export function failureReason(failure: Failure, summary: string): string {
+  const resets = failure.resetsAt
+    ? `, resets ${failure.resetsAt.slice(0, 16).replace('T', ' ')} UTC`
+    : failure.class === 'rate_limit'
+      ? ', reset time unknown'
+      : '';
+  return `\`${failure.class}\`${resets}: ${summary.replace(/\.$/, '')}`;
 }
 
 function retry(role: string): string {

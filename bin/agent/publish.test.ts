@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { commitMessage, passes, repairable } from './publish.ts';
+import { commitMessage, failureReason, passes, repairable, stopped } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -42,6 +42,16 @@ test('only findings with nothing to ask go to repair', () => {
   assert.ok(!repairable({ ...asks, findings: [] }), 'nothing to fix');
   assert.ok(!repairable({ ...asks, questions: ['Which API?'] }), 'a decision for the operator');
   assert.ok(!repairable({ ...asks, outcome: 'inconclusive' }), 'an inconclusive review');
+});
+
+test("a stop names the CLI's failure class and a rate limit's reset time", () => {
+  const limited = { class: 'rate_limit', resetsAt: '2026-10-14T04:00:00.000Z' } as const;
+  const body = stopped('plan', { stage: 'plan', reason: failureReason(limited, 'Hit a limit.') });
+  assert.match(
+    body,
+    /stopped at `plan`:\*\* `rate_limit`, resets 2026-10-14 04:00 UTC: Hit a limit\./,
+  );
+  assert.match(failureReason({ ...limited, resetsAt: null }, 'x'), /reset time unknown/);
 });
 
 test('every pushed commit lists the operator as co-author', () => {
