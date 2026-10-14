@@ -1,9 +1,10 @@
 // Writes a fixture result instead of calling a model, so a smoke run of the
 // whole chain takes seconds. The fixture's job, role and issue revision come
 // from the job file, so `ready` passes the contract check and `invalid` fails
-// only on its schema.
+// only on its schema. `needs-you` changes only the review, which asks the
+// operator a question; every other role runs `ready`.
 
-import { copyFileSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
@@ -17,7 +18,9 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   if (!STUB_FIXTURES.includes(fixture)) throw new Error(`No stub fixture "${fixture}".`);
   if (!input.in || !input.out) throw new Error('The stub needs --in and --out.');
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
-  const result = JSON.parse(readFileSync(new URL(`${job.role}.${fixture}.json`, FIXTURES), 'utf8'));
+  const own = new URL(`${job.role}.${fixture}.json`, FIXTURES);
+  const file = existsSync(own) ? own : new URL(`${job.role}.ready.json`, FIXTURES);
+  const result = JSON.parse(readFileSync(file, 'utf8'));
   // A plan writes plan.md; a build changes the checkout; a review or retro writes nothing.
   if (job.role !== 'review' && job.role !== 'retro') {
     const target = job.role === 'build' ? join(input.cwd, 'STUB.md') : join(input.out, PLAN_FILE);

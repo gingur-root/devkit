@@ -15,7 +15,7 @@ inputs:
     required: false
     default: ''
   fixture:
-    description: 'The stub fixture: `ready` or `invalid`.'
+    description: 'The stub fixture: `ready`, `invalid` or `needs-you`.'
     required: false
     default: 'ready'
   source:

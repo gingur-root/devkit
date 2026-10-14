@@ -58,7 +58,7 @@ export const CODEX_FEATURES_OFF = [
 export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
 
 /** The stub's fixtures, in bin/agent/fixtures/. */
-export const STUB_FIXTURES = ['ready', 'invalid'] as const;
+export const STUB_FIXTURES = ['ready', 'invalid', 'needs-you'] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
 /** The operator's GitHub user ID, as in the admission expression. */
