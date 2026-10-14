@@ -9,3 +9,5 @@ export const DASHBOARD_ORIGIN = 'https://dashboard.gingur.com';
 export const ORG = 'gingur-root';
 // A GitHub repository name; checked wherever a client or the agent supplies one.
 export const REPO_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+// What the page hears on /api/events (devkit#100), whichever source sent it.
+export const BOARD_EVENT = { cardChanged: 'card.changed', boardChanged: 'board.changed' } as const;
