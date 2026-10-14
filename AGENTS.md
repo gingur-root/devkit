@@ -170,14 +170,19 @@ top-level `&&` with `(<admission>)` as one operand, e.g.
 - Callers route with `runner: ${{ vars.RUNNER }}` (the org variable, `local`).
   A caller repo's variables don't resolve inside a cross-repo reusable workflow,
   so a caller that omits the input runs GitHub-hosted.
+- Every other gingur-root job runs self-hosted (`vars.RUNNER`, or `wsl` for the
+  desk), throwaway probes included. Outside devkit's own CI, only infra's
+  `vps.scan.yml` and its manual `RUNNER=ubuntu-latest` fallback run
+  GitHub-hosted (gingur-root/infra `docs/runbook.md`).
 
 ## Consumer standards
 
 ### Toolchain
 
-Runtime and package-manager versions live in the consumer repo (`.nvmrc`,
-`.bun-version`, `package.json` `packageManager`/`devEngines`) and are shared by
-local development and CI. `actions/toolchain.setup` installs them with proto.
+Versions live in the consumer repo, where Vite+ reads them: Node.js in
+`.node-version`, the package manager in `package.json` `packageManager`.
+`actions/toolchain.setup` installs both with `voidzero-dev/setup-vp`, and a
+dev machine running the global `vp` CLI picks the same ones.
 
 ### Reusable workflows
 
@@ -213,7 +218,10 @@ Use `vp lint`, `vp fmt`, `vp check` and `vp staged`.
 ### Pre-commit
 
 Hooks are Vite+'s dispatcher (`vp config` sets `core.hooksPath` to
-`.vite-hooks/_`). Commit the hook bodies in `.vite-hooks/`:
+`.vite-hooks/_`). Nothing runs `vp config` for you: a `prepare` script would
+fail every consumer's install, since pnpm blocks a git dependency's scripts. So
+after cloning, run `pnpm install && pnpm exec vp config --no-agent` once. Commit
+the hook bodies in `.vite-hooks/`:
 
 - `pre-commit`: `vp staged`, then
   `gitleaks git --pre-commit --staged --redact --no-banner` (gitleaks on PATH).
