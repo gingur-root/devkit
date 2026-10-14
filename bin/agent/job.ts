@@ -15,6 +15,8 @@ export const PLAN_FILE = 'plan.md';
 export const TIMELINE_FILE = 'timeline.md';
 /** Each agent's event stream, as `agent run` printed it. */
 export const TRANSCRIPT_FILE = 'transcript.jsonl';
+/** The review a repair answers, CI's finding included (devkit#9). */
+export const REVIEW_FILE = 'review.json';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
 

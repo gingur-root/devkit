@@ -46,6 +46,20 @@ on:
         type: string
         required: false
         default: 'ubuntu-latest'
+      ref:
+        description: 'The commit to verify. Empty verifies the event commit.'
+        type: string
+        required: false
+        default: ''
+      report:
+        description: 'Report a failed check in `verified` instead of failing the job.'
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      verified:
+        description: 'The commit, when every check passed on it; empty otherwise.'
+        value: ${{ jobs.verify.outputs.verified }}
 
 permissions:
   contents: read
@@ -54,12 +68,15 @@ jobs:
   verify:
     name: Verify
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    outputs:
+      verified: ${{ steps.verified.outputs.verified }}
     defaults:
       run:
         working-directory: ${{ inputs.cwd }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - uses: gingur-root/devkit/actions/toolchain.setup@main
@@ -67,32 +84,47 @@ jobs:
           cwd: ${{ inputs.cwd }}
           node: ${{ inputs.node }}
 
-      - name: Format
+      - id: format
+        name: Format
+        continue-on-error: ${{ inputs.report }}
         if: ${{ inputs.format != '' }}
         run: pnpm "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.format }}
 
-      - name: Lint
+      - id: lint
+        name: Lint
+        continue-on-error: ${{ inputs.report }}
         if: ${{ inputs.lint != '' }}
         run: pnpm "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.lint }}
 
-      - name: Typecheck
+      - id: typecheck
+        name: Typecheck
+        continue-on-error: ${{ inputs.report }}
         if: ${{ inputs.typecheck != '' }}
         run: pnpm "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.typecheck }}
 
-      - name: Test
+      - id: test
+        name: Test
+        continue-on-error: ${{ inputs.report }}
         if: ${{ inputs.test != '' }}
         run: pnpm "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.test }}
 
-      - name: Build
+      - id: build
+        name: Build
+        continue-on-error: ${{ inputs.report }}
         if: ${{ inputs.build != '' }}
         run: pnpm "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.build }}
+
+      # Without `report` a failed check ends the job before this.
+      - id: verified
+        if: steps.format.outcome != 'failure' && steps.lint.outcome != 'failure' && steps.typecheck.outcome != 'failure' && steps.test.outcome != 'failure' && steps.build.outcome != 'failure'
+        run: echo "verified=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"

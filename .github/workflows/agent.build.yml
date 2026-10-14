@@ -2,8 +2,9 @@ name: Build
 
 # An /approve comment (or agent:build) on an issue with a ready plan: render
 # the job from the plan comment, run the builder, then push its change to
-# agent/issue-<n>, open a draft PR and move the card to Ready. Then Claude
-# reviews that exact commit (agent.review.yml): a clean pass marks the PR ready
+# agent/issue-<n>, open a draft PR and move the card to Ready. Then CI
+# (toolchain.verify) and Claude check that exact commit (agent.review.yml): a
+# clean pass with CI green marks the PR ready
 # and leaves the card in Ready for the operator to merge. Findings Codex can fix
 # get up to REPAIR_ROUNDS (bin/agent/constants.ts) repair rounds on the same PR,
 # one `repair-<n>` job each; anything else moves the card to Needs you.

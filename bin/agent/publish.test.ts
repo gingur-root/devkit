@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { commitMessage, failureReason, passes, repairable, stopped } from './publish.ts';
+import { commitMessage, failureReason, gated, passes, repairable, stopped } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -42,6 +42,17 @@ test('only findings with nothing to ask go to repair', () => {
   assert.ok(!repairable({ ...asks, findings: [] }), 'nothing to fix');
   assert.ok(!repairable({ ...asks, questions: ['Which API?'] }), 'a decision for the operator');
   assert.ok(!repairable({ ...asks, outcome: 'inconclusive' }), 'an inconclusive review');
+});
+
+test('only CI green on the reviewed commit itself reaches Ready', () => {
+  const head = 'b'.repeat(40);
+  assert.ok(passes(gated(pass, head, head)));
+  assert.ok(!passes(gated(pass, head, '')), 'CI failed');
+  assert.ok(!passes(gated(pass, head, 'a'.repeat(40))), 'CI passed on an earlier commit');
+  assert.ok(!passes(gated(pass, null, '')), 'no candidate');
+  assert.ok(repairable(gated(pass, head, '')), 'red CI goes to repair');
+  const asks = { ...pass, outcome: 'inconclusive' as const };
+  assert.ok(!repairable(gated(asks, head, '')), 'an inconclusive review still needs the operator');
 });
 
 test("a stop names the CLI's failure class and a rate limit's reset time", () => {

@@ -10,7 +10,8 @@ export default {
       .requiredOption('--in <dir>', 'the job directory ($AGENT_IN)')
       .requiredOption('--out <dir>', "the agent's output directory ($AGENT_OUT)")
       .option('--checkout <dir>', "a build's target repo at the job's source, with push access")
-      .option('--round <n>', "a review's repair round: 0 for the build's review", Number);
+      .option('--round <n>', "a review's repair round: 0 for the build's review", Number)
+      .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed");
   },
   async run(options) {
     const { publish } = await import('../../agent/publish.ts');

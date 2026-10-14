@@ -60,10 +60,15 @@ expires in GitHub's queue and a card can sit until the repo's next event.
 
 The build run also reviews its own PR, so your approval stays the only thing
 you add. Claude (Opus 5.5) reviews the exact commit the build pushed, checking
-Correctness, Spec and Standards, and posts the result as a PR review.
+Correctness, Spec and Standards, and posts the result as a PR review. At the
+same time `toolchain.verify` runs the repo's own checks (format, lint,
+typecheck, test, build) on that same commit, so an enrolled repo needs every
+script it runs.
 
-- **Pass** (every axis passes, no blocking finding, no question): the PR is
-  marked ready for review and the card stays in **Ready**. The review comment
+- **Pass** (every axis passes, no blocking finding, no question, and CI green
+  on the reviewed commit): the PR is marked ready for review and the card
+  stays in **Ready**. Red CI adds a blocking `CI` finding to the review, which
+  Codex then fixes like any other. The review comment
   on the issue says it's ready to merge.
 - **Changes requested, nothing to ask you:** Codex fixes the findings and
   pushes a new commit to the same PR, then Claude reviews the whole change
