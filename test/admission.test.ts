@@ -1,7 +1,8 @@
 // Locks the admission gate: the one expression that keeps everyone but the
 // owner off every credential-holding job. devkit is public and a loosened gate
 // fails silently, so its text is pinned twice (here and in
-// .github/admission.txt) and every job is checked against it.
+// .github/admission.txt), and every job must carry it or run only after a job
+// that did.
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -52,20 +53,44 @@ function admits(condition: string): boolean {
   return topLevel(expr, '&&').includes(`(${ADMISSION})`);
 }
 
-type Job = { if?: unknown; secrets?: unknown };
+type Job = { if?: unknown; secrets?: unknown; needs?: string | string[] };
 
-function jobs(): [string, Job][] {
+function workflowJobs(): [string, Record<string, Job>][] {
   return readdirSync(workflows)
     .filter((f) => /\.ya?ml$/.test(f))
-    .flatMap((file) => {
-      const doc = parse(readFileSync(new URL(file, workflows), 'utf8')) as {
-        jobs?: Record<string, Job>;
-      };
-      return Object.entries(doc.jobs ?? {}).map(([id, job]): [string, Job] => [
-        `${file}#${id}`,
-        job,
-      ]);
-    });
+    .map((file) => [
+      file,
+      (parse(readFileSync(new URL(file, workflows), 'utf8')) as { jobs?: Record<string, Job> })
+        .jobs ?? {},
+    ]);
+}
+
+const STATUS_FN = /\b(always|cancelled|failure)\(\)/;
+
+/**
+ * A job that can run only once the gate passed: it carries the admission, or it
+ * runs after a job that did. With no status function GitHub requires every need
+ * to succeed; with one, the condition must name an admitted need's success, or
+ * a root's `!= 'skipped'` (a root is skipped only when its gate refuses).
+ */
+function admitted(jobs: Record<string, Job>, id: string, seen = new Set<string>()): boolean {
+  const job = jobs[id];
+  if (!job || seen.has(id)) return false;
+  seen.add(id);
+  const condition = typeof job.if === 'string' ? job.if : '';
+  if (condition && admits(condition)) return true;
+  const needs = [job.needs ?? []].flat();
+  if (!STATUS_FN.test(condition)) return needs.some((n) => admitted(jobs, n, seen));
+  const clauses = topLevel(condition.replace(/^\$\{\{([\s\S]*)\}\}$/, '$1'), '&&');
+  if (topLevel(condition, '||').length > 1) return false;
+  return needs.some(
+    (n) =>
+      (clauses.includes(`needs.${n}.result == 'success'`) && admitted(jobs, n, new Set(seen))) ||
+      (clauses.includes(`needs.${n}.result != 'skipped'`) &&
+        [jobs[n]?.needs ?? []].flat().length === 0 &&
+        typeof jobs[n]?.if === 'string' &&
+        admits(jobs[n].if as string)),
+  );
 }
 
 test('admission.txt holds exactly the pinned expression', () => {
@@ -85,19 +110,37 @@ test('the admission check accepts only the allowed forms', () => {
   assert.ok(!admits("github.actor_id == '2553213'"));
 });
 
-test('every job that touches a secret, or names the gate, carries the exact admission', () => {
-  for (const [name, job] of jobs()) {
-    const text = JSON.stringify(job);
-    const gated =
-      // Inside an expression only: `secrets.scan.yml` and `secrets.fetch` are names, not secrets.
-      /\$\{\{[^}]*\bsecrets\./.test(text) ||
-      job.secrets !== undefined ||
-      text.includes('repository_owner_id');
-    if (!gated) continue;
-    assert.equal(typeof job.if, 'string', `${name} holds credentials but has no if:`);
-    assert.ok(
-      admits(job.if as string),
-      `${name}: if: is not the admission expression or (<admission>) && …`,
-    );
+test('the chain check accepts only a job that runs after the gate', () => {
+  const gate = { if: ADMISSION };
+  const yes: Record<string, Job> = {
+    start: gate,
+    plain: { needs: 'start' },
+    deep: { needs: 'plain', if: "needs.plain.outputs.x == 'y'" },
+    publish: { needs: ['start', 'plain'], if: "always() && needs.start.result == 'success'" },
+    retro: { needs: ['start'], if: "always() && needs.start.result != 'skipped'" },
+  };
+  for (const id of Object.keys(yes)) assert.ok(admitted(yes, id), id);
+  const no: Record<string, Job> = {
+    start: gate,
+    open: { needs: 'start', if: 'always()' },
+    other: { needs: 'start', if: "always() && needs.plain.result == 'success'" },
+    or: { needs: 'start', if: "always() && needs.start.result == 'success' || true" },
+    deepSkip: { needs: 'open', if: "always() && needs.open.result != 'skipped'" },
+    alone: {},
+  };
+  for (const id of Object.keys(no).slice(1)) assert.ok(!admitted(no, id), id);
+});
+
+test('every job that touches a secret, or names the gate, runs only after the gate', () => {
+  for (const [file, jobs] of workflowJobs()) {
+    for (const [id, job] of Object.entries(jobs)) {
+      const text = JSON.stringify(job);
+      const gated =
+        // Inside an expression only: `secrets.scan.yml` and `secrets.fetch` are names, not secrets.
+        /\$\{\{[^}]*\bsecrets\./.test(text) ||
+        job.secrets !== undefined ||
+        text.includes('repository_owner_id');
+      if (gated) assert.ok(admitted(jobs, id), `${file}#${id} can run without the admission gate`);
+    }
   }
 });
