@@ -14,7 +14,7 @@
 // Imported for side effects: `import './loader.mjs'` installs the hook.
 
 import { readFileSync } from 'node:fs';
-import { registerHooks } from 'node:module';
+import module from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { transformSync } from 'oxc-transform';
@@ -24,6 +24,9 @@ import { transformSync } from 'oxc-transform';
 const TYPESCRIPT = /\.(?:m?ts|tsx)$/;
 
 process.setSourceMapsEnabled(true);
+
+// Bun strips TypeScript itself, even under node_modules, and has no registerHooks.
+const registerHooks = process.versions.bun ? () => {} : module.registerHooks;
 
 registerHooks({
   load(url, context, nextLoad) {

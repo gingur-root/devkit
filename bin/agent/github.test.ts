@@ -19,6 +19,10 @@ test('graphql refuses merge and auto-merge mutations', async () => {
 });
 
 test('text that mentions a merge still goes through', async () => {
+  // Fails past the guard either way: no token in CI, a 404 where `gh` is logged in.
   delete process.env.GH_TOKEN;
-  await assert.rejects(rest('POST', '/repos/o/r/pulls', { body: 'calls mergeBranch' }), /GH_TOKEN/);
+  await assert.rejects(
+    rest('POST', '/repos/o/r/pulls', { body: 'calls mergeBranch' }),
+    (e: Error) => !/never merges/.test(e.message),
+  );
 });
