@@ -14,8 +14,8 @@ gingur-root/devkit#1.
 | `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                                        |
 | `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.                                              |
 | `.github/admission.txt`                                      | The admission gate every credential-holding job carries.                                                |
-| `configs/`                                                   | oxlint, oxfmt, tsconfig and lint-staged, via the `exports` map.                                         |
-| `bin/`                                                       | `devkit lint`, `fmt`, `staged`, `hooks install`, `agent …`.                                             |
+| `configs/`                                                   | The Vite+ preset (lint, fmt, staged) and tsconfig, via the `exports` map.                               |
+| `bin/`                                                       | `devkit agent …`. Lint, format and hooks are `vp`.                                                      |
 | `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                                     |
 | `.github/workflows/agent.build.yml`                          | The build stage: `/approve` (or `agent:build`) on a ready plan → draft PR on `agent/issue-<n>` → Ready. |
 | `agents/`, `skills/`                                         | Role instructions and per-role skills; a repo overrides or adds them under `.devkit/`.                  |
@@ -29,7 +29,7 @@ jobs:
 ```
 
 ```sh
-pnpm install && pnpm hooks:install
+pnpm install && pnpm exec vp config
 pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test
 ```
 
@@ -51,8 +51,8 @@ the role declares:
   its parent processes' env from `/proc`, so start the step with `exec env -i`
   and only the variables the run needs, never the job's whole env.
 
-The SDKs are optional peer dependencies, so repos that use devkit only to
-lint never install them. Agent jobs run devkit from its own checkout, where
+The SDKs are optional peer dependencies, so repos that use devkit only for its
+configs never install them. Agent jobs run devkit from its own checkout, where
 they're dev dependencies.
 
 ```sh

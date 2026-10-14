@@ -11,21 +11,17 @@
     "devkit": "./bin/devkit.mjs"
   },
   "scripts": {
-    "hooks:install": "node bin/devkit.mjs hooks install",
-    "lint": "node bin/devkit.mjs lint",
-    "lint:fix": "node bin/devkit.mjs lint --fix",
-    "fmt": "node bin/devkit.mjs fmt",
-    "fmt:check": "node bin/devkit.mjs fmt --check",
-    "staged": "node bin/devkit.mjs staged",
+    "lint": "vp lint",
+    "lint:fix": "vp lint --fix",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
     "agent": "node bin/devkit.mjs agent",
     "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "exports": {
     "./tsconfig": "./configs/tsconfig.base.json",
-    "./oxlint": "./configs/oxlintrc.base.json",
-    "./oxfmt": "./configs/oxfmt.config.mjs",
-    "./lint-staged": "./configs/lint-staged.config.js"
+    "./vite": "./configs/vite.mjs"
   },
   "files": [
     "bin",
@@ -50,10 +46,7 @@
   },
   "dependencies": {
     "commander": "^15.0.0",
-    "lint-staged": "^16",
     "oxc-transform": "0.150.0",
-    "oxfmt": "0.58.0",
-    "oxlint": "^1.73",
     "zod": "^4.6.7"
   },
   "devDependencies": {

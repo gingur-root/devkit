@@ -1,2 +1,2 @@
-pnpm staged
+vp staged
 gitleaks git --pre-commit --staged --redact --no-banner
