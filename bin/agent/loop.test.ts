@@ -68,6 +68,21 @@ test('a card the run left in Planning or Building goes to Needs you, then the ne
   );
 });
 
+test('a run that died before setting Status still frees the repo', () => {
+  const { actions } = decide([card(1, 'Ask', [READY_LABEL, 'agent:plan']), card(2, 'Ask')], {
+    role: 'plan',
+    issue: 1,
+    jobs: { start: { result: 'failure' } },
+  });
+  assert.deepEqual(
+    actions.map((a) => [a.kind, a.issue]),
+    [
+      ['stalled', 1],
+      ['plan', 2],
+    ],
+  );
+});
+
 test('a run that published leaves its card alone', () => {
   assert.deepEqual(
     decide([card(1, 'Needs you')], { role: 'plan', issue: 1, jobs: failed }).actions,

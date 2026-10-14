@@ -49,15 +49,23 @@ export interface Decision {
 const ENDED = ['failure', 'cancelled'];
 
 /**
- * The next step for each card: a card the run left in Planning or Building
- * goes to Needs you, then the repo's oldest ready card starts planning if no
+ * The next step for each card: a card the run left in Planning or Building,
+ * or still carrying its label, goes to Needs you, then the repo's oldest ready card starts planning if no
  * card is planning. One action per card.
  */
 export function decide(cards: Card[], ran?: Ran): Decision {
   const actions: Action[] = [];
   const skipped: string[] = [];
   const left = ran && cards.find((c) => c.number === ran.issue);
-  if (ran && left && (left.status === 'Planning' || left.status === 'Building')) {
+  // Publish always removes the trigger label, so a label left behind means the
+  // run died before it, even before it set the card's Status.
+  if (
+    ran &&
+    left &&
+    (left.status === 'Planning' ||
+      left.status === 'Building' ||
+      left.labels.includes(STAGE_LABELS[ran.role]))
+  ) {
     const [stage, job] = Object.entries(ran.jobs).find(([, j]) => ENDED.includes(j.result)) ?? [
       ran.role,
       undefined,
@@ -71,16 +79,14 @@ export function decide(cards: Card[], ran?: Ran): Decision {
     });
   }
 
-  const busy = cards.filter(
-    (c) =>
-      !actions.some((a) => a.issue === c.number) &&
-      (c.status === 'Planning' || c.labels.includes(STAGE_LABELS.plan)),
-  );
+  // One action per card: the stalled card is now in Needs you.
+  const open = cards.filter((c) => !actions.some((a) => a.issue === c.number));
+  const busy = open.filter((c) => c.status === 'Planning' || c.labels.includes(STAGE_LABELS.plan));
   if (busy.length) {
     skipped.push(`No new plan: #${busy.map((c) => c.number).join(', #')} is planning.`);
     return { actions, skipped };
   }
-  for (const card of [...cards].sort((a, b) => a.number - b.number)) {
+  for (const card of open.sort((a, b) => a.number - b.number)) {
     if (!card.labels.includes(READY_LABEL) || (card.status !== 'Ask' && card.status !== null))
       continue;
     if (card.readyBy !== OPERATOR_ID) {

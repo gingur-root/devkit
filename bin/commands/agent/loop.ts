@@ -27,7 +27,7 @@ export default {
     if ((issue === undefined) !== (role === undefined))
       throw new Error('--issue and --role go together.');
     const ran =
-      issue === undefined || !role
+      !role || issue === undefined
         ? undefined
         : { issue, role, jobs: JSON.parse(jobs ?? '{}') as Record<string, { result: string }> };
     await loop(repo, ran, !!dryRun);
