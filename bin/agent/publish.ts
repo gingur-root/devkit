@@ -6,7 +6,7 @@
 // merges. A retro only adds its one comment. Only this writes GitHub, and only
 // with the App.
 
-import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { git } from '../git.ts';
@@ -41,6 +41,8 @@ export interface PublishOptions {
   checkout?: string;
   /** A review's repair round: 0 reviews the build, n the nth repair. */
   round?: number;
+  /** A review's round: the commit toolchain.verify passed on, or empty when it did not pass. */
+  verified?: string;
 }
 
 interface Issue {
@@ -290,15 +292,49 @@ function reviewText(result: Result): string {
     .join('\n\n');
 }
 
-async function publishReview(job: Job, v: Verdict, round: number): Promise<Outcome> {
+async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
   if ('result' in v) {
     const pull = await openPull(job, branchOf(job));
     if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
     else if (pull.head.sha !== job.candidate)
       v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
-    else return postReview(job, v.result, pull, round);
+    else {
+      const result = gated(v.result, job.candidate, options.verified ?? '');
+      // The next round's repair reads this file, so it sees the CI finding too.
+      writeFileSync(join(options.out, RESULT_FILE), JSON.stringify(result, null, 2));
+      return postReview(job, result, pull, options.round ?? 0);
+    }
   }
   return { body: stopped(job.role, v), status: 'Needs you', stopped: true };
+}
+
+/** The finding a review gets when CI did not pass on the commit it reviewed. */
+export const CI_FINDING = 'CI';
+
+/**
+ * The review as the gate sees it: CI must have passed on the reviewed commit
+ * itself (devkit#9). Otherwise it carries a blocking CI finding for the repair,
+ * so a pass from an earlier or failed verify never reaches Ready.
+ */
+export function gated(result: Result, candidate: string | null, verified: string): Result {
+  if (candidate !== null && verified === candidate) return result;
+  const finding = {
+    id: CI_FINDING,
+    axis: 'correctness',
+    blocking: true,
+    criterion: null,
+    path: null,
+    line: null,
+    evidence: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    scenario: `toolchain.verify did not pass on ${candidate}.`,
+    impact: 'CI is red on this commit, so it is not safe to merge.',
+    fix: 'Run the failing check from the run log locally and make it pass.',
+  } as const;
+  return {
+    ...result,
+    outcome: result.outcome === 'pass' ? 'changes-requested' : result.outcome,
+    findings: [...(result.findings ?? []), finding],
+  };
 }
 
 /** A review Codex may answer: changes requested, findings to fix, nothing for the operator to decide. */
@@ -416,7 +452,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   }
   const { body, status, stopped } =
     job.role === 'review'
-      ? await publishReview(job, v, options.round ?? 0)
+      ? await publishReview(job, v, options)
       : await publishBuildOrPlan(job, v, options.out, options.checkout);
 
   // A build's Ready is brief: its own review follows in the same run and has the last word.

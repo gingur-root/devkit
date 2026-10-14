@@ -2,9 +2,10 @@ name: Review
 
 # One review round inside a build run. Round 0 reviews the build's commit. Each
 # later round first has Codex fix the previous review's findings (the repair),
-# pushes that fix to the same PR branch, then reviews the new commit. The
-# verdict marks a clean pass ready, starts the next round when the findings are
-# Codex's to fix and rounds are left, and otherwise moves the card to Needs you.
+# pushes that fix to the same PR branch, then verifies and reviews the new
+# commit. The verdict marks a clean pass with CI green on that same commit
+# ready, starts the next round when the findings (CI's included) are Codex's to
+# fix and rounds are left, and otherwise moves the card to Needs you.
 # The pipeline never merges. agent.build.yml calls this once per round.
 
 on:
@@ -181,9 +182,22 @@ jobs:
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
           devkitRef: ${{ inputs.devkitRef }}
 
+  # CI on the same commit the review reads (devkit#9). A repo's own checks are
+  # the scripts toolchain.verify runs; Ready needs them green.
+  verify:
+    name: Verify
+    needs: push
+    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))) && (inputs.round == 0 || needs.push.outputs.candidate != '') }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/toolchain.verify.yml
+    with:
+      runner: ${{ inputs.runner }}
+      ref: ${{ needs.push.outputs.candidate || inputs.candidate }}
+
   verdict:
     name: Verdict
-    needs: [push, review]
+    needs: [push, review, verify]
     if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))) && (inputs.round == 0 || needs.push.outputs.candidate != '')
     runs-on: ${{ inputs.runner }}
     outputs:
@@ -231,9 +245,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           ROUND: ${{ inputs.round }}
+          VERIFIED: ${{ needs.verify.result == 'success' && needs.verify.outputs.sha || '' }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
-            --round "$ROUND"
+            --round "$ROUND" --verified "$VERIFIED"
 
       # The next round's repair job: the reviewed commit, the build's base, and this review.
       - id: next

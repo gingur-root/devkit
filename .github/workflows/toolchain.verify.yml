@@ -46,6 +46,15 @@ on:
         type: string
         required: false
         default: 'ubuntu-latest'
+      ref:
+        description: 'The commit to verify. Empty verifies the event commit.'
+        type: string
+        required: false
+        default: ''
+    outputs:
+      sha:
+        description: 'The commit verified. Callers trust it only when the call succeeded.'
+        value: ${{ jobs.verify.outputs.sha }}
 
 permissions:
   contents: read
@@ -54,13 +63,19 @@ jobs:
   verify:
     name: Verify
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
     defaults:
       run:
         working-directory: ${{ inputs.cwd }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
+
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
       - uses: gingur-root/devkit/actions/toolchain.setup@main
         with:
