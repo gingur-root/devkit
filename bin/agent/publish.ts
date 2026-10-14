@@ -526,9 +526,10 @@ export async function publish(options: PublishOptions): Promise<void> {
     job.issue.number,
     STAGE_LABELS[job.role as keyof typeof STAGE_LABELS],
   );
-  await setStatus(job.repo, issue.node_id, status);
   // As the App: the build's render accepts it only after the Continue (approval.ts).
+  // Before the Status, so a failed add leaves the card in Planning for the loop, not stuck in Building.
   if (handoff) await rest('POST', `${path}/labels`, { labels: [STAGE_LABELS[handoff]] });
+  await setStatus(job.repo, issue.node_id, status);
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
   // A plan that asks questions is the normal flow, not trouble.

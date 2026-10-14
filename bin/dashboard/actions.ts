@@ -35,11 +35,11 @@ export type CardRequest = z.infer<typeof CardRequest>;
 
 /** A press the server refused, with the HTTP status the page gets. */
 export class ActionError extends Error {
-  constructor(
-    readonly status: 400 | 409 | 501,
-    message: string,
-  ) {
+  // A plain field: Node's type stripping can't run constructor parameter properties.
+  readonly status: 400 | 409 | 501;
+  constructor(status: 400 | 409 | 501, message: string) {
     super(message);
+    this.status = status;
   }
 }
 
