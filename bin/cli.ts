@@ -1,9 +1,6 @@
-// devkit — one executable over the tooling devkit manages.
-//
-// A consumer's package.json declares `@gingur-root/devkit` and nothing else for
-// lint/format/pre-commit, and calls these subcommands instead of raw tool
-// binaries. devkit owns the versions; the subcommand names are the stable
-// surface. Commands live one-per-file under commands/; see router.ts.
+// devkit — the agent pipeline's CLI. Lint, format and hooks are Vite+'s
+// (`vp`), configured through configs/vite.mjs. Commands live one-per-file
+// under commands/; see router.ts.
 //
 // devkit.mjs is the bin — it installs the TypeScript loader and imports this.
 
@@ -13,9 +10,7 @@ import { Command } from 'commander';
 
 import { register } from './router.ts';
 
-const program = new Command('devkit').description(
-  'Managed lint, format and pre-commit tooling for @gingur projects',
-);
+const program = new Command('devkit').description('The gingur-root agent pipeline');
 
 await register(program, fileURLToPath(new URL('./commands', import.meta.url)));
 
@@ -28,7 +23,7 @@ const INFORMATIONAL = /^commander\.(help|version)/;
 // `copyInheritedSettings` would carry the override down, but Commander only
 // calls it from `.command()`, never from `addCommand` — so it is applied to
 // every node instead. Without this, `devkit frobnicate` exits 2 while
-// `devkit hooks uninstall` exits 1.
+// `devkit agent frobnicate` exits 1.
 function pinExitCodes(command: Command): void {
   command.exitOverride((err) => process.exit(INFORMATIONAL.test(err.code) ? 0 : 2));
   command.commands.forEach(pinExitCodes);

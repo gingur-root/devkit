@@ -1,5 +1,4 @@
-// Shared oxfmt options carrying the old Prettier intent. Consumers re-export
-// from an auto-discovered `oxfmt.config.ts`:  export { default } from '@gingur-root/devkit/oxfmt';
+// Shared oxfmt options carrying the old Prettier intent, used by configs/vite.mjs.
 export default {
   printWidth: 100,
   singleQuote: true,

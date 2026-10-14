@@ -1,0 +1,7 @@
+# A new worktree has no node_modules and no .vite-hooks/_, so git would run no
+# hook there, silently. git runs post-checkout on `git worktree add` with an
+# all-zero previous HEAD: install then, and install the hooks.
+case "$1" in *[!0]*) exit 0 ;; esac
+[ -d node_modules ] && exit 0
+pnpm install --frozen-lockfile
+pnpm exec vp config --no-agent

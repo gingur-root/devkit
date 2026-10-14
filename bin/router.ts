@@ -1,5 +1,5 @@
 // File-based routing: the directory structure under commands/ is the command
-// path. `commands/hooks/install.ts` is `devkit hooks install`. Adding a command
+// path. `commands/agent/run.ts` is `devkit agent run`. Adding a command
 // means adding a file; nothing here changes.
 //
 // Command modules are imported eagerly, and that is deliberate rather than a
@@ -23,7 +23,7 @@ const GROUP_FILE = `index${COMMAND_EXT}`;
 
 /** A command file, and the command path its location implies. */
 export interface Route {
-  /** e.g. `['hooks', 'install']` */
+  /** e.g. `['agent', 'run']` */
   path: string[];
   file: string;
 }
@@ -93,34 +93,14 @@ async function parentOf(program: Command, path: string[], dir: string): Promise<
 
 /** Register every command found under `dir` onto `program`. */
 export async function register(program: Command, dir: string): Promise<Route[]> {
-  // Pass-through in a subcommand requires positional options on the program,
-  // so that `devkit lint --fix` does not resolve `--fix` against devkit itself.
-  program.enablePositionalOptions();
-
   const routes = await discover(dir);
 
   for (const route of routes) {
     const module = await load<CommandModule>(route.file);
     const command = new Command(route.path.at(-1)).description(module.describe);
 
-    if (module.kind === 'passthrough') {
-      command
-        .argument('[args...]')
-        // Without this an unmodelled flag is an error; with it, it becomes an
-        // ordinary command-argument and reaches the tool. This is what makes
-        // `devkit lint --fix` work.
-        .allowUnknownOption()
-        // And this keeps options *after* a path from being reparsed as devkit's:
-        // `devkit lint src/ --fix`.
-        .passThroughOptions()
-        // Commander would otherwise answer `devkit lint --help` itself. A blind
-        // wrapper must let the tool answer for its own flags.
-        .helpOption(false)
-        .action((args: string[]) => module.run(args));
-    } else {
-      module.configure?.(command);
-      command.action(() => module.run(command.opts(), command.args));
-    }
+    module.configure?.(command);
+    command.action(() => module.run(command.opts(), command.args));
 
     (await parentOf(program, route.path, dir)).addCommand(command);
   }

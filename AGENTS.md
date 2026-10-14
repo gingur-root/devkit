@@ -49,7 +49,7 @@ These override anything below that conflicts with them.
 ```
 .github/workflows/   reusable workflows — uses: gingur-root/devkit/.github/workflows/<name>.yml@main
 actions/             composite actions  — uses: gingur-root/devkit/actions/<name>@main
-configs/             shared tool configs (oxlint, oxfmt, tsconfig, …)
+configs/             shared tool configs (Vite+ preset, tsconfig)
 bin/                 the `devkit` CLI — the local half of the same contract
   commands/          one file per command; the path IS the command
 ```
@@ -66,13 +66,12 @@ bin/                 the `devkit` CLI — the local half of the same contract
   [nodejs/node#57215](https://github.com/nodejs/node/issues/57215) is closed
   `not_planned` — there is nothing to wait for. So `bin/devkit.mjs` installs
   `bin/loader.mjs` (oxc-transform via `module.registerHooks`) and imports
-  `cli.ts`. `devkit.mjs`, `loader.mjs` and `tools.mjs` stay JavaScript because
+  `cli.ts`. `devkit.mjs` and `loader.mjs` stay JavaScript because
   the loader cannot transform the files that install it.
   - **oxc-transform, not tsx:** no install script (tsx pulls esbuild, whose
     blocked `postinstall` prints a warning on every consumer install), a third
-    the size, and the same vendor as the `oxlint`/`oxfmt` pinned here. It is
-    pre-1.0 and its API has already churned — **pin it exactly**, as with
-    `oxfmt`.
+    the size, and the same vendor as the oxlint/oxfmt inside Vite+. It is
+    pre-1.0 and its API has already churned, so **pin it exactly**.
   - **Two details in `loader.mjs` fail silently if removed.** oxc _returns_
     syntax errors instead of throwing, so without the `errors.length` check a
     broken file yields wrong code; and without the inline sourcemap every stack
@@ -83,35 +82,18 @@ bin/                 the `devkit` CLI — the local half of the same contract
     package gets symlinked _outside_ `node_modules` and strips fine; devkit has
     dependencies, so it does not. Test with `pnpm pack` + install the tarball,
     and assert `readlink -f` lands inside `node_modules`.
-- **`bin/tools.mjs` must stay JavaScript.** It is the one module loaded from two
-  runtimes: the CLI (which has the loader) and lint-staged, which devkit spawns
-  as a plain `node` child with no loader, reaching it through
-  `configs/lint-staged.config.js`. A `.ts` there breaks every consumer's
-  pre-commit hook. Its types live in `bin/tools.d.mts`.
-- **Nothing invokes a managed tool by bare name.** oxlint, oxfmt, lint-staged
-  are devkit's `dependencies`, so under pnpm they are absent from a
-  consumer's `node_modules/.bin`. Every call goes through `bin/tools.mjs`, which
-  resolves them from devkit's own tree. A bare `oxlint` passes devkit's own CI
-  (where it _is_ linked) and fails for every consumer — `bin/tools.test.ts`
-  exists to catch exactly that.
-- **Commands are files.** `bin/commands/hooks/install.ts` is
-  `devkit hooks install`; `bin/router.ts` discovers the tree and registers it
+- **Commands are files.** `bin/commands/agent/run.ts` is
+  `devkit agent run`; `bin/router.ts` discovers the tree and registers it
   on Commander. Adding a command means adding a file and nothing else, and
   `bin/router.test.ts` asserts the tree matches the registered paths so a file
   cannot silently fail to register. An `index.ts` in a directory describes the
   group rather than being a command.
-- **Every command declares a `kind`, and the two are opposites.**
-  `passthrough` (`lint`, `fmt`, `staged`) means devkit parses _nothing_ after
-  the subcommand — that blindness is the escape hatch that lets
-  `devkit lint --fix` reach oxlint, and it is why those commands also disown
-  `--help`. `parsed` (`hooks install`, and every command added later) means
-  devkit owns the flags and an unknown one is a usage error. Getting this wrong
-  fails silently: the router would swallow `--fix` and oxlint would never see it.
+- **devkit owns every command's flags.** An unknown flag is a usage error.
+  Lint, format and hooks are Vite+'s, so devkit has no pass-through commands.
 - **Command modules stay thin and are imported eagerly.** Commander needs option
   specs at registration time to build help and reject unknown flags, so lazy
   per-command loading is not available. Keep heavy work (clients, schemas)
-  behind a lazy `import()` _inside_ the handler instead — see
-  `commands/hooks/install.ts`.
+  behind a lazy `import()` _inside_ the handler instead.
 - **Workflows are thin glue** over single-purpose composite actions. Logic that's
   reused across workflows is extracted to a composite so it lives **once**.
 - **One concern per action.** If a workflow grows conditionals for a second
@@ -213,37 +195,38 @@ install, so CI always runs against the specifier's head; **CI is
 authoritative**. Shared-config changes land backward-compatible or roll out
 everywhere the same day.
 
-**`ignorePatterns` in `configs/oxlintrc.base.json` does not reach consumers.**
-oxlint honours that key only from a config at the repo root, so
-`bin/commands/lint.ts` reads the list and passes it as `--ignore-pattern` flags.
-Don't "fix" an ignore problem by adding patterns to the shared config.
+### Lint and format
+
+Lint, format and staged checks run on Vite+ (`vp`). Consumers add `vite-plus`
+and spread devkit's preset into their `vite.config.ts`:
+
+```ts
+import { defineConfig } from 'vite-plus';
+import devkit from '@gingur-root/devkit/vite';
+
+export default defineConfig({ ...devkit });
+```
+
+The preset (`configs/vite.mjs`) carries the `lint`, `fmt` and `staged` blocks.
+Use `vp lint`, `vp fmt`, `vp check` and `vp staged`.
 
 ### Pre-commit
 
-`devkit hooks install` writes `.githooks/pre-commit` and points
-`core.hooksPath` at it. **Commit `.githooks/`; being tracked is the point.** The
-hook body lives at `.husky/<hook>`: `devkit staged`, then
-`gitleaks git --pre-commit --staged --redact --no-banner` (gitleaks on PATH).
-husky itself is gone: its generated, gitignored `.husky/_` doesn't exist in a
-`git worktree`, and git silently runs no hook when `core.hooksPath` is missing.
-The shim finds `devkit` in the worktree or the main checkout and fails loudly
-when it can't. CI (`secrets.scan.yml`) is the backstop for `--no-verify`.
+Hooks are Vite+'s dispatcher (`vp config` sets `core.hooksPath` to
+`.vite-hooks/_`). Commit the hook bodies in `.vite-hooks/`:
 
-**`hooks install` sets the exec bit twice, and both are load-bearing.** Removing
-either one reproduces the silent skip this replaced husky to avoid, so do not
-"simplify" it to one call — that regressed once already.
+- `pre-commit`: `vp staged`, then
+  `gitleaks git --pre-commit --staged --redact --no-banner` (gitleaks on PATH).
+- `post-checkout`: on `git worktree add`, runs `pnpm install` and `vp config`
+  in the new worktree.
 
-- `chmodSync` — the filesystem bit, which git checks before running the hook in
-  _this_ checkout. `copyFileSync` carries the source's mode, but `pnpm pack`
-  normalises everything except `package.json` `bin` entries to 644, so a
-  tarball-installed consumer has `shim.sh` at 644. The next `git add` then drags
-  the tracked mode down to match, so the staged bit alone is not durable either.
-- `git update-index --add --chmod=+x` — the tracked bit, which every _other_
-  checkout receives. On Windows `chmodSync` cannot set a POSIX bit and Git for
-  Windows runs `core.filemode=false`, so the recorded mode would be `100644`.
+**Why `post-checkout` exists.** `.vite-hooks/_` is generated and gitignored, so
+a new worktree doesn't have it, and git silently runs no hook when
+`core.hooksPath` is missing. git runs `post-checkout` from the main checkout's
+dispatcher when it creates the worktree, so the install happens there. A
+worktree made with `--no-checkout` skips it: run `pnpm install && vp config`
+yourself. CI (`secrets.scan.yml`) is the backstop for every skipped hook.
 
-Every git call _after the first_ passes the resolved repo root as its cwd — the
-first cannot, since it is the one resolving the root. `prepare` runs wherever
-dependencies are installed, which in a workspace is a package subdirectory, and
-`update-index` takes a path relative to the process directory; run from the
-wrong one it fails after writing the shim and before setting `core.hooksPath`.
+No `prepare` script: devkit installs as a git dependency, and a lifecycle
+script would make every consumer allow it in `onlyBuiltDependencies`. A fresh
+clone runs `pnpm install && pnpm exec vp config` once.
