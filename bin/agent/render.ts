@@ -141,7 +141,8 @@ export async function render(options: RenderOptions): Promise<Job> {
     try {
       approved = approvedPlan(comments, options.appId, issueRevision);
     } catch (error) {
-      await refuse(options, (error as Error).message);
+      // The refusal itself still fails the job, even if saying so on the issue fails.
+      await refuse(options, (error as Error).message).catch(console.error);
       throw error;
     }
   }
