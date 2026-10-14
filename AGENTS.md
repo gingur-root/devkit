@@ -21,6 +21,10 @@ These override anything below that conflicts with them.
 - **Break fast, fix fast.** A loud failure and a quick fix over defensive code.
 - **No forks.** Nothing supports or routes fork PRs; admission keeps everyone but
   the owner off every credential-holding job.
+- **Keep the architecture diagram current.** A PR that adds, removes or
+  rewires a part of the pipeline (a workflow, a stage, a runner, a credential)
+  updates infra's `docs/architecture.excalidraw.svg` in a companion infra PR.
+  How to edit it is in infra's `AGENTS.md`.
 
 ## Naming
 
