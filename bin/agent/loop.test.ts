@@ -1,7 +1,7 @@
 // The loop's one judgement: what a tick does to each card. It acts as the App,
 // so a wrong call here starts plans nobody asked for or strands a card.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 
 import { OPERATOR_ID, READY_LABEL, type Status } from './constants.ts';
 import { type Card, decide } from './loop.ts';
