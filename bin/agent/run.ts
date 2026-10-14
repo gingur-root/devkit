@@ -2,10 +2,10 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } 
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PROVIDERS } from './providers/index.ts';
+import { PROVIDERS, type RunOutput } from './providers/index.ts';
+import { SUMMARY_WORDS, type Result, RESULT_JSON_SCHEMA } from './result.ts';
 import type { Executor } from './constants.ts';
-import { RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
-import { RESULT_JSON_SCHEMA } from './result.ts';
+import { JOB_FILE, Job, RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
 import { ROLES, type Role, type RoleName } from './roles.ts';
 
 export interface RunOptions {
@@ -72,6 +72,42 @@ function stagePrompt(prompt: string, dirs: { in?: string; out?: string }): strin
   return `${prompt}\n\nJob directory ($AGENT_IN): ${dirs.in}\nOutput directory ($AGENT_OUT): ${dirs.out}`;
 }
 
+/** The envelope for a run that returned none: `failed`, with the CLI's reason. */
+export function failedResult(job: Job, output: RunOutput): Result {
+  const failure = output.failure ?? { class: 'unknown', resetsAt: null };
+  const words = `The agent stopped with no result: ${output.error ?? failure.class}`.split(/\s+/);
+  return {
+    job: job.job,
+    role: job.role,
+    inputs: {
+      issue: job.issue.revision,
+      plan: job.plan?.revision ?? null,
+      base: job.base,
+      candidate: job.candidate,
+      artifacts: [],
+    },
+    outputs: { plan: null, candidate: null, artifacts: [] },
+    status: 'failed',
+    outcome: null,
+    summary: words.slice(0, SUMMARY_WORDS).join(' '),
+    evidence: [],
+    changes: null,
+    hypotheses: null,
+    axes: null,
+    criteria: null,
+    probe: null,
+    critique: null,
+    docs: null,
+    assumptions: [],
+    questions: [],
+    next: 'Fix the cause, then run the stage again.',
+    findings: null,
+    subtasks: null,
+    followups: null,
+    failure,
+  };
+}
+
 export async function run(options: RunOptions): Promise<void> {
   const role = resolveRole(options);
   const cwd = resolve(options.cwd ?? '.');
@@ -85,9 +121,9 @@ export async function run(options: RunOptions): Promise<void> {
     process.stdout.write(line);
     if (dirs.out) appendFileSync(join(dirs.out, TRANSCRIPT_FILE), line);
   };
-  let ok = false;
+  let output: RunOutput;
   try {
-    const output = await PROVIDERS[role.executor]({
+    output = await PROVIDERS[role.executor]({
       role,
       instructions: instructions(options.role, role, cwd),
       prompt: stagePrompt(options.prompt ?? role.objective, dirs),
@@ -96,13 +132,19 @@ export async function run(options: RunOptions): Promise<void> {
       schema: role.result ? RESULT_JSON_SCHEMA : undefined,
       emit,
     });
-    ok = output.ok;
-    // Written even when the run failed: publish validates it and names the stage.
-    if (dirs.out && output.result !== undefined) {
-      writeFileSync(join(dirs.out, RESULT_FILE), `${JSON.stringify(output.result, null, 2)}\n`);
-    }
   } catch (error) {
-    emit({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+    const message = error instanceof Error ? error.message : String(error);
+    emit({ type: 'error', message });
+    output = { ok: false, error: message };
   }
-  if (!ok) process.exitCode = 1;
+  // Written even when the run failed: publish validates it and names the stage.
+  let result = output.result;
+  if (result === undefined && !output.ok && role.result && dirs.in && dirs.out)
+    result = failedResult(
+      Job.parse(JSON.parse(readFileSync(join(dirs.in, JOB_FILE), 'utf8'))),
+      output,
+    );
+  if (dirs.out && result !== undefined)
+    writeFileSync(join(dirs.out, RESULT_FILE), `${JSON.stringify(result, null, 2)}\n`);
+  if (!output.ok) process.exitCode = 1;
 }

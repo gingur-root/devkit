@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vite-plus/test';
 
+import type { Job } from './job.ts';
+import { Result } from './result.ts';
 import { ROLES } from './roles.ts';
-import { instructions, skillRoles } from './run.ts';
+import { failedResult, instructions, skillRoles } from './run.ts';
 
 function repoSkill(cwd: string, name: string, roles: string, body: string): void {
   mkdirSync(join(cwd, '.devkit', 'skills', name), { recursive: true });
@@ -42,4 +44,30 @@ test("every devkit skill's roles are real roles", () => {
     const roles = skillRoles(readFileSync(new URL(`${name}/SKILL.md`, dir), 'utf8'));
     for (const role of roles) assert.ok(role in ROLES, `${name} names unknown role ${role}`);
   }
+});
+
+test('the envelope written for a run with no result passes the schema publish checks', () => {
+  const job: Job = {
+    job: 'build-1',
+    role: 'build',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 't', revision: 'rev' },
+    plan: { revision: 'plan', criteria: [] },
+    source: 'sha',
+    base: 'sha',
+    candidate: null,
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+  };
+  const long = { ok: false, error: 'word '.repeat(400) };
+  const result = Result.parse(failedResult(job, long));
+  assert.equal(result.failure?.class, 'unknown');
+  assert.equal(result.inputs.plan, 'plan');
+  const limited = failedResult(job, {
+    ok: false,
+    failure: { class: 'rate_limit', resetsAt: null },
+  });
+  assert.equal(Result.parse(limited).failure?.class, 'rate_limit');
 });

@@ -24,7 +24,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid` or `needs-you`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you` or `rate-limit`.'
         type: string
         required: false
         default: 'ready'
@@ -135,9 +135,10 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          ROUND: ${{ inputs.round }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" \
-            --checkout "$GITHUB_WORKSPACE/repo"
+            --checkout "$GITHUB_WORKSPACE/repo" --round "$ROUND"
 
       # The review sees the whole change since the build's base, not just this fix.
       - name: Render review
