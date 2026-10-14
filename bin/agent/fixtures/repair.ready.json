@@ -1,0 +1,51 @@
+{
+  "job": "",
+  "role": "repair",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "implemented",
+  "summary": "Stub repair: rewrites STUB.md, so the repair has a fix to push.",
+  "evidence": [
+    {
+      "criterion": null,
+      "check": "stub",
+      "expected": "STUB.md is formatted",
+      "observed": "STUB.md is formatted",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": [
+    {
+      "ref": "CI",
+      "change": "Rewrote STUB.md.",
+      "response": null,
+      "evidence": null
+    }
+  ],
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Verify and review the fix.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "failure": null
+}

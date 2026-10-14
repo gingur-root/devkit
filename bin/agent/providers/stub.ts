@@ -3,7 +3,8 @@
 // from the job file, so `ready` passes the contract check and `invalid` fails
 // only on its schema. `needs-you` changes only the review, which asks the
 // operator a question; every other role runs `ready`. `rate-limit` returns no
-// result and a rate limit, as a CLI that hit one does.
+// result and a rate limit, as a CLI that hit one does. `red` changes only the
+// build, whose STUB.md fails a format check until the repair rewrites it.
 
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -30,10 +31,11 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   const own = new URL(`${job.role}.${fixture}.json`, FIXTURES);
   const file = existsSync(own) ? own : new URL(`${job.role}.ready.json`, FIXTURES);
   const result = JSON.parse(readFileSync(file, 'utf8'));
-  // A plan writes plan.md; a build changes the checkout; a review or retro writes nothing.
+  // A plan writes plan.md; a build or repair changes the checkout; a review or retro writes nothing.
   if (job.role !== 'review' && job.role !== 'retro') {
-    const target = job.role === 'build' ? join(input.cwd, 'STUB.md') : join(input.out, PLAN_FILE);
-    copyFileSync(new URL(`${job.role}.md`, FIXTURES), target);
+    const target = job.role === 'plan' ? join(input.out, PLAN_FILE) : join(input.cwd, 'STUB.md');
+    const ownText = new URL(`${job.role}.${fixture}.md`, FIXTURES);
+    copyFileSync(existsSync(ownText) ? ownText : new URL(`${job.role}.md`, FIXTURES), target);
   }
   input.emit({ type: 'init', fixture });
   input.emit({ type: 'result', ok: true, usage: { input_tokens: 0, output_tokens: 0 } });
