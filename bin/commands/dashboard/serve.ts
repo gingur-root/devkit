@@ -21,6 +21,8 @@ export default {
     const { build } = await import('vite-plus');
     await build({
       root: fileURLToPath(new URL('../../dashboard/web/', import.meta.url)),
+      // Relative asset URLs, so the build also works under /pr/<n>/ (devkit#93).
+      base: './',
       build: { outDir: fileURLToPath(WEB_DIST), emptyOutDir: true },
       // Streamdown's 'use client' lines make Rolldown warn on every build.
       logLevel: 'error',

@@ -33,6 +33,7 @@ function Markdown({ children, trusted = true }: { children: string; trusted?: bo
   return <Streamdown linkSafety={{ enabled: !trusted }}>{children}</Streamdown>;
 }
 
+// Every URL is relative, so the page works at / and under a preview's /pr/<n>/ (devkit#93).
 const HOME_HINT = 'Ask, queue, start, or follow up on an issue.';
 
 function parseHash(): Ref | null {
@@ -51,7 +52,7 @@ function useHashRef(): Ref | null {
 }
 
 async function startPlan(t: Ref): Promise<boolean> {
-  const response = await fetch('/api/start', {
+  const response = await fetch('api/start', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ repo: t.repo, number: t.number }),
@@ -63,7 +64,7 @@ function Threads({ current, version }: { current: Ref | null; version: number })
   const [list, setList] = useState<ThreadItem[] | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    fetch('/api/threads')
+    fetch('api/threads')
       .then((r) => r.json() as Promise<ThreadItem[]>)
       .then(setList, () => setFailed(true));
   }, [version]);
@@ -164,7 +165,7 @@ function Chat({
   const transport = useMemo(
     () =>
       new DefaultChatTransport<DashboardMessage>({
-        api: '/api/chat',
+        api: 'api/chat',
         // The server keeps the history; it needs only the new text and the thread.
         prepareSendMessagesRequest: ({ messages }) => {
           const last = messages.at(-1);
@@ -264,7 +265,7 @@ function App() {
     setPending((p) => (p?.key === key ? p : null));
     document.body.classList.remove('open');
     const query = ref ? `?repo=${encodeURIComponent(ref.repo)}&number=${ref.number}` : '';
-    fetch(`/api/thread${query}`)
+    fetch(`api/thread${query}`)
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
