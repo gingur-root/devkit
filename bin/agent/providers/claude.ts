@@ -1,8 +1,16 @@
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 import { CLAUDE_SUBSCRIPTION_SOURCES, WEB_MCP_SERVERS } from '../constants.ts';
+import type { Failure } from '../result.ts';
 import type { Role } from '../roles.ts';
-import { agentEnv, resolveExecutable, type RunInput, type RunOutput, stageDirs } from './shared.ts';
+import {
+  agentEnv,
+  resolveExecutable,
+  type RunInput,
+  type RunOutput,
+  stageDirs,
+  statusFailure,
+} from './shared.ts';
 
 export function claudeOptions(
   role: Role,
@@ -63,6 +71,32 @@ export function assertClaudeInit(
     throw new Error(`Claude loaded tools the role does not allow: ${extra.join(', ')}`);
 }
 
+/**
+ * The failure one message reports, if any. A rejected rate-limit event is the
+ * only one that carries the reset time.
+ */
+export function claudeFailure(message: SDKMessage): Failure | undefined {
+  if (message.type === 'rate_limit_event') {
+    const { status, resetsAt } = message.rate_limit_info;
+    if (status !== 'rejected') return undefined;
+    // `resetsAt` is Unix seconds.
+    return {
+      class: 'rate_limit',
+      resetsAt: resetsAt ? new Date(resetsAt * 1000).toISOString() : null,
+    };
+  }
+  if (message.type === 'assistant' && message.error) {
+    const { error } = message;
+    const known = error === 'rate_limit' || error === 'overloaded' || error === 'server_error';
+    return { class: known ? error : 'unknown', resetsAt: null };
+  }
+  if (message.type !== 'result') return undefined;
+  if (message.subtype === 'error_max_turns') return { class: 'timeout', resetsAt: null };
+  if (message.subtype === 'success' && message.is_error && message.api_error_status)
+    return { class: statusFailure(message.api_error_status), resetsAt: null };
+  return undefined;
+}
+
 export async function runClaude(input: RunInput): Promise<RunOutput> {
   const { role, prompt, emit } = input;
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
@@ -79,8 +113,13 @@ export async function runClaude(input: RunInput): Promise<RunOutput> {
   const timer = setTimeout(() => abortController.abort(), role.timeoutMinutes * 60_000);
   let ok = false;
   let result: unknown;
+  let failure: Failure | undefined;
+  let error: string | undefined;
   try {
     for await (const message of query({ prompt, options: { ...options, abortController } })) {
+      const found = claudeFailure(message);
+      // The rate-limit event wins, since it alone has the reset time.
+      if (found && (!failure || message.type === 'rate_limit_event')) failure = found;
       if (message.type === 'system' && message.subtype === 'init') {
         // Before the first model call completes, stop if anything unexpected loaded.
         assertClaudeInit(message, options);
@@ -99,6 +138,11 @@ export async function runClaude(input: RunInput): Promise<RunOutput> {
       } else if (message.type === 'result') {
         ok = message.subtype === 'success' && !message.is_error;
         if (message.subtype === 'success') result = message.structured_output;
+        if (!ok)
+          error =
+            message.subtype === 'success'
+              ? message.result
+              : message.errors.join('; ') || message.subtype;
         emit({
           type: 'result',
           subtype: message.subtype,
@@ -109,8 +153,17 @@ export async function runClaude(input: RunInput): Promise<RunOutput> {
         });
       }
     }
+  } catch (thrown) {
+    // The CLI can exit nonzero after reporting why, as on a rejected rate limit.
+    if (abortController.signal.aborted) {
+      failure = { class: 'timeout', resetsAt: null };
+      error = `no result within ${role.timeoutMinutes} minutes`;
+    } else {
+      error = thrown instanceof Error ? thrown.message : String(thrown);
+    }
+    emit({ type: 'error', message: error });
   } finally {
     clearTimeout(timer);
   }
-  return { ok, result };
+  return ok ? { ok, result } : { ok, result, failure, error };
 }

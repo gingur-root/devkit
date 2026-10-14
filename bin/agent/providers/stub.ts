@@ -2,7 +2,8 @@
 // whole chain takes seconds. The fixture's job, role and issue revision come
 // from the job file, so `ready` passes the contract check and `invalid` fails
 // only on its schema. `needs-you` changes only the review, which asks the
-// operator a question; every other role runs `ready`.
+// operator a question; every other role runs `ready`. `rate-limit` returns no
+// result and a rate limit, as a CLI that hit one does.
 
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +18,14 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   const fixture = (process.env.DEVKIT_STUB_FIXTURE ?? 'ready') as StubFixture;
   if (!STUB_FIXTURES.includes(fixture)) throw new Error(`No stub fixture "${fixture}".`);
   if (!input.in || !input.out) throw new Error('The stub needs --in and --out.');
+  if (fixture === 'rate-limit') {
+    input.emit({ type: 'init', fixture });
+    return {
+      ok: false,
+      failure: { class: 'rate_limit', resetsAt: '2026-01-01T00:00:00.000Z' },
+      error: 'stub rate limit',
+    };
+  }
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
   const own = new URL(`${job.role}.${fixture}.json`, FIXTURES);
   const file = existsSync(own) ? own : new URL(`${job.role}.ready.json`, FIXTURES);
@@ -27,6 +36,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     copyFileSync(new URL(`${job.role}.md`, FIXTURES), target);
   }
   input.emit({ type: 'init', fixture });
+  input.emit({ type: 'result', ok: true, usage: { input_tokens: 0, output_tokens: 0 } });
   return {
     ok: true,
     result: {

@@ -31,6 +31,8 @@ import {
   type PlanContract,
   RESULT_FILE,
   revision,
+  TRANSCRIPT_FILE,
+  usage,
 } from './job.ts';
 import { Result } from './result.ts';
 
@@ -403,8 +405,25 @@ export function retroComment(result: Result, runUrl: string): string {
     .join('\n\n');
 }
 
+/** The stage's name in the run summary: its role, and its round when it repeats. */
+export function stageName(role: string, round = 0): string {
+  return round > 0 ? `${role}.r${round}` : role;
+}
+
+/** Adds the stage's token use to the run summary (devkit#10). */
+function summarizeUsage(stage: string, out: string): void {
+  const transcript = join(out, TRANSCRIPT_FILE);
+  if (!process.env.GITHUB_STEP_SUMMARY || !existsSync(transcript)) return;
+  const { input, output } = usage(readFileSync(transcript, 'utf8'));
+  appendFileSync(
+    process.env.GITHUB_STEP_SUMMARY,
+    `**\`${stage}\` tokens:** ${input.toLocaleString('en-US')} input, ${output.toLocaleString('en-US')} output.\n`,
+  );
+}
+
 export async function publish(options: PublishOptions): Promise<void> {
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
+  summarizeUsage(stageName(job.role, options.round), options.out);
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
