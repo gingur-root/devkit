@@ -1,7 +1,7 @@
 # Dashboard board: cards as a state machine
 
-Planned (Troy, 2026-10-14). The board itself is built (devkit#98); its
-buttons are not yet (devkit#99). The dashboard's main view is a board of
+Decided by Troy, 2026-10-14. The board is built (devkit#98), and so are its
+buttons (devkit#99), except Merge, which waits for Troy's merge token. The dashboard's main view is a board of
 stories and their subtasks. There is no drag: each card shows only
 the buttons its column allows. A button is an action, and the pipeline then
 moves the card.
@@ -28,17 +28,17 @@ Needs you always goes back to Planning. Planning then decides the next step:
 it updates the spec if needed and hands the card to Building, or asks again
 and returns it to Needs you. Planning orchestrates; there is no Build button.
 
-| Column    | Buttons                                          | What each button does                                                                                                                                                                                  | Card goes to |
-| --------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------ |
-| Ask       | **Plan**                                         | Adds `agent:plan`.                                                                                                                                                                                     | Planning     |
-| Ask       | **Close**                                        | Closes the issue as not planned.                                                                                                                                                                       | Done         |
-| Planning  | **Stop**                                         | Cancels the live run.                                                                                                                                                                                  | Needs you    |
-| Needs you | **Continue** (optional note, **Elevate** toggle) | Sends the note to the planner as `/plan <note>`. Pressing it is Troy's approval to build. With Elevate on, a confirm step comes first, and the build runs elevated on the WSL desk (`agent:elevated`). | Planning     |
-| Needs you | **Close**                                        | Closes as not planned.                                                                                                                                                                                 | Done         |
-| Building  | **Stop**                                         | Cancels the live run.                                                                                                                                                                                  | Needs you    |
-| Ready     | **Merge**                                        | Merges the PR with Troy's own token, the one used only for merges.                                                                                                                                     | Done         |
-| Ready     | **Request changes** (note)                       | Sends the note to the planner, which re-plans and hands back to Building.                                                                                                                              | Planning     |
-| Done      | **Reopen**                                       | Reopens the issue.                                                                                                                                                                                     | Ask          |
+| Column    | Buttons                                          | What each button does                                                                                                                                                                                                 | Card goes to |
+| --------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Ask       | **Plan**                                         | Adds `agent:plan`.                                                                                                                                                                                                    | Planning     |
+| Ask       | **Close**                                        | Closes the issue as not planned.                                                                                                                                                                                      | Done         |
+| Planning  | **Stop**                                         | Cancels the live run.                                                                                                                                                                                                 | Needs you    |
+| Needs you | **Continue** (optional note, **Elevate** toggle) | Posts a Continue comment with the note, then adds `agent:plan`. Pressing it is Troy's approval to build. With Elevate on, a confirm step comes first, and the build runs elevated on the WSL desk (`agent:elevated`). | Planning     |
+| Needs you | **Close**                                        | Closes as not planned.                                                                                                                                                                                                | Done         |
+| Building  | **Stop**                                         | Cancels the live run.                                                                                                                                                                                                 | Needs you    |
+| Ready     | **Merge**                                        | Merges the PR with Troy's own token, the one used only for merges. Shown disabled ("needs the merge token") until that token exists.                                                                                  | Done         |
+| Ready     | **Request changes** (note)                       | A Continue whose note is the change. With no `/revise` yet (devkit#13), the planner takes the note, re-plans and hands back to Building.                                                                              | Planning     |
+| Done      | **Reopen**                                       | Reopens the issue.                                                                                                                                                                                                    | Ask          |
 
 What Planning does on each entry:
 
@@ -50,6 +50,27 @@ What Planning does on each entry:
 
 The pipeline never merges. **Merge** is Troy's own action, done through his
 token, the same as clicking Merge on GitHub.
+
+## How a Continue becomes a build
+
+The buttons act as the pipeline App. Troy's Cloudflare Access login on the
+dashboard is the approval (decided 2026-10-14).
+
+1. **Continue** posts an App comment that starts with `<!-- devkit:continue -->`
+   (`continue-elevated` with Elevate on), carrying the note. Then it adds
+   `agent:plan`.
+2. The plan run reads the note like any App comment. When it publishes a plan
+   that is ready with no questions, and a Continue made that plan's start, it
+   adds `agent:build` (or `agent:elevated`) as the App and moves the card to
+   Building. Otherwise it stops in Needs you as before.
+3. The admission gate lets the App add `agent:build` and `agent:elevated`.
+   The build's render then checks the card's history
+   (`bin/agent/approval.ts`): the App's label must come right after a plan
+   that a matching Continue started, within a minute of it. So a Continue
+   starts one run: a second App label after it is refused, says why on the
+   issue and drops the label.
+
+Troy's own labels and commands work as before, with no Continue needed.
 
 ## While a run is live
 
@@ -67,19 +88,14 @@ token, the same as clicking Merge on GitHub.
 
 ## Guarding each button
 
-- The server re-reads the card from GitHub before acting and refuses if the
-  column or the live run changed since the page loaded. The page then
-  refreshes. This covers two tabs, a phone and a desk, or a run that ended
+- The server re-reads the card from GitHub before acting and answers 409 if
+  the column or the live run changed since the page loaded, or the card no
+  longer allows the press. The page then refreshes. A card counts as live in
+  Planning or Building, or while it carries a stage label. This covers two tabs, a phone and a desk, or a run that ended
   between the page load and the tap.
 - Buttons that start work write the label or comment. The pipeline sets
   Status as it does today. Only Close and Reopen set Status or the
   issue state directly.
 - Only Troy, through Cloudflare Access, sees or presses buttons.
-
-## Open questions
-
-1. **Who acts for a button.** Today only Troy's own actor passes the gate,
-   and the App may add only `agent:plan`. Continue (which now carries the
-   build approval), Request changes and Stop need the gate to accept the App acting on a button Troy pressed
-   behind Access. The other choice is to run those buttons with Troy's merge
-   token. That token can do anything Troy can, so it is the wider grant.
+- **Stop** finds the run by the issue's title, since an issue event's run is
+  named after it. It needs the App's Actions permission (read and write).

@@ -5,7 +5,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { commitMessage, failureReason, gated, passes, repairable, stopped } from './publish.ts';
+import {
+  commitMessage,
+  failureReason,
+  gated,
+  passes,
+  readyToBuild,
+  repairable,
+  stopped,
+} from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -75,4 +83,13 @@ test('every pushed commit lists the operator as co-author', () => {
       role,
     );
   }
+});
+
+test('a plan hands off to a build only when it is ready with nothing to ask', () => {
+  const plan = Result.parse(
+    JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
+  );
+  assert.ok(readyToBuild(plan));
+  assert.ok(!readyToBuild({ ...plan, questions: ['Which file?'] }));
+  assert.ok(!readyToBuild({ ...plan, outcome: 'needs-input' }));
 });

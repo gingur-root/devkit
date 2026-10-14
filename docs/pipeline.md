@@ -2,8 +2,11 @@
 
 How to take an issue from idea to merged PR with the agents. Only Troy can
 start a stage: every job checks the actor, so labels or comments from anyone
-else do nothing. The one exception is the board loop below, which as the
-pipeline App may add `agent:plan` and nothing else.
+else do nothing. The one exception is the pipeline App. It may add
+`agent:plan` (the board loop below, and the dashboard). It may add
+`agent:build` or `agent:elevated` only to hand off a plan right after Troy
+pressed **Continue** on the dashboard, and the stage checks that Continue
+before it starts ([board.md](board.md#how-a-continue-becomes-a-build)).
 
 A repo is enrolled when it has a thin `agents.yml` caller (see
 [scratch's](https://github.com/gingur-root/scratch/blob/main/.github/workflows/agents.yml))
@@ -11,13 +14,13 @@ and the `RUNNER` and `PIPELINE_APP_ID` vars.
 
 ## The flow
 
-| Step               | You do                                                                                                   | The pipeline does                                                                                      | Board card       |
-| ------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------- |
-| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board. | The board adds the card.                                                                               | Ask              |
-| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.               | Writes one plan comment, removes the label.                                                            | Planning         |
-| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.             | Rewrites the same plan comment.                                                                        | Needs you        |
-| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval.           | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                     | Building → Ready |
-| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.    | In the same run, Claude reviews the PR; Codex fixes findings, up to 2 rounds; then ready or Needs you. | Ready → Done     |
+| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                      | Board card       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------- |
+| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                               | Ask              |
+| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label.                                                            | Planning         |
+| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                        | Needs you        |
+| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                     | Building → Ready |
+| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | In the same run, Claude reviews the PR; Codex fixes findings, up to 2 rounds; then ready or Needs you. | Ready → Done     |
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
@@ -33,9 +36,11 @@ the label again. Every comment that leaves a card in **Needs you** or
 polling. It runs as the last job of every plan and build run, however the run
 ended, and when Troy adds `ready-for-agent`. Each tick on a repo:
 
-1. If the run left its card in **Planning** or **Building** (it was cancelled,
-   or died before it published), it says where it stopped and moves the card to
-   **Needs you**.
+1. If the run left its card in its own column (**Planning** for a plan,
+   **Building** for a build: it was cancelled, or died before it published),
+   it says where it stopped and moves the card to **Needs you**. A plan that
+   handed off to its build leaves the card in Building, which the plan's
+   tick leaves alone.
 2. If no card in the repo is planning, it adds `agent:plan` to the oldest open
    `ready-for-agent` card in **Ask**, but only if Troy added that label.
 
@@ -185,6 +190,10 @@ devkit main.
   `agent/issue-<n>` while a repair runs, its push is rejected and the card
   stops in Needs you.
 - **No `/revise` yet.** It passes the gate but no stage handles it; edit the
-  issue and re-plan instead.
+  issue and re-plan instead, or press **Request changes** on the dashboard,
+  which hands the note to the planner.
+- **Enrolled callers repeat the admission** in their `concurrency` group. Until
+  a caller copies the new text, an App hand-off label runs outside the card's
+  group, so the build may start before the plan run's last job ends.
 - **One run per card at a time.** A second label while one runs waits in the
   queue.

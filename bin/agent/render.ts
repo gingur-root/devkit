@@ -4,7 +4,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { OPERATOR_ID, STAGE_LABELS } from './constants.ts';
+import { readSteps, refuseStart } from './approval.ts';
+import { type Handoff, OPERATOR_ID, STAGE_LABELS } from './constants.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
@@ -52,8 +53,12 @@ export interface RenderOptions {
   /** A review's base: the commit the candidate was built from. */
   base?: string;
   appId: number;
+  /** Who started the run (`github.actor_id`). A build or elevated run the App started needs a Continue (devkit#99). */
+  actor?: number;
   out: string;
 }
+
+const HANDOFF_ROLES: readonly string[] = ['build', 'elevated'] satisfies Handoff[];
 
 function trusted(item: Authored, appId: number): boolean {
   return item.user?.id === OPERATOR_ID || item.performed_via_github_app?.id === appId;
@@ -139,6 +144,15 @@ export async function render(options: RenderOptions): Promise<Job> {
   let approved: ReturnType<typeof approvedPlan> | null = null;
   if (options.role !== 'plan' && options.role !== 'retro') {
     try {
+      if (HANDOFF_ROLES.includes(options.role)) {
+        // No actor fails closed: it is neither the operator nor the App.
+        const why = refuseStart(
+          options.actor ?? Number.NaN,
+          await readSteps(options.repo, options.issue),
+          options.role as Handoff,
+        );
+        if (why) throw new Error(`Not approved: ${why}.`);
+      }
       approved = approvedPlan(comments, options.appId, issueRevision);
     } catch (error) {
       // The refusal itself still fails the job, even if saying so on the issue fails.

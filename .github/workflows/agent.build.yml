@@ -9,7 +9,8 @@ name: Build
 # get up to REPAIR_ROUNDS (bin/agent/constants.ts) repair rounds on the same PR,
 # one `repair-<n>` job each; anything else moves the card to Needs you.
 # The pipeline never merges. Only the operator can start it (the admission
-# gate), so that comment is the approval.
+# gate), so that comment is the approval, or the App right after his dashboard
+# Continue, which render checks (bin/agent/approval.ts).
 # Callers set concurrency (one group per card) at their own workflow level.
 
 on:
@@ -55,7 +56,7 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
@@ -93,6 +94,7 @@ jobs:
           DISPATCHED: ${{ inputs.issue }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           APP_ID: ${{ inputs.appId }}
+          ACTOR: ${{ github.actor_id }}
         run: |
           # A manual run's sha is its proof branch, whose caller differs from the
           # default branch; the App could not push a build on top of it.
@@ -102,7 +104,7 @@ jobs:
               node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).sha')
           fi
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build --source "$SOURCE" \
-            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+            --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
 

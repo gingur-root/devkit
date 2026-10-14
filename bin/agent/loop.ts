@@ -48,9 +48,12 @@ export interface Decision {
 
 const ENDED = ['failure', 'cancelled'];
 
+/** The column a run holds its card in. A plan that hands off leaves it in Building for the build. */
+const RUNNING: Record<Ran['role'], Status> = { plan: 'Planning', build: 'Building' };
+
 /**
- * The next step for each card: a card the run left in Planning or Building,
- * or still carrying its label, goes to Needs you, then the repo's oldest ready card starts planning if no
+ * The next step for each card: a card the run left in its own column (Planning
+ * for a plan, Building for a build), or still carrying its label, goes to Needs you, then the repo's oldest ready card starts planning if no
  * card is planning. One action per card.
  */
 export function decide(cards: Card[], ran?: Ran): Decision {
@@ -62,9 +65,7 @@ export function decide(cards: Card[], ran?: Ran): Decision {
   if (
     ran &&
     left &&
-    (left.status === 'Planning' ||
-      left.status === 'Building' ||
-      left.labels.includes(STAGE_LABELS[ran.role]))
+    (left.status === RUNNING[ran.role] || left.labels.includes(STAGE_LABELS[ran.role]))
   ) {
     const [stage, job] = Object.entries(ran.jobs).find(([, j]) => ENDED.includes(j.result)) ?? [
       ran.role,

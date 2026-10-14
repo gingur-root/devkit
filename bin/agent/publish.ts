@@ -10,8 +10,10 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } fro
 import { join } from 'node:path';
 
 import { git } from '../git.ts';
+import { armedContinue, readSteps } from './approval.ts';
 import { setStatus } from './board.ts';
 import {
+  type Handoff,
   OPERATOR_COAUTHOR,
   OPERATOR_LOGIN,
   PIPELINE_BOT,
@@ -169,11 +171,12 @@ function numbered(questions: string[]): string {
   return questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
 }
 
-function planComment(job: Job, result: Result, out: string): string {
+function planComment(job: Job, result: Result, out: string, handoff: Handoff | null): string {
   const planFile = join(out, PLAN_FILE);
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
-  const head =
-    result.status === 'complete'
+  const head = handoff
+    ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
+    : result.status === 'complete'
       ? `**Plan: ${result.outcome === 'ready' ? 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk' : 'needs your input'}**`
       : `**Plan ${result.status}**`;
   const contract: PlanContract = {
@@ -412,11 +415,19 @@ async function postReview(job: Job, result: Result, pull: Pull, round: number): 
   };
 }
 
+/** A plan that may build with nothing left to ask. */
+export function readyToBuild(result: Result): boolean {
+  return (
+    result.status === 'complete' && result.outcome === 'ready' && result.questions.length === 0
+  );
+}
+
 async function publishBuildOrPlan(
   job: Job,
   v: Verdict,
   out: string,
   checkout: string | undefined,
+  handoff: Handoff | null,
 ): Promise<Outcome> {
   let pull: Pull | null = null;
   if ('result' in v && v.result.outcome === 'implemented') {
@@ -439,11 +450,14 @@ async function publishBuildOrPlan(
       };
     }
   }
-  // A repair's card stays in Building until its review lands.
-  const status = !pull ? 'Needs you' : job.role === 'repair' ? 'Building' : 'Ready';
+  // A repair's card stays in Building until its review lands, as does a plan handing off.
+  const status =
+    handoff || (pull && job.role === 'repair') ? 'Building' : pull ? 'Ready' : 'Needs you';
   if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
-    job.role === 'plan' ? planComment(job, v.result, out) : buildComment(job, v.result, pull);
+    job.role === 'plan'
+      ? planComment(job, v.result, out, handoff)
+      : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
 
@@ -493,10 +507,15 @@ export async function publish(options: PublishOptions): Promise<void> {
     await rest('POST', `${path}/comments`, { body: retroComment(v.result, runUrl) });
     return;
   }
+  // A ready plan a dashboard Continue started goes straight to its build (devkit#99).
+  const handoff =
+    job.role === 'plan' && 'result' in v && readyToBuild(v.result)
+      ? armedContinue(await readSteps(job.repo, job.issue.number))
+      : null;
   const { body, status, stopped } =
     job.role === 'review'
       ? await publishReview(job, v, options)
-      : await publishBuildOrPlan(job, v, options.out, options.checkout);
+      : await publishBuildOrPlan(job, v, options.out, options.checkout, handoff);
 
   // A build's Ready is brief: its own review follows in the same run and has the last word.
   const waiting = status === 'Needs you' || (status === 'Ready' && job.role !== 'build');
@@ -507,6 +526,9 @@ export async function publish(options: PublishOptions): Promise<void> {
     job.issue.number,
     STAGE_LABELS[job.role as keyof typeof STAGE_LABELS],
   );
+  // As the App: the build's render accepts it only after the Continue (approval.ts).
+  // Before the Status, so a failed add leaves the card in Planning for the loop, not stuck in Building.
+  if (handoff) await rest('POST', `${path}/labels`, { labels: [STAGE_LABELS[handoff]] });
   await setStatus(job.repo, issue.node_id, status);
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).

@@ -3,6 +3,7 @@
 import { BOARD_TITLE, STATUS_FIELD, STATUSES, type Status } from '../agent/constants.ts';
 import { graphql } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
+import { cardState } from './buttons.ts';
 import { ORG } from './constants.ts';
 
 interface BoardIssue {
@@ -153,6 +154,8 @@ export async function board() {
         updatedAt: issue.updatedAt,
         labels: issue.labels.nodes.map((l) => l.name),
         column: cardColumn({ ...asBoard(issue), subtasks: subtasks.map(asBoard) }),
+        // A story's buttons act on the story issue alone, so they follow its own column.
+        state: cardState({ ...asBoard(issue), labels: issue.labels.nodes.map((l) => l.name) }),
         subtasks: subtasks.map((s) => ({
           repo: s.repository.name,
           number: s.number,

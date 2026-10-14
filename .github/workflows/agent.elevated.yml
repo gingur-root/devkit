@@ -3,7 +3,9 @@ name: Elevated
 # agent:elevated on an issue with a ready plan: carry the plan out on the
 # operator's WSL desk (infra#43), as him, with his admin access. The one job
 # that holds admin credentials, so only his label starts it (the admission
-# gate) and GitHub lets only this workflow on main use the `wsl` runner group.
+# gate), or the App's hand-off right after his elevated Continue on the
+# dashboard, which render checks (bin/agent/approval.ts). GitHub lets only this
+# workflow on main use the `wsl` runner group.
 # The desk is off until he runs `elevated on`; until then the job waits in
 # GitHub's queue (cancelled after 24h) and the card sits in Needs you.
 # Like a build, the agent only returns files: the App on the VPS pushes its
@@ -33,7 +35,7 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))) && github.event_name == 'issues' && github.event.label.name == 'agent:elevated'
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && github.event_name == 'issues' && github.event.label.name == 'agent:elevated'
     runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
@@ -71,10 +73,11 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           SOURCE: ${{ github.sha }}
           APP_ID: ${{ inputs.appId }}
+          ACTOR: ${{ github.actor_id }}
           NOTE: ${{ inputs.runner == 'wsl' && '**Running on the WSL desk.**' || '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.' }}
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role elevated --source "$SOURCE" \
-            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+            --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status 'Needs you' --role elevated \
             --note "$NOTE"
