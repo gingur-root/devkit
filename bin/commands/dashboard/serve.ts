@@ -19,8 +19,12 @@ export default {
     const { createDashboard, WEB_DIST } = await import('../../dashboard/server.ts');
     // The page is built at start, so the VPS deploy needs no separate build step.
     const { build } = await import('vite-plus');
+    const { default: tailwindcss } = await import('@tailwindcss/vite');
     await build({
       root: fileURLToPath(new URL('../../dashboard/web/', import.meta.url)),
+      plugins: [tailwindcss()],
+      // The shadcn components import `@/…`, mapped in tsconfig.json.
+      resolve: { tsconfigPaths: true },
       build: { outDir: fileURLToPath(WEB_DIST), emptyOutDir: true },
       // Streamdown's 'use client' lines make Rolldown warn on every build.
       logLevel: 'error',

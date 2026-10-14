@@ -1,0 +1,11 @@
+{
+  // The page is bundled by Vite, so its imports resolve like a bundler's: the
+  // shadcn components import `@/…` without extensions.
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  },
+  "include": ["."],
+  "exclude": ["dist"]
+}

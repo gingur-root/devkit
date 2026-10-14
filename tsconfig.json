@@ -16,7 +16,11 @@
 
     // The dashboard page (bin/dashboard/web) is React, built by Vite.
     "jsx": "react-jsx",
-    "lib": ["esnext", "dom", "dom.iterable"]
+    "lib": ["esnext", "dom", "dom.iterable"],
+    // The shadcn CLI writes the page's components with `@/` imports.
+    "paths": { "@/*": ["./bin/dashboard/web/*"] }
   },
-  "include": ["bin/**/*.ts", "bin/**/*.tsx", "bin/**/*.d.mts", "test/**/*.ts"]
+  "include": ["bin/**/*.ts", "bin/**/*.tsx", "bin/**/*.d.mts", "test/**/*.ts"],
+  // The page has its own config (bin/dashboard/web/tsconfig.json).
+  "exclude": ["bin/dashboard/web"]
 }

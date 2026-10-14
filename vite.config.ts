@@ -4,6 +4,13 @@ import devkit from './configs/vite.mjs';
 
 export default defineConfig({
   ...devkit,
-  // The stub's red build is badly formatted on purpose: it must fail a target repo's CI.
-  fmt: { ...devkit.fmt, ignorePatterns: ['bin/agent/fixtures/build.red.md'] },
+  fmt: {
+    ...devkit.fmt,
+    ignorePatterns: [
+      // The stub's red build is badly formatted on purpose: it must fail a target repo's CI.
+      'bin/agent/fixtures/build.red.md',
+      // Written by the shadcn CLI; kept as it writes them so updates diff cleanly.
+      'bin/dashboard/web/components/**',
+    ],
+  },
 });

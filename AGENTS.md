@@ -94,6 +94,13 @@ bin/                 the `devkit` CLI — the local half of the same contract
   specs at registration time to build help and reject unknown flags, so lazy
   per-command loading is not available. Keep heavy work (clients, schemas)
   behind a lazy `import()` _inside_ the handler instead.
+- **The dashboard page's components come from the shadcn CLI.** Run it from
+  the repo root (`pnpm dlx shadcn@latest add <item>`; `components.json` is
+  there). It writes UI pieces to `bin/dashboard/web/components/ui/`, but AI
+  Elements to a root `components/ai-elements/`: move those into
+  `bin/dashboard/web/components/ai-elements/`. Move any dependencies it adds
+  to `devDependencies`. Leave the files as the CLI writes them; `vp fmt`
+  skips that folder.
 - **Workflows are thin glue** over single-purpose composite actions. Logic that's
   reused across workflows is extracted to a composite so it lives **once**.
 - **One concern per action.** If a workflow grows conditionals for a second
