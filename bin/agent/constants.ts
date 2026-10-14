@@ -54,6 +54,12 @@ export const CODEX_FEATURES_OFF = [
   'image_generation',
 ] as const;
 
+/**
+ * MCP servers a role with `web` gets, the same for both executors. Context7
+ * runs keyless (rate-limited) so no credential reaches the agent.
+ */
+export const WEB_MCP_SERVERS = { context7: 'https://mcp.context7.com/mcp' } as const;
+
 /** Files in the Codex home the SDK cannot be told to ignore. */
 export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
 

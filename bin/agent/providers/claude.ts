@@ -1,6 +1,6 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
-import { CLAUDE_SUBSCRIPTION_SOURCES } from '../constants.ts';
+import { CLAUDE_SUBSCRIPTION_SOURCES, WEB_MCP_SERVERS } from '../constants.ts';
 import type { Role } from '../roles.ts';
 import { agentEnv, resolveExecutable, type RunInput, type RunOutput, stageDirs } from './shared.ts';
 
@@ -23,9 +23,14 @@ export function claudeOptions(
     model: role.model,
     effort: role.effort,
     // No user, project or local settings, so no CLAUDE.md, hooks, plugins or
-    // MCP servers from disk.
+    // MCP servers from disk: only the role's own.
     settingSources: [],
     strictMcpConfig: true,
+    mcpServers: role.web
+      ? Object.fromEntries(
+          Object.entries(WEB_MCP_SERVERS).map(([name, url]) => [name, { type: 'http', url }]),
+        )
+      : {},
     // The allowlist is what actually removes subagents (Task), skills (Skill)
     // and the scheduling and messaging tools: an absent tool cannot be called.
     tools: [...role.tools, ...(role.web ? ['WebSearch', 'WebFetch'] : [])],
@@ -50,7 +55,10 @@ export function assertClaudeInit(
   const allowed = new Set(Array.isArray(options.tools) ? options.tools : []);
   // The SDK's own tool for returning the result when an output schema is set.
   if (options.outputFormat) allowed.add('StructuredOutput');
-  const extra = init.tools.filter((tool) => !allowed.has(tool));
+  const servers = Object.keys(options.mcpServers ?? {});
+  const extra = init.tools.filter(
+    (tool) => !allowed.has(tool) && !servers.some((name) => tool.startsWith(`mcp__${name}__`)),
+  );
   if (extra.length)
     throw new Error(`Claude loaded tools the role does not allow: ${extra.join(', ')}`);
 }

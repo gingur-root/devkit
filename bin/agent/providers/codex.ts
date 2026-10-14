@@ -3,7 +3,12 @@ import { join } from 'node:path';
 
 import type { CodexOptions, SandboxMode } from '@openai/codex-sdk';
 
-import { CODEX_FEATURES_OFF, CODEX_HOME_FORBIDDEN, CODEX_SUBSCRIPTION_MODE } from '../constants.ts';
+import {
+  CODEX_FEATURES_OFF,
+  CODEX_HOME_FORBIDDEN,
+  CODEX_SUBSCRIPTION_MODE,
+  WEB_MCP_SERVERS,
+} from '../constants.ts';
 import type { Role } from '../roles.ts';
 import {
   agentEnv,
@@ -69,6 +74,7 @@ export function codexSandbox(tools: Role['tools']): SandboxMode {
 export function codexOptions(ctx: {
   executable: string;
   env: Record<string, string>;
+  web: boolean;
 }): CodexOptions {
   return {
     codexPathOverride: ctx.executable,
@@ -81,6 +87,11 @@ export function codexOptions(ctx: {
       skills: { bundled: { enabled: false } },
       // No AGENTS.md from the repo, matching Claude's `settingSources: []`.
       project_doc_max_bytes: 0,
+      ...(ctx.web && {
+        mcp_servers: Object.fromEntries(
+          Object.entries(WEB_MCP_SERVERS).map(([name, url]) => [name, { url }]),
+        ),
+      }),
     },
   };
 }
@@ -90,7 +101,11 @@ export async function runCodex(input: RunInput): Promise<RunOutput> {
   const { Codex } = await import('@openai/codex-sdk');
   const env = agentEnv('codex', process.env);
   assertCodexHome(codexHome(env));
-  const options = codexOptions({ env, executable: resolveExecutable('codex', env.PATH) });
+  const options = codexOptions({
+    env,
+    executable: resolveExecutable('codex', env.PATH),
+    web: role.web,
+  });
   const codex = new Codex(options);
   const thread = codex.startThread({
     model: role.model,
