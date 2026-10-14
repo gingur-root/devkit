@@ -1,7 +1,7 @@
 import { OPERATOR_ID, PIPELINE_BOT, STATUS_FIELD } from '../agent/constants.ts';
 import { graphql, rest } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
-import { ORG } from './constants.ts';
+import { COMMENTED_REVIEW, ORG } from './constants.ts';
 
 // The repos are public, so anyone can comment. Only Troy's and the pipeline's
 // words reach the coordinator, as in the pipeline's own snapshot (render.ts).
@@ -158,6 +158,11 @@ export async function readPull(repo: string, number: number) {
   const { check_runs } = await rest<{
     check_runs: { status: string; conclusion: string | null }[];
   }>('GET', `/repos/${ORG}/${repo}/commits/${pull.head.sha}/check-runs?per_page=100`);
+  // Reviews arrive oldest first, so each reviewer's last verdict wins, as on GitHub.
+  const verdicts: Record<string, string> = {};
+  for (const { user, state } of reviews) {
+    if (user && !(state === COMMENTED_REVIEW && verdicts[user.login])) verdicts[user.login] = state;
+  }
   const checks: Record<string, number> = {};
   for (const run of check_runs) {
     const result = run.conclusion ?? run.status;
@@ -178,10 +183,7 @@ export async function readPull(repo: string, number: number) {
     status: thread.status,
     labels: thread.labels,
     body: thread.bodyTrusted ? thread.body : LEFT_OUT,
-    // Reviews arrive oldest first, so each reviewer's last one wins.
-    reviews: Object.fromEntries(
-      reviews.flatMap((review) => (review.user ? [[review.user.login, review.state]] : [])),
-    ),
+    reviews: verdicts,
     checks,
     comments: thread.comments.map(forModel),
     review_comments: reviewComments.map((c) => forModel(toComment(c))),

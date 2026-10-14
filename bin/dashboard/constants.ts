@@ -11,3 +11,5 @@ export const ORG = 'gingur-root';
 export const REPO_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 // What the page hears on /api/events (devkit#100), whichever source sent it.
 export const BOARD_EVENT = { cardChanged: 'card.changed', boardChanged: 'board.changed' } as const;
+// A review that only comments, which never overrides a reviewer's earlier verdict.
+export const COMMENTED_REVIEW = 'COMMENTED';
