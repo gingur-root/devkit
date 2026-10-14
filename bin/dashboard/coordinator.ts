@@ -42,6 +42,16 @@ async function github<T>(method: string, path: string, body?: unknown): Promise<
   return rest<T>(method, path, body);
 }
 
+/** Adds `agent:plan`, which the gate accepts from the App. Also the dashboard's Start button. */
+export async function startPlan(name: string, number: number): Promise<void> {
+  const args = z
+    .object({ repo, number: z.number().int().positive() })
+    .parse({ repo: name, number });
+  await github('POST', `/repos/${ORG}/${args.repo}/issues/${args.number}/labels`, {
+    labels: [STAGE_LABELS.plan],
+  });
+}
+
 function reply(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
@@ -133,9 +143,7 @@ const githubTools = createSdkMcpServer({
       'Start planning an existing issue (adds agent:plan).',
       { repo, number: z.number().int() },
       async (args) => {
-        await github('POST', `/repos/${ORG}/${args.repo}/issues/${args.number}/labels`, {
-          labels: [STAGE_LABELS.plan],
-        });
+        await startPlan(args.repo, args.number);
         return reply({ started: true });
       },
     ),

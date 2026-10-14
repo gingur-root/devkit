@@ -36,13 +36,16 @@ export function createDashboard(aud: string, keys: FetchKeys): Server {
         res
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify(await threads()));
-      } else if (req.method === 'POST' && req.url === '/api/chat') {
+      } else if (req.method === 'POST' && req.headers.origin !== DASHBOARD_ORIGIN) {
         // The Access cookie rides along on cross-site requests too, so a write
         // must come from the dashboard's own page.
-        if (req.headers.origin !== DASHBOARD_ORIGIN) {
-          res.writeHead(403, { 'content-type': 'text/plain' }).end('Forbidden\n');
-          return;
-        }
+        res.writeHead(403, { 'content-type': 'text/plain' }).end('Forbidden\n');
+      } else if (req.method === 'POST' && req.url === '/api/start') {
+        const { repo, number } = await readJson(req);
+        const { startPlan } = await import('./coordinator.ts');
+        await startPlan(String(repo), Number(number));
+        res.writeHead(204).end();
+      } else if (req.method === 'POST' && req.url === '/api/chat') {
         const { prompt, session } = await readJson(req);
         if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('A prompt is required.');
         const { coordinate } = await import('./coordinator.ts');

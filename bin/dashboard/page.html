@@ -111,6 +111,11 @@
         background: var(--accent);
         color: var(--bg);
       }
+      .start {
+        margin-top: 0.25rem;
+        padding: 0.2rem 0.6rem;
+        font-size: 0.85rem;
+      }
       #menu {
         display: none;
       }
@@ -185,6 +190,24 @@
               const meta = document.createElement('small');
               meta.textContent = `${t.repo}#${t.number} ${t.labels.join(' ')}`;
               a.append(meta);
+              // Queued asks wait in Ask until the coordinator or this button starts them.
+              if (!t.labels.some((l) => l.startsWith('agent:'))) {
+                const start = document.createElement('button');
+                start.type = 'button';
+                start.className = 'start';
+                start.textContent = 'Start';
+                start.onclick = async (e) => {
+                  e.preventDefault();
+                  start.disabled = true;
+                  const r = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ repo: t.repo, number: t.number }),
+                  });
+                  start.textContent = r.ok ? 'Started' : 'Failed';
+                };
+                a.append(start);
+              }
               return a;
             }),
           );
