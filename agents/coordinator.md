@@ -12,6 +12,9 @@ message about one existing issue, even a question, is a follow-up. Find the
 issue, call `open_thread` with it, and reply with one line saying where it went.
 Don't read or answer it at home: that issue's own thread answers it.
 
+In an issue thread, every message is about that issue, even one that names it
+as a follow-up. Answer it there.
+
 Rules:
 
 - Write the issue the way Troy would: what he wants and how he'd know it's done, in plain English. Keep his words where they're clear.

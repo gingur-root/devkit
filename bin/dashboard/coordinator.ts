@@ -77,96 +77,107 @@ const brief = ({ number, title, html_url, state, labels }: Issue) => ({
   labels: labels.map((label) => label.name),
 });
 
-const githubTools = createSdkMcpServer({
-  name: 'github',
-  version: '1.0.0',
-  tools: [
-    tool(
-      'search_issues',
-      `Search issues in ${ORG} (GitHub search syntax).`,
-      { q: z.string() },
-      async ({ q }) => {
-        const found = await github<{ items: (Issue & { repository_url: string })[] }>(
-          'GET',
-          `/search/issues?per_page=20&q=${encodeURIComponent(`org:${ORG} is:issue ${q}`)}`,
-        );
-        return reply(
-          found.items.map((issue) => ({
-            repo: issue.repository_url.split('/').pop(),
-            ...brief(issue),
-          })),
-        );
-      },
-    ),
-    tool(
-      'read_issue',
-      'Read an issue and its comments.',
-      { repo, number: z.number().int() },
-      async (args) => {
-        const issue = await readThread(args.repo, args.number);
-        return reply({
-          number: issue.number,
-          title: issue.title,
-          url: issue.url,
-          state: issue.state,
-          status: issue.status,
-          labels: issue.labels,
-          body: issue.bodyTrusted ? issue.body : LEFT_OUT,
-          comments: issue.comments.map((c) => ({
-            author: c.author,
-            body: c.trusted ? c.body : LEFT_OUT,
-          })),
-        });
-      },
-    ),
-    tool(
-      'file_ask',
-      'File a new issue. queue: waits in Ask for the board loop. start: planning starts now.',
-      { repo, title: z.string().min(1), body: z.string().min(1), mode: z.enum(ASK_MODES) },
-      async (args) => {
-        const issue = await github<Issue>('POST', `/repos/${ORG}/${args.repo}/issues`, {
-          title: args.title,
-          body: args.body,
-          labels: ASK_LABELS[args.mode],
-        });
-        return reply(brief(issue));
-      },
-    ),
-    tool(
-      'comment',
-      'Comment on an issue. Only for a decision, a result or a question for Troy.',
-      { repo, number: z.number().int(), body: z.string().min(1) },
-      async (args) => {
-        // A stage marker would let the pipeline take this for its own comment.
-        if (args.body.trimStart().startsWith('<!-- devkit:'))
-          throw new Error('Comments may not carry a pipeline marker.');
-        const comment = await github<{ html_url: string }>(
-          'POST',
-          `/repos/${ORG}/${args.repo}/issues/${args.number}/comments`,
-          { body: args.body },
-        );
-        return reply({ url: comment.html_url });
-      },
-    ),
-    tool(
-      'open_thread',
-      "Hand a follow-up on an existing issue to that issue's own thread. Troy's message is re-sent there.",
-      { repo, number: z.number().int().positive() },
-      async () => reply({ routed: true }),
-    ),
-    tool(
-      'start_plan',
-      'Start planning an existing issue (adds agent:plan).',
-      { repo, number: z.number().int() },
-      async (args) => {
-        await startPlan(args.repo, args.number);
-        return reply({ started: true });
-      },
-    ),
-  ],
-});
+const githubTools = [
+  tool(
+    'search_issues',
+    `Search issues in ${ORG} (GitHub search syntax).`,
+    { q: z.string() },
+    async ({ q }) => {
+      const found = await github<{ items: (Issue & { repository_url: string })[] }>(
+        'GET',
+        `/search/issues?per_page=20&q=${encodeURIComponent(`org:${ORG} is:issue ${q}`)}`,
+      );
+      return reply(
+        found.items.map((issue) => ({
+          repo: issue.repository_url.split('/').pop(),
+          ...brief(issue),
+        })),
+      );
+    },
+  ),
+  tool(
+    'read_issue',
+    'Read an issue and its comments.',
+    { repo, number: z.number().int() },
+    async (args) => {
+      const issue = await readThread(args.repo, args.number);
+      return reply({
+        number: issue.number,
+        title: issue.title,
+        url: issue.url,
+        state: issue.state,
+        status: issue.status,
+        labels: issue.labels,
+        body: issue.bodyTrusted ? issue.body : LEFT_OUT,
+        comments: issue.comments.map((c) => ({
+          author: c.author,
+          body: c.trusted ? c.body : LEFT_OUT,
+        })),
+      });
+    },
+  ),
+  tool(
+    'file_ask',
+    'File a new issue. queue: waits in Ask for the board loop. start: planning starts now.',
+    { repo, title: z.string().min(1), body: z.string().min(1), mode: z.enum(ASK_MODES) },
+    async (args) => {
+      const issue = await github<Issue>('POST', `/repos/${ORG}/${args.repo}/issues`, {
+        title: args.title,
+        body: args.body,
+        labels: ASK_LABELS[args.mode],
+      });
+      return reply(brief(issue));
+    },
+  ),
+  tool(
+    'comment',
+    'Comment on an issue. Only for a decision, a result or a question for Troy.',
+    { repo, number: z.number().int(), body: z.string().min(1) },
+    async (args) => {
+      // A stage marker would let the pipeline take this for its own comment.
+      if (args.body.trimStart().startsWith('<!-- devkit:'))
+        throw new Error('Comments may not carry a pipeline marker.');
+      const comment = await github<{ html_url: string }>(
+        'POST',
+        `/repos/${ORG}/${args.repo}/issues/${args.number}/comments`,
+        { body: args.body },
+      );
+      return reply({ url: comment.html_url });
+    },
+  ),
+  tool(
+    'open_thread',
+    "Hand a follow-up on an existing issue to that issue's own thread. Troy's message is re-sent there.",
+    { repo, number: z.number().int().positive() },
+    async () => reply({ routed: true }),
+  ),
+  tool(
+    'start_plan',
+    'Start planning an existing issue (adds agent:plan).',
+    { repo, number: z.number().int() },
+    async (args) => {
+      await startPlan(args.repo, args.number);
+      return reply({ started: true });
+    },
+  ),
+];
 
-export function coordinatorOptions(env: NodeJS.ProcessEnv, resume?: string): Options {
+// An issue thread routing would only re-send to itself (devkit#104), so only home gets open_thread.
+const githubServers = {
+  home: createSdkMcpServer({ name: 'github', version: '1.0.0', tools: githubTools }),
+  issue: createSdkMcpServer({
+    name: 'github',
+    version: '1.0.0',
+    tools: githubTools.filter((t) => `mcp__github__${t.name}` !== OPEN_THREAD_TOOL),
+  }),
+};
+
+/** `home` is the home thread, the only one that may route. */
+export function coordinatorOptions(
+  env: NodeJS.ProcessEnv,
+  resume: string | undefined,
+  home: boolean,
+): Options {
   const agent = agentEnv('claude', env);
   return {
     pathToClaudeCodeExecutable: resolveExecutable('claude', agent.PATH),
@@ -176,7 +187,7 @@ export function coordinatorOptions(env: NodeJS.ProcessEnv, resume?: string): Opt
     // Nothing from disk, and no built-in tools: only the github server above.
     settingSources: [],
     strictMcpConfig: true,
-    mcpServers: { github: githubTools },
+    mcpServers: { github: home ? githubServers.home : githubServers.issue },
     tools: [],
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
@@ -199,9 +210,10 @@ export function routeOf(
 /** One turn of the conversation. `resume` continues an earlier one. */
 export async function* coordinate(
   prompt: string,
-  resume?: string,
+  resume: string | undefined,
+  home: boolean,
 ): AsyncGenerator<CoordinatorEvent> {
-  const options = coordinatorOptions(process.env, resume);
+  const options = coordinatorOptions(process.env, resume, home);
   // A turn that hangs would leave the page saying "working" forever.
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), TURN_TIMEOUT_MS);

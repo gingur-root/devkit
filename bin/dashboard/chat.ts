@@ -57,7 +57,11 @@ export async function* chatTurn(
   // Marked seen only once the coordinator has started, so a turn that fails
   // before it runs shows these comments again next time.
   const seen = fresh.length ? Math.max(...fresh.map((c) => c.id)) : thread.seen;
-  for await (const event of run(framePrompt(prompt, ref, fresh, !thread.session), thread.session)) {
+  for await (const event of run(
+    framePrompt(prompt, ref, fresh, !thread.session),
+    thread.session,
+    !ref,
+  )) {
     if (event.type === 'session')
       await store.update(key, (t) => {
         t.session = event.id;
