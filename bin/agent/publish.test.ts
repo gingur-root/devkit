@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { gated, passes, repairable } from './publish.ts';
+import { commitMessage, gated, passes, repairable } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -53,4 +53,16 @@ test('only CI green on the reviewed commit itself reaches Ready', () => {
   assert.ok(repairable(gated(pass, head, '')), 'red CI goes to repair');
   const asks = { ...pass, outcome: 'inconclusive' as const };
   assert.ok(!repairable(gated(asks, head, '')), 'an inconclusive review still needs the operator');
+});
+
+test('every pushed commit lists the operator as co-author', () => {
+  const issue = { number: 76, title: 'Add a thing', revision: '' };
+  for (const role of ['build', 'repair', 'elevated']) {
+    const trailers = commitMessage({ role, issue }).split('\n\n').at(-1);
+    assert.equal(
+      trailers,
+      'Co-authored-by: Troy Rhinehart <2553213+gingur@users.noreply.github.com>',
+      role,
+    );
+  }
 });
