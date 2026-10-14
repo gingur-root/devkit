@@ -39,8 +39,8 @@ export function createDashboard(aud: string, keys: FetchKeys, store = createStor
       res.writeHead(403, { 'content-type': 'text/plain' }).end('Forbidden\n');
       return;
     }
-    const url = new URL(req.url ?? '/', 'http://localhost');
     try {
+      const url = new URL(req.url ?? '/', 'http://localhost');
       if (req.method === 'GET' && req.url === '/') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(PAGE);
       } else if (req.method === 'GET' && req.url === '/api/threads') {

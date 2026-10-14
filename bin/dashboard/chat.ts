@@ -4,7 +4,7 @@
 // which is how pipeline and human comments flow back into the live view.
 import { ORG } from './constants.ts';
 import { type CoordinatorEvent, coordinate } from './coordinator.ts';
-import { type IssueComment, readThread } from './issue.ts';
+import { type IssueComment, LEFT_OUT, readThread } from './issue.ts';
 import { HOME_THREAD, type Store, threadKey } from './store.ts';
 
 export interface IssueRef {
@@ -30,7 +30,10 @@ export function framePrompt(
   if (fresh.length) {
     parts.push(
       'New comments on the issue since your last turn:',
-      ...fresh.map((c) => `--- ${c.author} at ${c.at}\n${c.body.slice(0, MAX_COMMENT_CHARS)}`),
+      ...fresh.map(
+        (c) =>
+          `--- ${c.author} at ${c.at}\n${c.trusted ? c.body.slice(0, MAX_COMMENT_CHARS) : LEFT_OUT}`,
+      ),
     );
   }
   return parts.length ? `${parts.join('\n\n')}\n\n--- Troy now says:\n${prompt}` : prompt;
@@ -50,12 +53,16 @@ export async function* chatTurn(
     const { comments } = await read(ref.repo, ref.number);
     fresh = comments.filter((c) => c.id > (thread.seen ?? 0));
   }
-  await store.update(key, (t) => {
-    t.lines.push({ role: 'me', text: prompt });
-    if (fresh.length) t.seen = Math.max(...fresh.map((c) => c.id));
-  });
+  await store.update(key, (t) => void t.lines.push({ role: 'me', text: prompt }));
+  // Marked seen only once the coordinator has started, so a turn that fails
+  // before it runs shows these comments again next time.
+  const seen = fresh.length ? Math.max(...fresh.map((c) => c.id)) : thread.seen;
   for await (const event of run(framePrompt(prompt, ref, fresh, !thread.session), thread.session)) {
-    if (event.type === 'session') await store.update(key, (t) => void (t.session = event.id));
+    if (event.type === 'session')
+      await store.update(key, (t) => {
+        t.session = event.id;
+        t.seen = seen;
+      });
     else if (event.type === 'text')
       await store.update(key, (t) => void t.lines.push({ role: 'bot', text: event.text }));
     else if (event.type === 'tool')

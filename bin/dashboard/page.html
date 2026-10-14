@@ -314,6 +314,8 @@
           }
         } catch {
           document.getElementById('status').textContent = 'Could not load this thread.';
+          // Never re-send a routed message into some other thread later.
+          pending = undefined;
         }
         loadThreads();
       }

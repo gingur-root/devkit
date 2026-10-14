@@ -31,9 +31,11 @@ export function createStore(
   let threads: Record<string, Thread> | undefined;
   // One writer at a time, so two quick turns can't interleave a rename.
   let writing = Promise.resolve();
+  // The first read is shared, so two requests right after a start can't each
+  // build their own copy and drop the other's change.
+  let loading: Promise<Record<string, Thread>> | undefined;
 
-  async function load(): Promise<Record<string, Thread>> {
-    if (threads) return threads;
+  async function read(): Promise<Record<string, Thread>> {
     try {
       threads = JSON.parse(await readFile(file, 'utf8')) as Record<string, Thread>;
     } catch (error) {
@@ -43,12 +45,23 @@ export function createStore(
     return threads;
   }
 
-  function save(): Promise<void> {
-    writing = writing.then(async () => {
-      await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-      await writeFile(`${file}.tmp`, JSON.stringify(threads), { mode: 0o600 });
-      await rename(`${file}.tmp`, file);
+  function load(): Promise<Record<string, Thread>> {
+    loading ??= read().catch((error: unknown) => {
+      loading = undefined;
+      throw error;
     });
+    return loading;
+  }
+
+  function save(): Promise<void> {
+    // A failed write must not block every later one.
+    writing = writing
+      .catch(() => {})
+      .then(async () => {
+        await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+        await writeFile(`${file}.tmp`, JSON.stringify(threads), { mode: 0o600 });
+        await rename(`${file}.tmp`, file);
+      });
     return writing;
   }
 

@@ -12,6 +12,7 @@ import { rest } from '../agent/github.ts';
 import { assertClaudeInit } from '../agent/providers/claude.ts';
 import { agentEnv, resolveExecutable } from '../agent/providers/shared.ts';
 import { refreshGhToken } from './app-token.ts';
+import { LEFT_OUT, readThread } from './issue.ts';
 import { ORG, REPO_NAME } from './constants.ts';
 
 export const ASK_MODES = ['queue', 'start'] as const;
@@ -100,16 +101,19 @@ const githubTools = createSdkMcpServer({
       'Read an issue and its comments.',
       { repo, number: z.number().int() },
       async (args) => {
-        const path = `/repos/${ORG}/${args.repo}/issues/${args.number}`;
-        const issue = await github<Issue>('GET', path);
-        const comments = await github<{ user: { login: string }; body: string }[]>(
-          'GET',
-          `${path}/comments?per_page=50`,
-        );
+        const issue = await readThread(args.repo, args.number);
         return reply({
-          ...brief(issue),
-          body: issue.body,
-          comments: comments.map((c) => ({ author: c.user.login, body: c.body })),
+          number: issue.number,
+          title: issue.title,
+          url: issue.url,
+          state: issue.state,
+          status: issue.status,
+          labels: issue.labels,
+          body: issue.bodyTrusted ? issue.body : LEFT_OUT,
+          comments: issue.comments.map((c) => ({
+            author: c.author,
+            body: c.trusted ? c.body : LEFT_OUT,
+          })),
         });
       },
     ),
@@ -131,6 +135,9 @@ const githubTools = createSdkMcpServer({
       'Comment on an issue. Only for a decision, a result or a question for Troy.',
       { repo, number: z.number().int(), body: z.string().min(1) },
       async (args) => {
+        // A stage marker would let the pipeline take this for its own comment.
+        if (args.body.trimStart().startsWith('<!-- devkit:'))
+          throw new Error('Comments may not carry a pipeline marker.');
         const comment = await github<{ html_url: string }>(
           'POST',
           `/repos/${ORG}/${args.repo}/issues/${args.number}/comments`,
@@ -190,8 +197,18 @@ export async function* coordinate(
         if (block.type === 'text') yield { type: 'text', text: block.text };
         else if (block.type === 'tool_use') {
           yield { type: 'tool', name: block.name };
-          if (block.name === OPEN_THREAD_TOOL)
-            yield { type: 'route', ...(block.input as { repo: string; number: number }) };
+          if (block.name === OPEN_THREAD_TOOL) {
+            const target = block.input as { repo?: unknown; number?: unknown };
+            if (
+              typeof target.repo === 'string' &&
+              REPO_NAME.test(target.repo) &&
+              Number.isInteger(target.number) &&
+              (target.number as number) > 0
+            ) {
+              yield { type: 'route', repo: target.repo, number: target.number as number };
+            }
+          }
+          yield { type: 'route', ...(block.input as { repo: string; number: number }) };
         }
       }
     } else if (message.type === 'result') {
