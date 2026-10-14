@@ -6,7 +6,9 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { cn } from 'cn';
 import {
+  lazy,
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -61,6 +63,10 @@ interface Issue extends Ref {
   comments: { id: number; author: string; body: string; at: string }[];
 }
 
+// React Flow is heavy, so the map loads only when opened.
+const MapView = lazy(() => import('./map.tsx'));
+const MAP_HASH = '#map';
+
 const HOME_HINT = 'Ask, queue, start, or follow up on an issue.';
 // Below this width the chat is a sheet over the board, not a panel beside it.
 const WIDE = '(min-width: 1024px)';
@@ -81,19 +87,19 @@ function queued(labels: string[]): boolean {
   return labels.includes(READY_LABEL) && !labels.some((l) => l.startsWith('agent:'));
 }
 
-function parseHash(): Ref | null {
-  const [repo, number] = decodeURIComponent(location.hash.slice(1)).split('/');
+function parseHash(hash: string): Ref | null {
+  const [repo, number] = decodeURIComponent(hash.slice(1)).split('/');
   return repo && number ? { repo, number: Number(number) } : null;
 }
 
-function useHashRef(): Ref | null {
-  const [ref, setRef] = useState(parseHash);
-  useEffect(() => {
-    const onChange = () => setRef(parseHash());
-    window.addEventListener('hashchange', onChange);
-    return () => window.removeEventListener('hashchange', onChange);
-  }, []);
-  return ref;
+function useHash(): string {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener('hashchange', onChange);
+      return () => window.removeEventListener('hashchange', onChange);
+    },
+    () => location.hash,
+  );
 }
 
 async function startPlan(t: Ref): Promise<boolean> {
@@ -449,7 +455,12 @@ function Home({ onRoute }: { onRoute: Route }) {
     <div className="flex h-dvh lg:grid lg:grid-cols-[1fr_24rem]">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-center justify-between border-b px-4 py-3">
-          <h1 className="font-semibold">Board</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="font-semibold">Board</h1>
+            <a href={MAP_HASH} className="text-muted-foreground">
+              Map
+            </a>
+          </div>
           {!wide && (
             <Sheet>
               <SheetTrigger asChild>
@@ -571,7 +582,8 @@ function IssueView({
 }
 
 function App() {
-  const ref = useHashRef();
+  const hash = useHash();
+  const ref = useMemo(() => parseHash(hash), [hash]);
   const key = ref ? `${ref.repo}#${ref.number}` : 'home';
   // A routed message waits here, tagged with its thread, until that thread's chat sends it.
   const [pending, setPending] = useState<{ key: string; text: string } | null>(null);
@@ -581,6 +593,13 @@ function App() {
     setPending({ key: `${to.repo}#${to.number}`, text });
     location.hash = `${to.repo}/${to.number}`;
   }, []);
+  if (hash === MAP_HASH) {
+    return (
+      <Suspense fallback={<p className="p-4 text-muted-foreground">Loading…</p>}>
+        <MapView />
+      </Suspense>
+    );
+  }
   return ref ? (
     <IssueView thread={ref} pending={pending} setPending={setPending} onRoute={onRoute} />
   ) : (
