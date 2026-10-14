@@ -4,8 +4,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { OPERATOR_ID } from './constants.ts';
-import { rest, restAll } from './github.ts';
+import { OPERATOR_ID, STAGE_LABELS } from './constants.ts';
+import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
   ISSUE_FILE,
@@ -89,8 +89,6 @@ function between(body: string, start: string, end: string): string | null {
 
 /**
  * The pipeline's plan comment, if it is ready, unedited, and for the issue as it is now.
- * shortcut: a missing or stale plan fails the Start job with no issue comment;
- * comment instead once someone other than the operator adds `agent:build`.
  */
 export function approvedPlan(
   comments: Authored[],
@@ -117,6 +115,19 @@ export function approvedPlan(
   return { plan, contract };
 }
 
+/** Says on the issue why the stage won't start and drops its label, so a retry is just re-adding it. */
+async function refuse(options: RenderOptions, reason: string): Promise<void> {
+  const stage = `${options.role[0]?.toUpperCase()}${options.role.slice(1)}`;
+  await upsertStageComment(
+    options.repo,
+    options.issue,
+    options.role,
+    `${marker(options.role)}\n\n**${stage} refused:** ${reason}`,
+  );
+  const label = STAGE_LABELS[options.role as keyof typeof STAGE_LABELS];
+  if (label) await removeLabel(options.repo, options.issue, label);
+}
+
 export async function render(options: RenderOptions): Promise<Job> {
   const path = `/repos/${options.repo}/issues/${options.issue}`;
   const [issue, comments] = await Promise.all([
@@ -125,10 +136,16 @@ export async function render(options: RenderOptions): Promise<Job> {
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
   // A retro reads whatever the run left, ready plan or not.
-  const approved =
-    options.role === 'plan' || options.role === 'retro'
-      ? null
-      : approvedPlan(comments, options.appId, issueRevision);
+  let approved: ReturnType<typeof approvedPlan> | null = null;
+  if (options.role !== 'plan' && options.role !== 'retro') {
+    try {
+      approved = approvedPlan(comments, options.appId, issueRevision);
+    } catch (error) {
+      // The refusal itself still fails the job, even if saying so on the issue fails.
+      await refuse(options, (error as Error).message).catch(console.error);
+      throw error;
+    }
+  }
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,

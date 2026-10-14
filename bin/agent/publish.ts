@@ -12,11 +12,10 @@ import { join } from 'node:path';
 import { git } from '../git.ts';
 import { setStatus } from './board.ts';
 import { PIPELINE_BOT, REPAIR_ROUNDS, STAGE_LABELS, type Status } from './constants.ts';
-import { graphql, rest, restAll } from './github.ts';
+import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
-  isStageComment,
   JOB_FILE,
   Job,
   marker,
@@ -42,12 +41,6 @@ interface Issue {
   node_id: string;
   title: string;
   body: string | null;
-}
-
-interface Comment {
-  id: number;
-  body: string | null;
-  user: { type: string; id: number } | null;
 }
 
 interface Pull {
@@ -415,17 +408,13 @@ export async function publish(options: PublishOptions): Promise<void> {
       ? await publishReview(job, v, options.round ?? 0)
       : await publishBuildOrPlan(job, v, options.out, options.checkout);
 
-  // One comment per stage, found by its marker and written by a bot (the App).
-  const comments = await restAll<Comment>(`${path}/comments`);
-  const existing = comments.find((c) => isStageComment(c, job.role));
-  if (existing) await rest('PATCH', `/repos/${job.repo}/issues/comments/${existing.id}`, { body });
-  else await rest('POST', `${path}/comments`, { body });
-
-  const label = STAGE_LABELS[job.role as keyof typeof STAGE_LABELS];
-  await rest('DELETE', `${path}/labels/${encodeURIComponent(label)}`).catch((error: Error) => {
-    // A `/plan` or `/approve` comment run, or a review after the build, has no label to remove.
-    if (!error.message.includes(' 404 ')) throw error;
-  });
+  await upsertStageComment(job.repo, job.issue.number, job.role, body);
+  // A review after the build has no label left to remove.
+  await removeLabel(
+    job.repo,
+    job.issue.number,
+    STAGE_LABELS[job.role as keyof typeof STAGE_LABELS],
+  );
   await setStatus(job.repo, issue.node_id, status);
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).

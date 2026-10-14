@@ -29,7 +29,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready` or `invalid`.'
+        description: 'The stub fixture: `ready`, `invalid` or `needs-you`.'
         type: string
         required: false
         default: 'ready'
@@ -79,7 +79,8 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
-      # Render first: it fails, leaving the card alone, when there is no ready plan.
+      # Render first: with no ready plan it fails, leaving the card alone, after it
+      # says why on the issue and removes the label.
       - id: render
         name: Render
         working-directory: devkit
@@ -283,6 +284,7 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      issue: ${{ inputs.issue }}
       jobs: ${{ toJSON(needs) }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}

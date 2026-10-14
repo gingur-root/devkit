@@ -26,7 +26,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready` or `invalid`.'
+        description: 'The stub fixture: `ready`, `invalid` or `needs-you`.'
         type: string
         required: false
         default: 'ready'
@@ -35,6 +35,11 @@ on:
         type: string
         required: false
         default: 'main'
+      issue:
+        description: 'A manual (workflow_dispatch) run: the issue to run on. Unset on issue events.'
+        type: string
+        required: false
+        default: ''
       jobs:
         description: "The calling workflow's `toJSON(needs)`: each job's result and outputs."
         type: string
@@ -86,7 +91,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
-          ISSUE: ${{ github.event.issue.number }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
           SOURCE: ${{ github.sha }}
           APP_ID: ${{ inputs.appId }}
           JOBS: ${{ inputs.jobs }}

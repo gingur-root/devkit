@@ -1,0 +1,48 @@
+{
+  "job": "",
+  "role": "review",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "changes-requested",
+  "summary": "Stub review: the change works, but one call is yours.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": null,
+  "hypotheses": null,
+  "axes": {
+    "correctness": "pass",
+    "spec": "changes-requested",
+    "standards": "pass"
+  },
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": ["Should STUB.md live at the repo root?"],
+  "next": "Answer the question on the issue.",
+  "findings": [],
+  "subtasks": null,
+  "followups": null,
+  "failure": null
+}

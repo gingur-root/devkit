@@ -59,7 +59,8 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
-      # Render first: it fails, leaving the card alone, when there is no ready plan.
+      # Render first: with no ready plan it fails, leaving the card alone, after it
+      # says why on the issue and removes the label.
       # The queued note is the stage's comment, so publish replaces it with the result.
       - id: render
         name: Render

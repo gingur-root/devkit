@@ -145,7 +145,8 @@ devkit main.
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the
   Actions "Re-run" button skips everything. Add the label again instead.
 - **Editing the issue or the plan comment voids the plan.** `agent:build`
-  refuses until you run `agent:plan` again.
+  refuses until you run `agent:plan` again. It says why in a comment and
+  removes its label, so add it again once the plan is ready.
 - **A workflow-file change on main blocks a build retry.** If main changed
   anything under `.github/workflows/` since the branch was made, the push to
   `agent/issue-<n>` is rejected (the App has no `workflows` permission). Close

@@ -24,7 +24,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready` or `invalid`.'
+        description: 'The stub fixture: `ready`, `invalid` or `needs-you`.'
         type: string
         required: false
         default: 'ready'
@@ -171,6 +171,7 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      issue: ${{ inputs.issue }}
       jobs: ${{ toJSON(needs) }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
