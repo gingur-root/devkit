@@ -26,6 +26,19 @@ interface RawComment {
   created_at: string;
 }
 
+/** One line for where a thread stands: done, waiting on Troy, or its column and any running stage. */
+export function statusLine(issue: {
+  state: string;
+  status: string | null;
+  labels: string[];
+}): string {
+  if (issue.state === 'closed') return 'Done';
+  if (issue.status === 'Needs you') return 'Waiting on you';
+  const running = issue.labels.find((label) => label.startsWith('agent:'));
+  const column = issue.status ?? 'Not on the board';
+  return running ? `${column} · ${running} running` : column;
+}
+
 /** The issue as a thread: what it is, its board column, and its comments. */
 export async function readThread(repo: string, number: number) {
   await refreshGhToken();
@@ -65,6 +78,9 @@ export async function readThread(repo: string, number: number) {
       { owner: ORG, name: repo, number, field: STATUS_FIELD },
     ),
   ]);
+  const labels = issue.labels.map((label) => label.name);
+  const status =
+    board.repository.issue.projectItems.nodes.find((item) => item.status)?.status?.name ?? null;
   return {
     repo,
     number,
@@ -73,9 +89,9 @@ export async function readThread(repo: string, number: number) {
     state: issue.state,
     body: issue.body ?? '',
     bodyTrusted: trustedAuthor(issue.user),
-    labels: issue.labels.map((label) => label.name),
-    status:
-      board.repository.issue.projectItems.nodes.find((item) => item.status)?.status?.name ?? null,
+    labels,
+    status,
+    line: statusLine({ state: issue.state, status, labels }),
     comments: comments.map((c): IssueComment => ({
       id: c.id,
       trusted: trustedAuthor(c.user),

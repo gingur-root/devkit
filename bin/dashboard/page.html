@@ -254,15 +254,6 @@
         add(role === 'tool' ? `· ${text.replace('mcp__github__', '')}` : text, role);
       }
 
-      // The status line: board column plus what is running now.
-      function statusLine(issue) {
-        if (issue.state === 'closed') return 'Done';
-        const running = issue.labels.find((l) => l.startsWith('agent:'));
-        if (issue.status === 'Needs you') return 'Waiting on you';
-        const column = issue.status ?? 'Not on the board';
-        return running ? `${column} · ${running} running` : column;
-      }
-
       async function openThread() {
         const ref = current();
         document.body.classList.remove('open');
@@ -282,7 +273,7 @@
               }),
               ` ${issue.title}`,
             );
-            document.getElementById('status').textContent = statusLine(issue);
+            document.getElementById('status').textContent = issue.line;
             // The issue's comments are the record; the live lines follow them.
             for (const c of issue.comments.slice(-10)) {
               log.append(
@@ -330,7 +321,7 @@
               const a = el(
                 'a',
                 { href: `#${t.repo}/${t.number}`, textContent: t.title },
-                el('small', { textContent: `${t.repo}#${t.number} ${t.labels.join(' ')}` }),
+                el('small', { textContent: `${t.repo}#${t.number} · ${t.line}` }),
               );
               if (ref && ref.repo === t.repo && ref.number === t.number) a.className = 'here';
               // Queued asks wait in Ask until the coordinator or this button starts them.
