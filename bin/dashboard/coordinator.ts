@@ -12,6 +12,7 @@ import { rest } from '../agent/github.ts';
 import { assertClaudeInit } from '../agent/providers/claude.ts';
 import { agentEnv, resolveExecutable } from '../agent/providers/shared.ts';
 import { refreshGhToken } from './app-token.ts';
+import { LEFT_OUT, readThread } from './issue.ts';
 import { ORG, REPO_NAME } from './constants.ts';
 
 export const ASK_MODES = ['queue', 'start'] as const;
@@ -23,6 +24,9 @@ export const ASK_LABELS = {
   start: [READY_LABEL, STAGE_LABELS.plan],
 } as const satisfies Record<AskMode, readonly string[]>;
 
+// The page follows this tool's call to the issue's thread (chat.ts, page.html).
+const OPEN_THREAD_TOOL = 'mcp__github__open_thread';
+
 const INSTRUCTIONS = readFileSync(new URL('../../agents/coordinator.md', import.meta.url), 'utf8');
 
 // Only repos in the org; the agent picks the name, so it is checked, not trusted.
@@ -32,6 +36,7 @@ export type CoordinatorEvent =
   | { type: 'session'; id: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string }
+  | { type: 'route'; repo: string; number: number }
   | { type: 'done'; ok: boolean };
 
 async function github<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -96,16 +101,19 @@ const githubTools = createSdkMcpServer({
       'Read an issue and its comments.',
       { repo, number: z.number().int() },
       async (args) => {
-        const path = `/repos/${ORG}/${args.repo}/issues/${args.number}`;
-        const issue = await github<Issue>('GET', path);
-        const comments = await github<{ user: { login: string }; body: string }[]>(
-          'GET',
-          `${path}/comments?per_page=50`,
-        );
+        const issue = await readThread(args.repo, args.number);
         return reply({
-          ...brief(issue),
-          body: issue.body,
-          comments: comments.map((c) => ({ author: c.user.login, body: c.body })),
+          number: issue.number,
+          title: issue.title,
+          url: issue.url,
+          state: issue.state,
+          status: issue.status,
+          labels: issue.labels,
+          body: issue.bodyTrusted ? issue.body : LEFT_OUT,
+          comments: issue.comments.map((c) => ({
+            author: c.author,
+            body: c.trusted ? c.body : LEFT_OUT,
+          })),
         });
       },
     ),
@@ -127,6 +135,9 @@ const githubTools = createSdkMcpServer({
       'Comment on an issue. Only for a decision, a result or a question for Troy.',
       { repo, number: z.number().int(), body: z.string().min(1) },
       async (args) => {
+        // A stage marker would let the pipeline take this for its own comment.
+        if (args.body.trimStart().startsWith('<!-- devkit:'))
+          throw new Error('Comments may not carry a pipeline marker.');
         const comment = await github<{ html_url: string }>(
           'POST',
           `/repos/${ORG}/${args.repo}/issues/${args.number}/comments`,
@@ -134,6 +145,12 @@ const githubTools = createSdkMcpServer({
         );
         return reply({ url: comment.html_url });
       },
+    ),
+    tool(
+      'open_thread',
+      "Hand a follow-up on an existing issue to that issue's own thread. Troy's message is re-sent there.",
+      { repo, number: z.number().int().positive() },
+      async () => reply({ routed: true }),
     ),
     tool(
       'start_plan',
@@ -165,6 +182,18 @@ export function coordinatorOptions(env: NodeJS.ProcessEnv, resume?: string): Opt
   };
 }
 
+/** The thread a tool call hands the message to: only a valid `open_thread` call. */
+export function routeOf(
+  name: string,
+  input: unknown,
+): Extract<CoordinatorEvent, { type: 'route' }> | null {
+  if (name !== OPEN_THREAD_TOOL) return null;
+  const { repo, number } = (input ?? {}) as { repo?: unknown; number?: unknown };
+  if (typeof repo !== 'string' || !REPO_NAME.test(repo)) return null;
+  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) return null;
+  return { type: 'route', repo, number };
+}
+
 /** One turn of the conversation. `resume` continues an earlier one. */
 export async function* coordinate(
   prompt: string,
@@ -178,7 +207,11 @@ export async function* coordinate(
     } else if (message.type === 'assistant') {
       for (const block of message.message.content) {
         if (block.type === 'text') yield { type: 'text', text: block.text };
-        else if (block.type === 'tool_use') yield { type: 'tool', name: block.name };
+        else if (block.type === 'tool_use') {
+          yield { type: 'tool', name: block.name };
+          const route = routeOf(block.name, block.input);
+          if (route) yield route;
+        }
       }
     } else if (message.type === 'result') {
       yield { type: 'done', ok: message.subtype === 'success' && !message.is_error };

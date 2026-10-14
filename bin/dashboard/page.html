@@ -104,6 +104,9 @@
         margin-left: auto;
         width: fit-content;
       }
+      .msg a {
+        color: var(--accent);
+      }
       .tool {
         color: var(--muted);
         font-size: 0.85rem;
@@ -166,6 +169,8 @@
           inset: 0 20% 0 0;
           background: var(--bg);
           z-index: 1;
+          /* Room for the menu button, which stays on top to close the drawer. */
+          padding-top: 3rem;
         }
         body.open aside {
           display: block;
@@ -176,6 +181,8 @@
           color: var(--accent);
           padding: 0.5rem 1rem;
           text-align: left;
+          position: relative;
+          z-index: 2;
         }
       }
     </style>
@@ -211,14 +218,35 @@
         return node;
       }
 
+      // A home message routed to an issue, asked again once its thread loads.
+      let pending;
+
       // The open thread: null for home, or { repo, number } from the URL hash.
       function current() {
         const [repo, number] = decodeURIComponent(location.hash.slice(1)).split('/');
         return repo && number ? { repo, number: Number(number) } : null;
       }
 
+      // Links only: [text](https://…) and bare https URLs become anchors. Built
+      // from DOM nodes, never innerHTML, since the text comes from the model.
+      function linkify(text) {
+        const nodes = [];
+        const pattern = /\[([^\]]+)\]\((https:\/\/[^)\s]+)\)|(https:\/\/[^\s)]+)/g;
+        let last = 0;
+        for (const m of text.matchAll(pattern)) {
+          nodes.push(text.slice(last, m.index));
+          const href = m[2] ?? m[3];
+          nodes.push(
+            el('a', { href, target: '_blank', rel: 'noopener', textContent: m[1] ?? href }),
+          );
+          last = m.index + m[0].length;
+        }
+        nodes.push(text.slice(last));
+        return nodes;
+      }
+
       function add(text, cls) {
-        log.append(el('p', { className: `msg ${cls}`, textContent: text }));
+        log.append(el('p', { className: `msg ${cls}` }, ...linkify(text)));
         log.scrollTop = log.scrollHeight;
       }
 
@@ -230,6 +258,7 @@
       function statusLine(issue) {
         if (issue.state === 'closed') return 'Done';
         const running = issue.labels.find((l) => l.startsWith('agent:'));
+        if (issue.status === 'Needs you') return 'Waiting on you';
         const column = issue.status ?? 'Not on the board';
         return running ? `${column} · ${running} running` : column;
       }
@@ -261,7 +290,12 @@
                   'details',
                   { className: 'comment' },
                   el('summary', {
-                    textContent: `${c.author} · ${new Date(c.at).toLocaleString()}`,
+                    textContent: `${c.author} · ${new Date(c.at).toLocaleString()} · ${
+                      c.body
+                        .split('\n')
+                        .find((l) => l.trim())
+                        ?.slice(0, 80) ?? ''
+                    }`,
                   }),
                   el('div', { textContent: c.body }),
                 ),
@@ -273,8 +307,15 @@
           }
           lines.forEach(line);
           log.scrollTop = log.scrollHeight;
+          if (pending && ref) {
+            document.getElementById('prompt').value = pending;
+            pending = undefined;
+            document.getElementById('ask').requestSubmit();
+          }
         } catch {
           document.getElementById('status').textContent = 'Could not load this thread.';
+          // Never re-send a routed message into some other thread later.
+          pending = undefined;
         }
         loadThreads();
       }
@@ -293,7 +334,10 @@
               );
               if (ref && ref.repo === t.repo && ref.number === t.number) a.className = 'here';
               // Queued asks wait in Ask until the coordinator or this button starts them.
-              if (!t.labels.some((l) => l.startsWith('agent:'))) {
+              if (
+                t.labels.includes('ready-for-agent') &&
+                !t.labels.some((l) => l.startsWith('agent:'))
+              ) {
                 const start = el('button', {
                   type: 'button',
                   className: 'start',
@@ -343,6 +387,7 @@
           add(`Error: ${await response.text()}`, 'tool');
           return;
         }
+        let route;
         const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
         let buffer = '';
         for (;;) {
@@ -356,7 +401,14 @@
             if (event.type === 'text') line({ role: 'bot', text: event.text });
             else if (event.type === 'tool') line({ role: 'tool', text: event.name });
             else if (event.type === 'error') add(`Error: ${event.message}`, 'tool');
+            else if (event.type === 'route') route = event;
           }
+        }
+        // A follow-up from home goes to its issue's thread and is asked there.
+        if (route && !current()) {
+          pending = prompt;
+          location.hash = `${route.repo}/${route.number}`;
+          return;
         }
         loadThreads();
       };

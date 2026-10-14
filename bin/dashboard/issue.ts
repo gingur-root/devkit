@@ -1,10 +1,19 @@
-import { STATUS_FIELD } from '../agent/constants.ts';
+import { OPERATOR_ID, PIPELINE_BOT, STATUS_FIELD } from '../agent/constants.ts';
 import { graphql, rest } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
 import { ORG } from './constants.ts';
 
+// The repos are public, so anyone can comment. Only Troy's and the pipeline's
+// words reach the coordinator, as in the pipeline's own snapshot (render.ts).
+export const LEFT_OUT = '(Written by someone else, so left out.)';
+
+export function trustedAuthor(user: { id: number } | null | undefined): boolean {
+  return user?.id === OPERATOR_ID || user?.id === PIPELINE_BOT.id;
+}
+
 export interface IssueComment {
   id: number;
+  trusted: boolean;
   author: string;
   body: string;
   at: string;
@@ -12,7 +21,7 @@ export interface IssueComment {
 
 interface RawComment {
   id: number;
-  user: { login: string };
+  user: { login: string; id: number };
   body: string;
   created_at: string;
 }
@@ -23,6 +32,7 @@ export async function readThread(repo: string, number: number) {
   const path = `/repos/${ORG}/${repo}/issues/${number}`;
   const [issue, comments, board] = await Promise.all([
     rest<{
+      user: { id: number };
       title: string;
       html_url: string;
       state: string;
@@ -62,11 +72,13 @@ export async function readThread(repo: string, number: number) {
     url: issue.html_url,
     state: issue.state,
     body: issue.body ?? '',
+    bodyTrusted: trustedAuthor(issue.user),
     labels: issue.labels.map((label) => label.name),
     status:
       board.repository.issue.projectItems.nodes.find((item) => item.status)?.status?.name ?? null,
     comments: comments.map((c): IssueComment => ({
       id: c.id,
+      trusted: trustedAuthor(c.user),
       author: c.user.login,
       body: c.body,
       at: c.created_at,
