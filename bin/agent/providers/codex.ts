@@ -107,7 +107,8 @@ export function codexFailure(message: string): Failure {
   if (/usage limit|rate limit|too many requests|\b429\b/i.test(message))
     return failure('rate_limit');
   if (/overloaded|at capacity|\b5(03|29)\b/i.test(message)) return failure('overloaded');
-  if (/server error|\b5\d\d\b/i.test(message)) return failure('server_error');
+  if (/server error|bad gateway|gateway time-?out|status:? 5\d\d/i.test(message))
+    return failure('server_error');
   return failure('unknown');
 }
 

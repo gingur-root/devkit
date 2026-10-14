@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { failureReason, passes, repairable, stopped } from './publish.ts';
+import { commitMessage, failureReason, passes, repairable, stopped } from './publish.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -52,4 +52,16 @@ test("a stop names the CLI's failure class and a rate limit's reset time", () =>
     /stopped at `plan`:\*\* `rate_limit`, resets 2026-10-14 04:00 UTC: Hit a limit\./,
   );
   assert.match(failureReason({ ...limited, resetsAt: null }, 'x'), /reset time unknown/);
+});
+
+test('every pushed commit lists the operator as co-author', () => {
+  const issue = { number: 76, title: 'Add a thing', revision: '' };
+  for (const role of ['build', 'repair', 'elevated']) {
+    const trailers = commitMessage({ role, issue }).split('\n\n').at(-1);
+    assert.equal(
+      trailers,
+      'Co-authored-by: Troy Rhinehart <2553213+gingur@users.noreply.github.com>',
+      role,
+    );
+  }
 });
