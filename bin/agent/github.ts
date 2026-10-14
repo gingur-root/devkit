@@ -9,9 +9,22 @@ const API = 'https://api.github.com';
 
 let token: string | undefined;
 
+/**
+ * Tests, and harnesses run with DEVKIT_APP_ONLY, must never act as the
+ * operator (devkit#119): they get the App token or fail.
+ */
+export function appOnly(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.VITEST || env.DEVKIT_APP_ONLY);
+}
+
 /** GH_TOKEN, or on the WSL desk, where no App token is minted, the operator's own `gh` login. */
 function ghToken(): string {
   if (process.env.GH_TOKEN) return process.env.GH_TOKEN;
+  if (appOnly()) {
+    throw new Error(
+      "GH_TOKEN is not set, and app-only runs never fall back to the operator's gh login.",
+    );
+  }
   try {
     token ??= execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim();
   } catch {

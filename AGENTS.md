@@ -160,6 +160,10 @@ composite, so it's bumped once.
   token for the gingur-root pipeline App, narrowed per call by its
   `permission*` inputs. The App has no `workflows` permission.
 - Never print, echo or commit a secret value.
+- **Tests never act as the operator.** On the WSL desk, `bin/agent/github.ts`
+  falls back to Troy's own `gh` login when `GH_TOKEN` is unset. Under Vitest,
+  or with `DEVKIT_APP_ONLY=1` set, it throws instead. Run every dashboard or pipeline harness that
+  writes to GitHub with `DEVKIT_APP_ONLY=1` (devkit#119).
 
 ## Admission
 
