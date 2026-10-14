@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { type FetchKeys, verifyAccessToken } from './access.ts';
 import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, REPO_NAME } from './constants.ts';
 import { createStore, HOME_THREAD, threadKey } from './store.ts';
+import type { DashboardMessage } from './stream.ts';
 
 /** Where `devkit dashboard serve` builds the page (web/). */
 export const WEB_DIST = new URL('./web/dist/', import.meta.url);
@@ -94,8 +95,8 @@ export function createDashboard(
         const { chatTurn } = await import('./chat.ts');
         const { writeEvents } = await import('./stream.ts');
         const { createUIMessageStream, pipeUIMessageStreamToResponse } = await import('ai');
-        const stream = createUIMessageStream({
-          execute: ({ writer }) => writeEvents(chatTurn(store, text, ref), writer as never),
+        const stream = createUIMessageStream<DashboardMessage>({
+          execute: ({ writer }) => writeEvents(chatTurn(store, text, ref), writer),
           // Troy is the only reader, so he sees the real error.
           onError: (error) => (error instanceof Error ? error.message : String(error)),
         });

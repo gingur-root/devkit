@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import type { ParsedCommand } from '../../command.ts';
 import { DASHBOARD_PORT } from '../../dashboard/constants.ts';
 
@@ -18,8 +20,8 @@ export default {
     // The page is built at start, so the VPS deploy needs no separate build step.
     const { build } = await import('vite-plus');
     await build({
-      root: new URL('../../dashboard/web/', import.meta.url).pathname,
-      build: { outDir: WEB_DIST.pathname, emptyOutDir: true },
+      root: fileURLToPath(new URL('../../dashboard/web/', import.meta.url)),
+      build: { outDir: fileURLToPath(WEB_DIST), emptyOutDir: true },
       // Streamdown's 'use client' lines make Rolldown warn on every build.
       logLevel: 'error',
     });

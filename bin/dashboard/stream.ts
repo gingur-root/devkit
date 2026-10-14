@@ -1,7 +1,7 @@
 // The coordinator's events in the AI SDK's UI message format, so the page can
 // use `useChat` (devkit#91). Text is sent as whole parts; tool calls and routes
 // are data parts the page draws itself.
-import type { UIMessage } from 'ai';
+import type { UIMessage, UIMessageStreamWriter } from 'ai';
 
 import type { CoordinatorEvent } from './coordinator.ts';
 import type { Line } from './store.ts';
@@ -11,28 +11,12 @@ export type DashboardMessage = UIMessage<
   { tool: { name: string }; route: { repo: string; number: number } }
 >;
 
-type Writer = { write(chunk: Record<string, unknown>): void };
-
-/**
- * Streams a turn to the page. The turn always runs to the end, even if the page
- * goes away mid-turn (a phone switching apps): writes stop, the turn and its
- * stored lines don't.
- */
+// The SDK's writer ignores writes after the page goes away, so the turn still
+// runs to the end and its lines are stored.
 export async function writeEvents(
   events: AsyncIterable<CoordinatorEvent>,
-  out: Writer,
+  writer: UIMessageStreamWriter<DashboardMessage>,
 ): Promise<void> {
-  let open = true;
-  const writer = {
-    write(chunk: Record<string, unknown>) {
-      if (!open) return;
-      try {
-        out.write(chunk);
-      } catch {
-        open = false;
-      }
-    },
-  };
   let part = 0;
   for await (const event of events) {
     if (event.type === 'text') {

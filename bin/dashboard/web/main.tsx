@@ -156,6 +156,7 @@ function Chat({
   const [input, setInput] = useState('');
   // What Troy last sent, re-asked in the issue's thread if home routes it.
   const lastSent = useRef('');
+  const route = useRef<Ref | null>(null);
   const send = (text: string) => {
     lastSent.current = text;
     void sendMessage({ text });
@@ -178,12 +179,15 @@ function Chat({
     messages: initial,
     transport,
     onData: (part) => {
-      // A follow-up from home goes to its issue's thread and is asked there.
-      if (part.type === 'data-route' && !thread) {
-        onRoute(part.data, lastSent.current);
-      }
+      if (part.type === 'data-route' && !thread) route.current = part.data;
     },
-    onFinish: onTurnEnd,
+    onFinish: () => {
+      // A follow-up from home goes to its issue's thread once home's turn ends.
+      const to = route.current;
+      route.current = null;
+      if (to) onRoute(to, lastSent.current);
+      onTurnEnd();
+    },
   });
 
   useEffect(() => {
@@ -253,8 +257,11 @@ function App() {
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
   useEffect(() => {
+    let live = true;
     setLoaded(null);
     setFailed(false);
+    // A routed message is only ever sent in the thread it was routed to, now.
+    setPending((p) => (p?.key === key ? p : null));
     document.body.classList.remove('open');
     const query = ref ? `?repo=${encodeURIComponent(ref.repo)}&number=${ref.number}` : '';
     fetch(`/api/thread${query}`)
@@ -266,11 +273,15 @@ function App() {
         (data: { issue: Issue | null; messages: DashboardMessage[] }) =>
           setLoaded({ key, ...data }),
         () => {
+          // A late failure from a thread already left must not touch this one.
+          if (!live) return;
           setFailed(true);
-          // Never re-send a routed message into some other thread later.
           setPending(null);
         },
       );
+    return () => {
+      live = false;
+    };
   }, [ref?.repo, ref?.number]);
 
   const ready = loaded?.key === key ? loaded : null;

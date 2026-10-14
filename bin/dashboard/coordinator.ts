@@ -26,7 +26,7 @@ export const ASK_LABELS = {
 
 const TURN_TIMEOUT_MS = 10 * 60_000;
 
-// The page follows this tool's call to the issue's thread (chat.ts, page.html).
+// The page follows this tool's call to the issue's thread (chat.ts, web/main.tsx).
 const OPEN_THREAD_TOOL = 'mcp__github__open_thread';
 
 const INSTRUCTIONS = readFileSync(new URL('../../agents/coordinator.md', import.meta.url), 'utf8');

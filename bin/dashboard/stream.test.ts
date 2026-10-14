@@ -3,8 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vite-plus/test';
 
-import type { CoordinatorEvent } from './coordinator.ts';
-import { linesToMessages, writeEvents } from './stream.ts';
+import { linesToMessages } from './stream.ts';
 
 test('stored lines become user messages and grouped replies, in order', () => {
   const messages = linesToMessages([
@@ -28,22 +27,4 @@ test('stored lines become user messages and grouped replies, in order', () => {
       ['assistant', ['Started.']],
     ],
   );
-});
-
-test('a turn runs to the end after the page goes away', async () => {
-  const seen: string[] = [];
-  async function* turn(): AsyncGenerator<CoordinatorEvent> {
-    for (const text of ['one', 'two', 'three']) {
-      seen.push(text);
-      yield { type: 'text', text };
-    }
-  }
-  let writes = 0;
-  const closed = {
-    write() {
-      if (++writes > 1) throw new Error('Controller is already closed');
-    },
-  };
-  await writeEvents(turn(), closed);
-  assert.deepEqual(seen, ['one', 'two', 'three']);
 });

@@ -2,7 +2,7 @@
 // cookie, so a write must come from the dashboard's own origin.
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,8 +21,10 @@ const jwt = `${body}.${sign('RSA-SHA256', Buffer.from(body), privateKey).toStrin
 
 const web = mkdtempSync(join(tmpdir(), 'web-'));
 writeFileSync(join(web, 'index.html'), '<!doctype html>');
+mkdirSync(join(web, 'assets'));
+writeFileSync(join(web, 'assets', 'a.js'), 'export {};');
 
-test('serves the page to Troy, and refuses a chat from another origin', async () => {
+test('serves the page and its assets to Troy, nothing else, and refuses a chat from another origin', async () => {
   const server = createDashboard(
     'aud',
     keys,
@@ -34,6 +36,14 @@ test('serves the page to Troy, and refuses a chat from another origin', async ()
   try {
     const page = await fetch(`${url}/`, { headers: { [ACCESS_JWT_HEADER]: jwt } });
     assert.equal(page.status, 200);
+    const asset = await fetch(`${url}/assets/a.js`, { headers: { [ACCESS_JWT_HEADER]: jwt } });
+    assert.equal(asset.status, 200);
+    assert.equal(asset.headers.get('content-type'), 'text/javascript');
+    // Only built assets: the state file next to them never leaves the box.
+    for (const path of ['/assets/%2e%2e%2fstate.json', '/assets/../state.json', '/state.json']) {
+      const res = await fetch(`${url}${path}`, { headers: { [ACCESS_JWT_HEADER]: jwt } });
+      assert.equal(res.status, 404, path);
+    }
     const chat = await fetch(`${url}/api/chat`, {
       method: 'POST',
       headers: {
