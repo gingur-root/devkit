@@ -1,5 +1,8 @@
 // Live updates (devkit#100): a source tells the page which card or the board
-// changed. Polling stands in until a webhook source emits the same events.
+// changed. The org webhook (devkit#118) says so as it happens; polling is the
+// safety net, since GitHub does not retry a delivery that failed.
+import { GITHUB_EVENT } from '../webhooks/constants.ts';
+import type { Delivery, WebhookHandler } from '../webhooks/receiver.ts';
 import type { BoardCard } from './board.ts';
 import { BOARD_EVENT } from './constants.ts';
 
@@ -13,6 +16,8 @@ export interface BoardEventSource {
 }
 
 export const POLL_MS = 30_000;
+// Only catches what the webhook missed, so it can be slow.
+export const SAFETY_POLL_MS = 5 * 60_000;
 
 /**
  * The in-process fan-out every source shares: `onFirst` runs when the first
@@ -95,4 +100,42 @@ export function pollBoard(
     },
   );
   return { subscribe: hub.subscribe };
+}
+
+/** Every event any of `sources` sends. */
+export function mergeSources(...sources: BoardEventSource[]): BoardEventSource {
+  return {
+    subscribe(listener) {
+      const unsubscribes = sources.map((source) => source.subscribe(listener));
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    },
+  };
+}
+
+interface IssuePayload {
+  repository?: { name?: string };
+  issue?: { number?: number };
+}
+
+/** What a delivery means for the board: an issue or its comments name its card; project and sub-issue changes, the board. */
+export function deliveryEvents({ event, payload }: Delivery): BoardEvent[] {
+  if (event === GITHUB_EVENT.projectItem || event === GITHUB_EVENT.subIssues) {
+    return [{ type: BOARD_EVENT.boardChanged }];
+  }
+  if (event !== GITHUB_EVENT.issues && event !== GITHUB_EVENT.issueComment) return [];
+  const { repository, issue } = payload as IssuePayload;
+  if (!repository?.name || !issue?.number) return [];
+  return [{ type: BOARD_EVENT.cardChanged, repo: repository.name, number: issue.number }];
+}
+
+/** A source fed by the webhook receiver: `handle` is the receiver's handler. */
+export function webhookBoard(): { source: BoardEventSource; handle: WebhookHandler } {
+  const hub = createHub(
+    () => {},
+    () => {},
+  );
+  return {
+    source: { subscribe: hub.subscribe },
+    handle: (delivery) => deliveryEvents(delivery).forEach(hub.emit),
+  };
 }

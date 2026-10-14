@@ -5,7 +5,7 @@ import { afterEach, beforeEach, test, vi } from 'vite-plus/test';
 
 import type { Status } from '../agent/constants.ts';
 import { BOARD_EVENT } from './constants.ts';
-import { diffBoard, POLL_MS, pollBoard, snapshot } from './events.ts';
+import { diffBoard, mergeSources, POLL_MS, pollBoard, snapshot, webhookBoard } from './events.ts';
 
 const card = (number: number, updatedAt = 't1', column: Status = 'Ask') => ({
   repo: 'devkit',
@@ -90,4 +90,21 @@ test('never starts a read while one is running, nor after the last listener left
   await vi.advanceTimersByTimeAsync(POLL_MS * 3);
   assert.equal(read.mock.calls.length, 2);
   assert.equal(most, 1);
+});
+
+test('a webhook delivery names its card or the board, and reaches listeners of a merged source', () => {
+  const { source, handle } = webhookBoard();
+  const other = webhookBoard();
+  const seen: unknown[] = [];
+  const unsubscribe = mergeSources(source, other.source).subscribe((event) => seen.push(event));
+  const issue = { repository: { name: 'scratch' }, issue: { number: 4 } };
+  handle({ id: '1', event: 'issues', payload: { action: 'labeled', ...issue } });
+  handle({ id: '2', event: 'issue_comment', payload: { action: 'created', ...issue } });
+  other.handle({ id: '3', event: 'projects_v2_item', payload: { action: 'edited' } });
+  handle({ id: '4', event: 'workflow_run', payload: { action: 'completed' } });
+  const card = { type: BOARD_EVENT.cardChanged, repo: 'scratch', number: 4 };
+  assert.deepEqual(seen, [card, card, { type: BOARD_EVENT.boardChanged }]);
+  unsubscribe();
+  handle({ id: '5', event: 'issues', payload: issue });
+  assert.equal(seen.length, 3);
 });
