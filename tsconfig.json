@@ -12,7 +12,11 @@
     // system, so consumers pick their own.
     "module": "nodenext",
     "target": "esnext",
-    "types": ["node"]
+    "types": ["node"],
+
+    // The dashboard page (bin/dashboard/web) is React, built by Vite.
+    "jsx": "react-jsx",
+    "lib": ["esnext", "dom", "dom.iterable"]
   },
-  "include": ["bin/**/*.ts", "bin/**/*.d.mts", "test/**/*.ts"]
+  "include": ["bin/**/*.ts", "bin/**/*.tsx", "bin/**/*.d.mts", "test/**/*.ts"]
 }

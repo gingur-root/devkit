@@ -2,11 +2,16 @@
 // cookie, so a write must come from the dashboard's own origin.
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { test } from 'vite-plus/test';
 
 import { ACCESS_JWT_HEADER, ACCESS_TEAM_URL, OPERATOR_EMAIL } from './constants.ts';
 import { createDashboard } from './server.ts';
+import { createStore } from './store.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const keys = async () => [{ ...publicKey.export({ format: 'jwk' }), kid: 'k1' }];
@@ -14,8 +19,16 @@ const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('b
 const body = `${encode({ alg: 'RS256', kid: 'k1' })}.${encode({ aud: ['aud'], iss: ACCESS_TEAM_URL, email: OPERATOR_EMAIL, exp: Date.now() / 1000 + 60 })}`;
 const jwt = `${body}.${sign('RSA-SHA256', Buffer.from(body), privateKey).toString('base64url')}`;
 
+const web = mkdtempSync(join(tmpdir(), 'web-'));
+writeFileSync(join(web, 'index.html'), '<!doctype html>');
+
 test('serves the page to Troy, and refuses a chat from another origin', async () => {
-  const server = createDashboard('aud', keys).listen(0, '127.0.0.1');
+  const server = createDashboard(
+    'aud',
+    keys,
+    createStore(join(web, 'state.json')),
+    pathToFileURL(`${web}/`),
+  ).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {

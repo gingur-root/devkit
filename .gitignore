@@ -8,3 +8,4 @@ node_modules/
 # Superpowers working docs (specs/plans) — local-only process artifacts, never committed
 docs/superpowers/
 .superpowers/
+bin/dashboard/web/dist/
