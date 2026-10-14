@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fafaf9;
+        --fg: #1c1917;
+        --muted: #78716c;
+        --line: #e7e5e4;
+        --me: #e0f2fe;
+        --accent: #0369a1;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1917;
+          --fg: #f5f5f4;
+          --muted: #a8a29e;
+          --line: #44403c;
+          --me: #0c4a6e;
+          --accent: #7dd3fc;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        height: 100dvh;
+        display: grid;
+        grid-template-columns: 18rem 1fr;
+      }
+      aside {
+        border-right: 1px solid var(--line);
+        overflow-y: auto;
+        padding: 1rem;
+      }
+      aside h2 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 0 0 0.5rem;
+      }
+      aside a {
+        display: block;
+        padding: 0.4rem 0;
+        color: var(--fg);
+        text-decoration: none;
+        border-bottom: 1px solid var(--line);
+      }
+      aside small {
+        color: var(--muted);
+        display: block;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      #log {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+      }
+      .msg {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        margin: 0 0 1rem;
+        max-width: 46rem;
+      }
+      .me {
+        background: var(--me);
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.75rem;
+        margin-left: auto;
+        width: fit-content;
+      }
+      .tool {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      form {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        border-top: 1px solid var(--line);
+      }
+      textarea {
+        flex: 1;
+        font: inherit;
+        resize: none;
+        padding: 0.5rem;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        background: transparent;
+        color: inherit;
+      }
+      button {
+        font: inherit;
+        padding: 0.5rem 1rem;
+        border: 0;
+        border-radius: 0.5rem;
+        background: var(--accent);
+        color: var(--bg);
+      }
+      .start {
+        margin-top: 0.25rem;
+        padding: 0.2rem 0.6rem;
+        font-size: 0.85rem;
+      }
+      #menu {
+        display: none;
+      }
+      @media (max-width: 700px) {
+        body {
+          grid-template-columns: 1fr;
+        }
+        aside {
+          display: none;
+          position: fixed;
+          inset: 0 20% 0 0;
+          background: var(--bg);
+          z-index: 1;
+        }
+        body.open aside {
+          display: block;
+        }
+        #menu {
+          display: block;
+          background: none;
+          color: var(--accent);
+          padding: 0.5rem 1rem;
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <h2>Threads</h2>
+      <div id="threads">Loading…</div>
+    </aside>
+    <main>
+      <button id="menu" type="button">☰ Threads</button>
+      <div id="log" aria-live="polite"></div>
+      <form id="ask">
+        <textarea
+          id="prompt"
+          rows="2"
+          placeholder="Ask, queue, start, or follow up on an issue"
+          aria-label="Prompt"
+        ></textarea>
+        <button>Send</button>
+      </form>
+    </main>
+    <script>
+      const log = document.getElementById('log');
+      let session;
+      try {
+        session = localStorage.getItem('session') ?? undefined;
+      } catch {}
+
+      function add(text, cls) {
+        const el = document.createElement('p');
+        el.className = `msg ${cls}`;
+        el.textContent = text;
+        log.append(el);
+        log.scrollTop = log.scrollHeight;
+        return el;
+      }
+
+      async function loadThreads() {
+        const box = document.getElementById('threads');
+        try {
+          const list = await (await fetch('/api/threads')).json();
+          box.replaceChildren(
+            ...list.map((t) => {
+              const a = document.createElement('a');
+              a.href = t.url;
+              a.target = '_blank';
+              a.textContent = t.title;
+              const meta = document.createElement('small');
+              meta.textContent = `${t.repo}#${t.number} ${t.labels.join(' ')}`;
+              a.append(meta);
+              // Queued asks wait in Ask until the coordinator or this button starts them.
+              if (!t.labels.some((l) => l.startsWith('agent:'))) {
+                const start = document.createElement('button');
+                start.type = 'button';
+                start.className = 'start';
+                start.textContent = 'Start';
+                start.onclick = async (e) => {
+                  e.preventDefault();
+                  start.disabled = true;
+                  const r = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ repo: t.repo, number: t.number }),
+                  });
+                  start.textContent = r.ok ? 'Started' : 'Failed';
+                };
+                a.append(start);
+              }
+              return a;
+            }),
+          );
+        } catch {
+          box.textContent = 'Could not load threads.';
+        }
+      }
+
+      document.getElementById('menu').onclick = () => document.body.classList.toggle('open');
+      document.getElementById('prompt').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          e.target.form.requestSubmit();
+        }
+      });
+
+      document.getElementById('ask').onsubmit = async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('prompt');
+        const prompt = input.value.trim();
+        if (!prompt) return;
+        input.value = '';
+        add(prompt, 'me');
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ prompt, session }),
+        });
+        if (!response.ok) {
+          add(`Error: ${await response.text()}`, 'tool');
+          return;
+        }
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines.filter(Boolean)) {
+            const event = JSON.parse(line);
+            if (event.type === 'session') {
+              session = event.id;
+              try {
+                localStorage.setItem('session', session);
+              } catch {}
+            } else if (event.type === 'text') add(event.text, 'bot');
+            else if (event.type === 'tool')
+              add(`· ${event.name.replace('mcp__github__', '')}`, 'tool');
+            else if (event.type === 'error') add(`Error: ${event.message}`, 'tool');
+          }
+        }
+        loadThreads();
+      };
+
+      loadThreads();
+    </script>
+  </body>
+</html>
