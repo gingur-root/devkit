@@ -218,7 +218,10 @@ Use `vp lint`, `vp fmt`, `vp check` and `vp staged`.
 ### Pre-commit
 
 Hooks are Vite+'s dispatcher (`vp config` sets `core.hooksPath` to
-`.vite-hooks/_`). Commit the hook bodies in `.vite-hooks/`:
+`.vite-hooks/_`). Nothing runs `vp config` for you: a `prepare` script would
+fail every consumer's install, since pnpm blocks a git dependency's scripts. So
+after cloning, run `pnpm install && pnpm exec vp config --no-agent` once. Commit
+the hook bodies in `.vite-hooks/`:
 
 - `pre-commit`: `vp staged`, then
   `gitleaks git --pre-commit --staged --redact --no-banner` (gitleaks on PATH).
