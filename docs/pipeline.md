@@ -27,15 +27,6 @@ why it stopped, the comment names the class (`rate_limit` with its reset time,
 the label again. Every comment that leaves a card in **Needs you** or
 **Ready** mentions @gingur, so the notification arrives then.
 
-## Run records
-
-Each publish job adds its stage's tokens to the run summary, and uploads the
-stage's job directory and output (result, transcript, plan, patch) to the R2
-bucket `gingur-root-runs` under `<repo>/<issue>/<runId>/<stage>/`. The summary
-names that prefix. A stage that repeats carries its round (`review.r1`). The
-WSL desk has no records keys, so its runs keep only the Actions artifacts. A
-failed upload is logged and never stops the stage.
-
 ## The board loop
 
 `pnpm agent loop` (`bin/agent/loop.ts`, devkit#47) keeps cards moving with no

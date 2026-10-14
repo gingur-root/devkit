@@ -149,26 +149,10 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
-      # Run records go to R2 (infra runbook, "Run records"). A missing key only
-      # skips the upload; it never blocks publishing.
-      - id: records
-        if: inputs.runner != 'wsl'
-        continue-on-error: true
-        uses: gingur-root/devkit/actions/secrets.fetch@main
-        with:
-          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
-          setEnv: 'false'
-          secrets: |
-            f5b1908d-d770-4a77-911a-b4e000020490 > R2_RUNS_ENDPOINT
-            df25457b-e72e-4560-9ca8-b4e000020d93 > R2_RUNS_BUCKET
-            bca171df-85a4-4e1e-8218-b4e0000212ec > R2_RUNS_ACCESS_KEY_ID
-            613b2ff8-bb29-4d56-8d2b-b4e000021430 > R2_RUNS_SECRET_ACCESS_KEY
-
       - name: Publish
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          R2_RUNS: ${{ steps.records.outputs.json }}
         run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out"
 
   # A plan that asked questions is the normal flow; only a failed job gets a retro.

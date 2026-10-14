@@ -148,8 +148,7 @@ composite, so it's bumped once.
   CI, by UUID) or `bws` (on the box). No per-repo GitHub secrets.
 - **Two tokens, two tiers.** Agent jobs hold only `AGENTS_SECRETS_TOKEN` (the
   `agents` project). Pipeline jobs hold `PIPELINE_SECRETS_TOKEN` (`pipeline`: the
-  App key, the run-records R2 keys). An agent job never references the pipeline
-  token.
+  App key). An agent job never references the pipeline token.
 - **GitHub writes** go through `app.token`: a short-lived installation
   token for the gingur-root pipeline App, narrowed per call by its
   `permission*` inputs. The App has no `workflows` permission.
