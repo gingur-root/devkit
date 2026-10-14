@@ -2,3 +2,8 @@ self-hosted-runner:
   # The WSL desk's runner (infra wsl/elevated), used by agent.elevated.yml only.
   labels:
     - wsl
+paths:
+  .github/workflows/agents.yml:
+    ignore:
+      # GitHub's concurrency `queue: max` (keeps every waiting run) is newer than actionlint.
+      - 'unexpected key "queue" for "concurrency" section'
