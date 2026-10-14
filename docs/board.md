@@ -1,7 +1,8 @@
 # Dashboard board: cards as a state machine
 
-Planned (Troy, 2026-10-14), not built yet. The dashboard's main view is a
-board of stories and their subtasks. There is no drag: each card shows only
+Planned (Troy, 2026-10-14). The board itself is built (devkit#98); its
+buttons are not yet (devkit#99). The dashboard's main view is a board of
+stories and their subtasks. There is no drag: each card shows only
 the buttons its column allows. A button is an action, and the pipeline then
 moves the card.
 

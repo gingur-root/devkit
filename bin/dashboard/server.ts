@@ -68,6 +68,11 @@ export function createDashboard(
         res
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify(await threads()));
+      } else if (req.method === 'GET' && req.url === '/api/board') {
+        const { board } = await import('./board.ts');
+        res
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify(await board()));
       } else if (req.method === 'POST' && req.headers.origin !== DASHBOARD_ORIGIN) {
         // The Access cookie rides along on cross-site requests too, so a write
         // must come from the dashboard's own page.
