@@ -23,18 +23,19 @@ export const ASK_LABELS = {
   start: [READY_LABEL, STAGE_LABELS.plan],
 } as const satisfies Record<AskMode, readonly string[]>;
 
+// The page follows this tool's call to the issue's thread (chat.ts, page.html).
+const OPEN_THREAD_TOOL = 'mcp__github__open_thread';
+
 const INSTRUCTIONS = readFileSync(new URL('../../agents/coordinator.md', import.meta.url), 'utf8');
 
 // Only repos in the org; the agent picks the name, so it is checked, not trusted.
-const repo = z
-  .string()
-  .regex(REPO_NAME)
-  .describe(`repository name in ${ORG}`);
+const repo = z.string().regex(REPO_NAME).describe(`repository name in ${ORG}`);
 
 export type CoordinatorEvent =
   | { type: 'session'; id: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string }
+  | { type: 'route'; repo: string; number: number }
   | { type: 'done'; ok: boolean };
 
 async function github<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -139,6 +140,12 @@ const githubTools = createSdkMcpServer({
       },
     ),
     tool(
+      'open_thread',
+      "Hand a follow-up on an existing issue to that issue's own thread. Troy's message is re-sent there.",
+      { repo, number: z.number().int().positive() },
+      async () => reply({ routed: true }),
+    ),
+    tool(
       'start_plan',
       'Start planning an existing issue (adds agent:plan).',
       { repo, number: z.number().int() },
@@ -181,7 +188,11 @@ export async function* coordinate(
     } else if (message.type === 'assistant') {
       for (const block of message.message.content) {
         if (block.type === 'text') yield { type: 'text', text: block.text };
-        else if (block.type === 'tool_use') yield { type: 'tool', name: block.name };
+        else if (block.type === 'tool_use') {
+          yield { type: 'tool', name: block.name };
+          if (block.name === OPEN_THREAD_TOOL)
+            yield { type: 'route', ...(block.input as { repo: string; number: number }) };
+        }
       }
     } else if (message.type === 'result') {
       yield { type: 'done', ok: message.subtype === 'success' && !message.is_error };
