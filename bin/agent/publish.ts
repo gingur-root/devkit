@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { git } from '../git.ts';
 import { setStatus } from './board.ts';
 import {
+  OPERATOR_COAUTHOR,
   OPERATOR_LOGIN,
   PIPELINE_BOT,
   REPAIR_ROUNDS,
@@ -227,13 +228,22 @@ function pushCandidate(
     git(checkout, ['fetch', '--depth=1', 'origin', branch]);
     parent = git(checkout, ['rev-parse', 'FETCH_HEAD']);
   }
-  const message =
+  const commit = git(
+    checkout,
+    ['commit-tree', tree, '-p', parent, '-m', commitMessage(job)],
+    PIPELINE_BOT,
+  );
+  git(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
+  return { branch, commit };
+}
+
+/** The candidate's commit message: every pushed commit goes through here. */
+export function commitMessage(job: Pick<Job, 'role' | 'issue'>): string {
+  const subject =
     job.role === 'repair'
       ? `Fix review findings for #${job.issue.number}`
       : `${job.issue.title}\n\nCloses #${job.issue.number}`;
-  const commit = git(checkout, ['commit-tree', tree, '-p', parent, '-m', message], PIPELINE_BOT);
-  git(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
-  return { branch, commit };
+  return `${subject}\n\n${OPERATOR_COAUTHOR}`;
 }
 
 function branchOf(job: Job): string {
