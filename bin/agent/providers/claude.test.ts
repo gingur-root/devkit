@@ -20,4 +20,23 @@ test('Claude init outside the role stops the run', () => {
   assert.throws(() =>
     assertClaudeInit({ ...clean, tools: ['Bash', 'Read', 'mcp__neon__run_sql'] }, options),
   );
+  assert.throws(
+    () =>
+      assertClaudeInit({ ...clean, tools: ['Bash', 'Read', 'mcp__context7__query-docs'] }, options),
+    'a role without web gets no docs server',
+  );
+});
+
+test('a web role may load Context7 and nothing else from MCP', () => {
+  const options = claudeOptions(ROLES.review, {
+    cwd: '/w',
+    executable: '/bin/claude',
+    env: {},
+    instructions: '',
+  });
+  const tools = [...ROLES.review.tools, 'WebSearch', 'WebFetch', 'mcp__context7__query-docs'];
+  assert.doesNotThrow(() => assertClaudeInit({ apiKeySource: 'none', tools }, options));
+  assert.throws(() =>
+    assertClaudeInit({ apiKeySource: 'none', tools: [...tools, 'mcp__neon__run_sql'] }, options),
+  );
 });
