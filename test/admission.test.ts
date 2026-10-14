@@ -14,8 +14,11 @@ const ADMISSION =
   '(github.event_name == \'issues\' && github.event.action == \'labeled\' && contains(fromJSON(\'["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]\'), github.event.label.name)) || ' +
   "(github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || " +
   "startsWith(github.event.comment.body, '/approve'))))) || " +
-  // The pipeline App's bot may start a plan and nothing else: the board loop's one power (devkit#47).
-  "(github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))";
+  // The pipeline App's bot may add only stage labels: `agent:plan` for the board loop (devkit#47),
+  // and `agent:build` or `agent:elevated` for a plan's hand-off after a dashboard Continue, which
+  // render then checks (bin/agent/approval.ts, devkit#99).
+  "(github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && " +
+  'contains(fromJSON(\'["agent:plan","agent:build","agent:elevated"]\'), github.event.label.name)))';
 
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);

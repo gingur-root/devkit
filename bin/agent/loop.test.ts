@@ -83,6 +83,11 @@ test('a run that died before setting Status still frees the repo', () => {
   );
 });
 
+test('a plan that handed off to its build leaves the card in Building', () => {
+  const handedOff = card(1, 'Building', ['agent:build']);
+  assert.deepEqual(decide([handedOff], { role: 'plan', issue: 1, jobs: {} }).actions, []);
+});
+
 test('a run that published leaves its card alone', () => {
   assert.deepEqual(
     decide([card(1, 'Needs you')], { role: 'plan', issue: 1, jobs: failed }).actions,

@@ -23,6 +23,7 @@ import type { BoardCard } from '../board.ts';
 import { BOARD_EVENT } from '../constants.ts';
 import type { BoardEvent } from '../events.ts';
 import type { DashboardMessage } from '../stream.ts';
+import { CardButtons } from './card-buttons.tsx';
 import {
   Conversation,
   ConversationContent,
@@ -191,7 +192,7 @@ function StartButton({ thread, className }: { thread: Ref; className?: string })
   );
 }
 
-function BoardCardView({ card }: { card: BoardCard }) {
+function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => void }) {
   const running = card.labels.find((l) => l.startsWith('agent:'));
   return (
     <Card
@@ -203,7 +204,7 @@ function BoardCardView({ card }: { card: BoardCard }) {
     >
       <CardHeader className="px-3">
         <CardTitle className="text-sm leading-snug break-words">
-          {/* The whole card opens the thread; chips and Start sit above this link. */}
+          {/* The whole card opens the thread; chips and buttons sit above this link. */}
           <a href={`#${card.repo}/${card.number}`} className="after:absolute after:inset-0">
             {card.title}
           </a>
@@ -213,28 +214,28 @@ function BoardCardView({ card }: { card: BoardCard }) {
           {running && ` · ${running} running`}
         </CardDescription>
       </CardHeader>
-      {(card.subtasks.length > 0 || (card.column === 'Ask' && queued(card.labels))) && (
-        <CardContent className="flex flex-wrap gap-1 px-3">
-          {card.subtasks.map((s) => (
-            <Badge
-              key={`${s.repo}#${s.number}`}
-              asChild
-              variant="outline"
-              className={cn(
-                'relative',
-                s.column === 'Needs you' && 'border-amber-500 text-amber-700 dark:text-amber-400',
-              )}
-            >
-              <a href={`#${s.repo}/${s.number}`} title={s.title}>
-                {s.repo !== card.repo && s.repo}#{s.number} {s.column}
-              </a>
-            </Badge>
-          ))}
-          {card.column === 'Ask' && queued(card.labels) && (
-            <StartButton thread={card} className="relative mt-0" />
-          )}
-        </CardContent>
-      )}
+      <CardContent className="flex flex-col gap-2 px-3">
+        {card.subtasks.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {card.subtasks.map((s) => (
+              <Badge
+                key={`${s.repo}#${s.number}`}
+                asChild
+                variant="outline"
+                className={cn(
+                  'relative',
+                  s.column === 'Needs you' && 'border-amber-500 text-amber-700 dark:text-amber-400',
+                )}
+              >
+                <a href={`#${s.repo}/${s.number}`} title={s.title}>
+                  {s.repo !== card.repo && s.repo}#{s.number} {s.column}
+                </a>
+              </Badge>
+            ))}
+          </div>
+        )}
+        <CardButtons card={card} onDone={onChange} />
+      </CardContent>
     </Card>
   );
 }
@@ -242,6 +243,9 @@ function BoardCardView({ card }: { card: BoardCard }) {
 function Board({ version }: { version: number }) {
   const [cards, setCards] = useState<BoardCard[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // A button press reloads the board at once, without waiting for a live update.
+  const [pressed, setPressed] = useState(0);
+  const reload = useCallback(() => setPressed((n) => n + 1), []);
   useEffect(() => {
     setFailed(false);
     fetch('/api/board')
@@ -250,7 +254,7 @@ function Board({ version }: { version: number }) {
         return r.json() as Promise<BoardCard[]>;
       })
       .then(setCards, () => setFailed(true));
-  }, [version]);
+  }, [version, pressed]);
   if (failed) return <p className="p-4">Could not load the board.</p>;
   if (!cards) return <p className="p-4 text-muted-foreground">Loading…</p>;
   return (
@@ -269,7 +273,7 @@ function Board({ version }: { version: number }) {
               {column} · {list.length}
             </h2>
             {list.map((card) => (
-              <BoardCardView key={`${card.repo}#${card.number}`} card={card} />
+              <BoardCardView key={`${card.repo}#${card.number}`} card={card} onChange={reload} />
             ))}
           </section>
         );

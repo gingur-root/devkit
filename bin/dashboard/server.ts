@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 import { type FetchKeys, verifyAccessToken } from './access.ts';
+import type { MergeHook } from './actions.ts';
 import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, REPO_NAME } from './constants.ts';
 import { type BoardEventSource, pollBoard } from './events.ts';
 import { createStore, HOME_THREAD, threadKey } from './store.ts';
@@ -40,6 +41,8 @@ export function createDashboard(
   store = createStore(),
   web: URL = WEB_DIST,
   events: BoardEventSource = pollBoard(),
+  /** Unset until Troy's merge token exists: Merge then answers 501. */
+  merge?: MergeHook,
 ): Server {
   return createServer(async (req, res) => {
     const header = req.headers[ACCESS_JWT_HEADER];
@@ -102,6 +105,20 @@ export function createDashboard(
         const { startPlan } = await import('./coordinator.ts');
         await startPlan(String(repo), Number(number));
         res.writeHead(204).end();
+      } else if (req.method === 'POST' && req.url === '/api/card') {
+        const { act, ActionError, CardRequest } = await import('./actions.ts');
+        const parsed = CardRequest.safeParse(await readJson(req));
+        if (!parsed.success) {
+          res.writeHead(400, { 'content-type': 'text/plain' }).end('Bad card request.\n');
+          return;
+        }
+        try {
+          await act(parsed.data, merge);
+          res.writeHead(204).end();
+        } catch (error) {
+          if (!(error instanceof ActionError)) throw error;
+          res.writeHead(error.status, { 'content-type': 'text/plain' }).end(`${error.message}\n`);
+        }
       } else if (req.method === 'GET' && url.pathname === '/api/thread') {
         const ref = issueRef(url.searchParams.get('repo'), url.searchParams.get('number'));
         const key = ref ? threadKey(ref.repo, ref.number) : HOME_THREAD;

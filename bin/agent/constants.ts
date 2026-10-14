@@ -104,3 +104,19 @@ export const PIPELINE_BOT = {
   name: 'gingur-root-pipeline[bot]',
   email: '340770692+gingur-root-pipeline[bot]@users.noreply.github.com',
 } as const;
+
+/**
+ * The stages a dashboard Continue may hand a plan to (devkit#99), and the
+ * marker role of the App comment that records the Continue. The comment is the
+ * proof the gate needs before it accepts that stage's label from the App.
+ */
+export const CONTINUE_ROLES = { build: 'continue', elevated: 'continue-elevated' } as const;
+export type Handoff = keyof typeof CONTINUE_ROLES;
+/** Continue adds `agent:plan` right after its comment; a later plan start is not the Continue's. */
+export const CONTINUE_WINDOW_MS = 60_000;
+
+/** The operator's comment commands that start a stage, as the label each one stands for. */
+export const STAGE_COMMANDS = {
+  '/plan': STAGE_LABELS.plan,
+  '/approve': STAGE_LABELS.build,
+} as const;
