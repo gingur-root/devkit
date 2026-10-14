@@ -21,9 +21,20 @@ and the `RUNNER` and `PIPELINE_APP_ID` vars.
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
-stage's comment and moves the card to **Needs you**. Fix the cause, then add
+stage's comment and moves the card to **Needs you**. When the agent's CLI said
+why it stopped, the comment names the class (`rate_limit` with its reset time,
+`overloaded`, `server_error`, `timeout` or `unknown`). Fix the cause, then add
 the label again. Every comment that leaves a card in **Needs you** or
 **Ready** mentions @gingur, so the notification arrives then.
+
+## Run records
+
+Each publish job adds its stage's tokens to the run summary, and uploads the
+stage's job directory and output (result, transcript, plan, patch) to the R2
+bucket `gingur-root-runs` under `<repo>/<issue>/<runId>/<stage>/`. The summary
+names that prefix. A stage that repeats carries its round (`review.r1`). The
+WSL desk has no records keys, so its runs keep only the Actions artifacts. A
+failed upload is logged and never stops the stage.
 
 ## The board loop
 

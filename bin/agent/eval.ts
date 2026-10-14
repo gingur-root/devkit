@@ -29,6 +29,7 @@ import {
   PLAN_FILE,
   RESULT_FILE,
   revision,
+  usage,
 } from './job.ts';
 import { passes, repairable, verdict } from './publish.ts';
 import type { Result } from './result.ts';
@@ -101,27 +102,6 @@ function childEnv(): Record<string, string> {
   return Object.fromEntries(
     keys.flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
   );
-}
-
-/** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */
-function usage(events: string): { input: number; output: number } {
-  const total = { input: 0, output: 0 };
-  for (const line of events.split('\n')) {
-    let event: { type?: string; usage?: Record<string, number> };
-    try {
-      event = JSON.parse(line) as typeof event;
-    } catch {
-      continue;
-    }
-    if (event.type !== 'result' || !event.usage) continue;
-    const u = event.usage;
-    total.input +=
-      (u.input_tokens ?? 0) +
-      (u.cache_creation_input_tokens ?? 0) +
-      (u.cache_read_input_tokens ?? 0);
-    total.output += u.output_tokens ?? 0;
-  }
-  return total;
 }
 
 type Stage = { result: Result; out: string } | { stopped: string };

@@ -6,6 +6,7 @@ import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
 import { BASE_ENV, EXECUTOR_ENV, type Executor } from '../constants.ts';
+import type { Failure } from '../result.ts';
 import type { Role } from '../roles.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;
@@ -28,6 +29,10 @@ export interface RunOutput {
   ok: boolean;
   /** The structured result, when a schema was given and the run returned one. */
   result?: unknown;
+  /** Why a run that did not succeed stopped, as far as the CLI said. */
+  failure?: Failure;
+  /** The CLI's own error text, for the comment when the class is `unknown`. */
+  error?: string;
 }
 
 /** Runs one role. */
@@ -67,4 +72,11 @@ export function resolveExecutable(name: Executor, path: string | undefined): str
     }
   }
   throw new Error(`${name} is not on PATH.`);
+}
+
+/** An API error's class from its HTTP status. */
+export function statusFailure(status: number): Failure['class'] {
+  if (status === 429) return 'rate_limit';
+  if (status === 529) return 'overloaded';
+  return status >= 500 ? 'server_error' : 'unknown';
 }

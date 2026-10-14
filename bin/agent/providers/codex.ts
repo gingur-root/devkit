@@ -9,6 +9,7 @@ import {
   CODEX_SUBSCRIPTION_MODE,
   WEB_MCP_SERVERS,
 } from '../constants.ts';
+import type { Failure } from '../result.ts';
 import type { Role } from '../roles.ts';
 import {
   agentEnv,
@@ -96,6 +97,21 @@ export function codexOptions(ctx: {
   };
 }
 
+/**
+ * Codex reports a failure only as text, so this matches its wording.
+ * shortcut: no reset time, since Codex names it only in local-time prose; parse
+ * it if Codex rate limits become common.
+ */
+export function codexFailure(message: string): Failure {
+  const failure = (cls: Failure['class']): Failure => ({ class: cls, resetsAt: null });
+  if (/usage limit|rate limit|too many requests|\b429\b/i.test(message))
+    return failure('rate_limit');
+  if (/overloaded|at capacity|\b5(03|29)\b/i.test(message)) return failure('overloaded');
+  if (/server error|bad gateway|gateway time-?out|status:? 5\d\d/i.test(message))
+    return failure('server_error');
+  return failure('unknown');
+}
+
 export async function runCodex(input: RunInput): Promise<RunOutput> {
   const { role, prompt, emit } = input;
   const { Codex } = await import('@openai/codex-sdk');
@@ -125,27 +141,41 @@ export async function runCodex(input: RunInput): Promise<RunOutput> {
   });
   let ok = false;
   let last = '';
+  let error: string | undefined;
   emit({ type: 'init', config: options.config });
-  for await (const event of events) {
-    if (event.type === 'item.completed') {
-      const { item } = event;
-      if (item.type === 'agent_message') {
-        last = item.text;
-        emit({ type: 'message', text: item.text });
-      } else if (item.type === 'mcp_tool_call')
-        emit({ type: 'tool', name: `${item.server}.${item.tool}` });
-      else if (item.type === 'command_execution')
-        emit({ type: 'tool', name: 'exec', exit: item.exit_code });
-      else if (item.type === 'error') emit({ type: 'error', message: item.message });
-    } else if (event.type === 'turn.completed') {
-      ok = true;
-      emit({ type: 'result', ok, usage: event.usage });
-    } else if (event.type === 'turn.failed') {
-      emit({ type: 'result', ok: false, error: event.error.message });
-    } else if (event.type === 'error') {
-      emit({ type: 'error', message: event.message });
+  try {
+    for await (const event of events) {
+      if (event.type === 'item.completed') {
+        const { item } = event;
+        if (item.type === 'agent_message') {
+          last = item.text;
+          emit({ type: 'message', text: item.text });
+        } else if (item.type === 'mcp_tool_call')
+          emit({ type: 'tool', name: `${item.server}.${item.tool}` });
+        else if (item.type === 'command_execution')
+          emit({ type: 'tool', name: 'exec', exit: item.exit_code });
+        else if (item.type === 'error') emit({ type: 'error', message: item.message });
+      } else if (event.type === 'turn.completed') {
+        ok = true;
+        emit({ type: 'result', ok, usage: event.usage });
+      } else if (event.type === 'turn.failed') {
+        error = event.error.message;
+        emit({ type: 'result', ok: false, error });
+      } else if (event.type === 'error') {
+        error = event.message;
+        emit({ type: 'error', message: error });
+      }
     }
+  } catch (thrown) {
+    // The CLI's exit error carries its stderr, which can name a usage limit.
+    if (signal.aborted) {
+      const timeout = `no result within ${role.timeoutMinutes} minutes`;
+      return { ok: false, failure: { class: 'timeout', resetsAt: null }, error: timeout };
+    }
+    error = thrown instanceof Error ? thrown.message : String(thrown);
+    emit({ type: 'error', message: error });
   }
   // With an output schema, the final message is the result as JSON.
-  return { ok, result: ok && input.schema ? JSON.parse(last) : undefined };
+  if (ok) return { ok, result: input.schema ? JSON.parse(last) : undefined };
+  return { ok, failure: codexFailure(error ?? ''), error };
 }

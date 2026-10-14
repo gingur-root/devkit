@@ -75,3 +75,24 @@ export function revision(...parts: string[]): string {
     .update(parts.map((part) => part.replace(/\r\n/g, '\n')).join('\n'))
     .digest('hex');
 }
+
+/** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */
+export function usage(events: string): { input: number; output: number } {
+  const total = { input: 0, output: 0 };
+  for (const line of events.split('\n')) {
+    let event: { type?: string; usage?: Record<string, number> };
+    try {
+      event = JSON.parse(line) as typeof event;
+    } catch {
+      continue;
+    }
+    if (event.type !== 'result' || !event.usage) continue;
+    const u = event.usage;
+    total.input +=
+      (u.input_tokens ?? 0) +
+      (u.cache_creation_input_tokens ?? 0) +
+      (u.cache_read_input_tokens ?? 0);
+    total.output += u.output_tokens ?? 0;
+  }
+  return total;
+}

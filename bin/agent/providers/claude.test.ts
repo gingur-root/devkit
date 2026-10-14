@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 import { test } from 'vite-plus/test';
 
 import { ROLES } from '../roles.ts';
-import { assertClaudeInit, claudeOptions } from './claude.ts';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+
+import { assertClaudeInit, claudeFailure, claudeOptions } from './claude.ts';
+import { codexFailure } from './codex.ts';
 
 test('Claude init outside the role stops the run', () => {
   const options = claudeOptions(ROLES.hello, {
@@ -39,4 +42,29 @@ test('a web role may load Context7 and nothing else from MCP', () => {
   assert.throws(() =>
     assertClaudeInit({ apiKeySource: 'none', tools: [...tools, 'mcp__neon__run_sql'] }, options),
   );
+});
+
+test("each CLI's failure maps to its class, with a rate limit's reset time when given", () => {
+  const limit = {
+    type: 'rate_limit_event',
+    rate_limit_info: { status: 'rejected', resetsAt: 1_791_950_400 },
+  } as SDKMessage;
+  assert.deepEqual(claudeFailure(limit), {
+    class: 'rate_limit',
+    resetsAt: '2026-10-14T04:00:00.000Z',
+  });
+  const allowed = { ...limit, rate_limit_info: { status: 'allowed_warning' } } as SDKMessage;
+  assert.equal(claudeFailure(allowed), undefined, 'a warning is not a failure');
+  const turns = { type: 'result', subtype: 'error_max_turns' } as SDKMessage;
+  assert.equal(claudeFailure(turns)?.class, 'timeout');
+  const api = { type: 'result', subtype: 'success', is_error: true, api_error_status: 529 };
+  assert.equal(claudeFailure(api as SDKMessage)?.class, 'overloaded');
+
+  assert.equal(
+    codexFailure("You've hit your usage limit. Try again at 3:05 AM.").class,
+    'rate_limit',
+  );
+  assert.equal(codexFailure('unexpected status 503 Service Unavailable').class, 'overloaded');
+  assert.equal(codexFailure('500 Internal Server Error').class, 'server_error');
+  assert.equal(codexFailure('model refused').class, 'unknown');
 });

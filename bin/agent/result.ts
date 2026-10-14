@@ -123,6 +123,7 @@ export const Result = z
   .strict();
 
 export type Result = z.infer<typeof Result>;
+export type Failure = NonNullable<Result['failure']>;
 
 // Without `$schema`: Claude's validator can't resolve the 2020-12 meta-schema URL.
 const { $schema: _, ...schema } = z.toJSONSchema(Result, { unrepresentable: 'any' });
