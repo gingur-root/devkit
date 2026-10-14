@@ -26,10 +26,7 @@ export const ASK_LABELS = {
 const INSTRUCTIONS = readFileSync(new URL('../../agents/coordinator.md', import.meta.url), 'utf8');
 
 // Only repos in the org; the agent picks the name, so it is checked, not trusted.
-const repo = z
-  .string()
-  .regex(REPO_NAME)
-  .describe(`repository name in ${ORG}`);
+const repo = z.string().regex(REPO_NAME).describe(`repository name in ${ORG}`);
 
 export type CoordinatorEvent =
   | { type: 'session'; id: string }
