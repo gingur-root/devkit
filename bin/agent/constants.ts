@@ -69,6 +69,11 @@ export type StubFixture = (typeof STUB_FIXTURES)[number];
 
 /** The operator's GitHub user ID, as in the admission expression. */
 export const OPERATOR_ID = 2553213;
+/** The operator's login, which Needs-you and Ready comments mention so the notification reaches him. */
+export const OPERATOR_LOGIN = 'gingur';
+
+/** The operator's "put it on the board" label, and his consent for the loop to plan the card (devkit#47). */
+export const READY_LABEL = 'ready-for-agent';
 
 export const BOARD_TITLE = 'Pipeline';
 export const STATUS_FIELD = 'Status';
@@ -92,6 +97,7 @@ export const REPAIR_ROUNDS = 2;
 
 /** The pipeline App's bot user, which authors the build's commits. */
 export const PIPELINE_BOT = {
+  id: 340770692,
   name: 'gingur-root-pipeline[bot]',
   email: '340770692+gingur-root-pipeline[bot]@users.noreply.github.com',
 } as const;

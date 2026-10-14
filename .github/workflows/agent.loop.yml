@@ -1,0 +1,88 @@
+name: Loop
+
+# One tick of the board loop (devkit#47, bin/agent/loop.ts). agent.plan.yml and
+# agent.build.yml call this as their last job however the run ended, so a card
+# the run left in Planning or Building goes to Needs you; callers also call it
+# when the operator adds `ready-for-agent`. Then it starts the repo's oldest
+# ready card if no card is planning. Event-driven only: nothing polls.
+# Self-hosted runners only, and never the WSL desk: desk repos are out of the
+# App's reach.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Self-hosted runner label: callers pass vars.RUNNER.'
+        type: string
+        required: true
+      appId:
+        description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
+        type: string
+        required: true
+      devkitRef:
+        description: 'The devkit ref the job runs.'
+        type: string
+        required: false
+        default: 'main'
+      role:
+        description: 'The ending run: `plan` or `build`. Empty on a `ready-for-agent` tick.'
+        type: string
+        required: false
+        default: ''
+      issue:
+        description: 'A manual (workflow_dispatch) run: the issue it ran on. Unset on issue events.'
+        type: string
+        required: false
+        default: ''
+      jobs:
+        description: "The ending run's `toJSON(needs)`."
+        type: string
+        required: false
+        default: '{}'
+    secrets:
+      # Unset on the WSL desk, where the job doesn't run.
+      PIPELINE_SECRETS_TOKEN:
+        required: false
+
+permissions: {}
+
+jobs:
+  tick:
+    name: Tick
+    # always(): a cancelled run still gets its last word.
+    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))) && inputs.runner != 'wsl'
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionIssues: write
+          permissionOrganizationProjects: write
+
+      - name: Tick
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          ROLE: ${{ inputs.role }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          if [ -n "$ROLE" ]; then
+            pnpm agent loop --repo "$REPO" --role "$ROLE" --issue "$ISSUE" --jobs "$JOBS"
+          else
+            pnpm agent loop --repo "$REPO"
+          fi

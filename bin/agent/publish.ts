@@ -11,7 +11,13 @@ import { join } from 'node:path';
 
 import { git } from '../git.ts';
 import { setStatus } from './board.ts';
-import { PIPELINE_BOT, REPAIR_ROUNDS, STAGE_LABELS, type Status } from './constants.ts';
+import {
+  OPERATOR_LOGIN,
+  PIPELINE_BOT,
+  REPAIR_ROUNDS,
+  STAGE_LABELS,
+  type Status,
+} from './constants.ts';
 import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
@@ -127,12 +133,17 @@ function retry(role: string): string {
   return 'reply `/approve`';
 }
 
-function stopped(job: Job, v: { stage: string; reason: string }): string {
+export function stopped(role: string, v: { stage: string; reason: string }): string {
   return [
-    marker(job.role),
-    `**${job.role[0]?.toUpperCase()}${job.role.slice(1)} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then ${retry(job.role)} again.`,
+    marker(role),
+    `**${role[0]?.toUpperCase()}${role.slice(1)} stopped at \`${v.stage}\`:** ${v.reason}.`,
+    `Fix the cause, then ${retry(role)} again.`,
   ].join('\n\n');
+}
+
+/** A comment that leaves the card waiting on the operator mentions him, so he hears of it then. */
+export function mention(body: string): string {
+  return `${body}\n\n@${OPERATOR_LOGIN}`;
 }
 
 function numbered(questions: string[]): string {
@@ -287,7 +298,7 @@ async function publishReview(job: Job, v: Verdict, round: number): Promise<Outco
       v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
     else return postReview(job, v.result, pull, round);
   }
-  return { body: stopped(job, v), status: 'Needs you', stopped: true };
+  return { body: stopped(job.role, v), status: 'Needs you', stopped: true };
 }
 
 /** A review Codex may answer: changes requested, findings to fix, nothing for the operator to decide. */
@@ -368,7 +379,7 @@ async function publishBuildOrPlan(
   }
   // A repair's card stays in Building until its review lands.
   const status = !pull ? 'Needs you' : job.role === 'repair' ? 'Building' : 'Ready';
-  if ('stage' in v) return { body: stopped(job, v), status, stopped: true };
+  if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
     job.role === 'plan' ? planComment(job, v.result, out) : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
@@ -408,7 +419,9 @@ export async function publish(options: PublishOptions): Promise<void> {
       ? await publishReview(job, v, options.round ?? 0)
       : await publishBuildOrPlan(job, v, options.out, options.checkout);
 
-  await upsertStageComment(job.repo, job.issue.number, job.role, body);
+  // A build's Ready is brief: its own review follows in the same run and has the last word.
+  const waiting = status === 'Needs you' || (status === 'Ready' && job.role !== 'build');
+  await upsertStageComment(job.repo, job.issue.number, job.role, waiting ? mention(body) : body);
   // A review after the build has no label left to remove.
   await removeLabel(
     job.repo,

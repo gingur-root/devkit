@@ -2,7 +2,8 @@
 
 How to take an issue from idea to merged PR with the agents. Only Troy can
 start a stage: every job checks the actor, so labels or comments from anyone
-else do nothing.
+else do nothing. The one exception is the board loop below, which as the
+pipeline App may add `agent:plan` and nothing else.
 
 A repo is enrolled when it has a thin `agents.yml` caller (see
 [scratch's](https://github.com/gingur-root/scratch/blob/main/.github/workflows/agents.yml))
@@ -13,14 +14,36 @@ and the `RUNNER` and `PIPELINE_APP_ID` vars.
 | Step               | You do                                                                                                   | The pipeline does                                                                                      | Board card       |
 | ------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------- |
 | 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board. | The board adds the card.                                                                               | Ask              |
-| 2. Plan            | Add `agent:plan`, or comment `/plan`.                                                                    | Writes one plan comment, removes the label.                                                            | Planning         |
+| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.               | Writes one plan comment, removes the label.                                                            | Planning         |
 | 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.             | Rewrites the same plan comment.                                                                        | Needs you        |
 | 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval.           | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                     | Building → Ready |
 | 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.    | In the same run, Claude reviews the PR; Codex fixes findings, up to 2 rounds; then ready or Needs you. | Ready → Done     |
 
-Anything that stops a run (a failed check, a missing result, a push error)
-posts **"… stopped at `<stage>`"** on the stage's comment and moves the card
-to **Needs you**. Fix the cause, then add the label again.
+Anything that stops a run (a failed check, a missing result, a push error, a
+cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
+stage's comment and moves the card to **Needs you**. Fix the cause, then add
+the label again. Every comment that leaves a card in **Needs you** or
+**Ready** mentions @gingur, so the notification arrives then.
+
+## The board loop
+
+`pnpm agent loop` (`bin/agent/loop.ts`, devkit#47) keeps cards moving with no
+polling. It runs as the last job of every plan and build run, however the run
+ended, and when Troy adds `ready-for-agent`. Each tick on a repo:
+
+1. If the run left its card in **Planning** or **Building** (it was cancelled,
+   or died before it published), it says where it stopped and moves the card to
+   **Needs you**.
+2. If no card in the repo is planning, it adds `agent:plan` to the oldest open
+   `ready-for-agent` card in **Ask**, but only if Troy added that label.
+
+Each decision, including what it skipped, goes in the job summary. It never
+touches a card in **Needs you**, **Ready** or **Done**, and never runs on the
+WSL desk. `--dry-run` prints the decisions without acting.
+
+An enrolled repo's caller runs `agent.loop.yml` on `ready-for-agent` (see
+scratch's). If the VPS is down for more than 24 hours, the loop's own job
+expires in GitHub's queue and a card can sit until the repo's next event.
 
 ## Review and merge stage
 

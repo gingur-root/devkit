@@ -8,11 +8,13 @@ import { test } from 'node:test';
 import { parse } from 'yaml';
 
 const ADMISSION =
-  "github.repository_owner_id == '340382989' && github.actor_id == '2553213' && github.run_attempt == '1' && " +
-  "(github.event_name == 'workflow_dispatch' || " +
-  '(github.event_name == \'issues\' && github.event.action == \'labeled\' && contains(fromJSON(\'["agent:plan","agent:build","agent:research","agent:elevated"]\'), github.event.label.name)) || ' +
+  "github.repository_owner_id == '340382989' && github.run_attempt == '1' && " +
+  "((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || " +
+  '(github.event_name == \'issues\' && github.event.action == \'labeled\' && contains(fromJSON(\'["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]\'), github.event.label.name)) || ' +
   "(github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || " +
-  "startsWith(github.event.comment.body, '/approve'))))";
+  "startsWith(github.event.comment.body, '/approve'))))) || " +
+  // The pipeline App's bot may start a plan and nothing else: the board loop's one power (devkit#47).
+  "(github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent:plan'))";
 
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);
