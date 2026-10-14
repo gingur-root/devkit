@@ -302,7 +302,7 @@ jobs:
           base=$(node -p 'require(process.argv[1]).base' "$job")
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role repair --source "$candidate" \
             --base "$base" --app-id "$APP_ID" --out "$RUNNER_TEMP/repair/in"
-          cp "$RUNNER_TEMP/review/out/result.json" "$RUNNER_TEMP/repair/in/review.json"
+          cp "$RUNNER_TEMP/review/out/review.json" "$RUNNER_TEMP/repair/in/review.json"
           echo "candidate=$candidate" >>"$GITHUB_OUTPUT"
           echo "artifact=repair-$((ROUND + 1))-in" >>"$GITHUB_OUTPUT"
 

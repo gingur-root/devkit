@@ -31,6 +31,7 @@ import {
   PLAN_START,
   type PlanContract,
   RESULT_FILE,
+  REVIEW_FILE,
   revision,
   TRANSCRIPT_FILE,
   usage,
@@ -326,8 +327,8 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
       v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
     else {
       const result = gated(v.result, job.candidate, options.verified ?? '');
-      // The next round's repair reads this file, so it sees the CI finding too.
-      writeFileSync(join(options.out, RESULT_FILE), JSON.stringify(result, null, 2));
+      // The next round's repair answers this, CI's finding included; result.json stays the reviewer's own.
+      writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
       return postReview(job, result, pull, options.round ?? 0);
     }
   }
