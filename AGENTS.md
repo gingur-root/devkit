@@ -175,9 +175,10 @@ top-level `&&` with `(<admission>)` as one operand, e.g.
 
 ### Toolchain
 
-Runtime and package-manager versions live in the consumer repo (`.nvmrc`,
-`.bun-version`, `package.json` `packageManager`/`devEngines`) and are shared by
-local development and CI. `actions/toolchain.setup` installs them with proto.
+Versions live in the consumer repo, where Vite+ reads them: Node.js in
+`.node-version`, the package manager in `package.json` `packageManager`.
+`actions/toolchain.setup` installs both with `voidzero-dev/setup-vp`, and a
+dev machine running the global `vp` CLI picks the same ones.
 
 ### Reusable workflows
 
