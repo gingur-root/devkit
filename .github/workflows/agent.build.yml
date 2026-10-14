@@ -284,6 +284,7 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      issue: ${{ inputs.issue }}
       jobs: ${{ toJSON(needs) }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
