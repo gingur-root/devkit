@@ -12,7 +12,7 @@ import { rest } from '../agent/github.ts';
 import { assertClaudeInit } from '../agent/providers/claude.ts';
 import { agentEnv, resolveExecutable } from '../agent/providers/shared.ts';
 import { refreshGhToken } from './app-token.ts';
-import { ORG } from './constants.ts';
+import { ORG, REPO_NAME } from './constants.ts';
 
 export const ASK_MODES = ['queue', 'start'] as const;
 export type AskMode = (typeof ASK_MODES)[number];
@@ -26,10 +26,7 @@ export const ASK_LABELS = {
 const INSTRUCTIONS = readFileSync(new URL('../../agents/coordinator.md', import.meta.url), 'utf8');
 
 // Only repos in the org; the agent picks the name, so it is checked, not trusted.
-const repo = z
-  .string()
-  .regex(/^[A-Za-z0-9._-]+$/)
-  .describe(`repository name in ${ORG}`);
+const repo = z.string().regex(REPO_NAME).describe(`repository name in ${ORG}`);
 
 export type CoordinatorEvent =
   | { type: 'session'; id: string }

@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 import { type FetchKeys, verifyAccessToken } from './access.ts';
-import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN } from './constants.ts';
+import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, REPO_NAME } from './constants.ts';
+import { createStore, HOME_THREAD, threadKey } from './store.ts';
 
 const PAGE = readFileSync(new URL('./page.html', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -16,7 +17,17 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return JSON.parse(body) as Record<string, unknown>;
 }
 
-export function createDashboard(aud: string, keys: FetchKeys): Server {
+/** A repo and issue number from a request, or undefined for the home thread. */
+function issueRef(repo: unknown, number: unknown) {
+  if (repo === undefined || repo === null || repo === '') return undefined;
+  const n = Number(number);
+  if (typeof repo !== 'string' || !REPO_NAME.test(repo) || !Number.isInteger(n) || n < 1) {
+    throw new Error('Bad repo or issue number.');
+  }
+  return { repo, number: n };
+}
+
+export function createDashboard(aud: string, keys: FetchKeys, store = createStore()): Server {
   return createServer(async (req, res) => {
     const header = req.headers[ACCESS_JWT_HEADER];
     const email = await verifyAccessToken(
@@ -28,6 +39,7 @@ export function createDashboard(aud: string, keys: FetchKeys): Server {
       res.writeHead(403, { 'content-type': 'text/plain' }).end('Forbidden\n');
       return;
     }
+    const url = new URL(req.url ?? '/', 'http://localhost');
     try {
       if (req.method === 'GET' && req.url === '/') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(PAGE);
@@ -45,17 +57,23 @@ export function createDashboard(aud: string, keys: FetchKeys): Server {
         const { startPlan } = await import('./coordinator.ts');
         await startPlan(String(repo), Number(number));
         res.writeHead(204).end();
+      } else if (req.method === 'GET' && url.pathname === '/api/thread') {
+        const ref = issueRef(url.searchParams.get('repo'), url.searchParams.get('number'));
+        const key = ref ? threadKey(ref.repo, ref.number) : HOME_THREAD;
+        const { lines } = await store.get(key);
+        const issue = ref
+          ? await (await import('./issue.ts')).readThread(ref.repo, ref.number)
+          : null;
+        res
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ issue, lines }));
       } else if (req.method === 'POST' && req.url === '/api/chat') {
-        const { prompt, session } = await readJson(req);
+        const { prompt, repo, number } = await readJson(req);
         if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('A prompt is required.');
-        const { coordinate } = await import('./coordinator.ts');
+        const { chatTurn } = await import('./chat.ts');
+        const turn = chatTurn(store, prompt, issueRef(repo, number));
         res.writeHead(200, { 'content-type': 'application/x-ndjson' });
-        for await (const event of coordinate(
-          prompt,
-          typeof session === 'string' ? session : undefined,
-        )) {
-          res.write(`${JSON.stringify(event)}\n`);
-        }
+        for await (const event of turn) res.write(`${JSON.stringify(event)}\n`);
         res.end();
       } else {
         res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found\n');
