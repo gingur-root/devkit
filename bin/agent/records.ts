@@ -35,7 +35,7 @@ function encodeKey(key: string): string {
 }
 
 /** A SigV4-signed path-style PUT; R2's region is always `auto`. */
-export function signedPut(
+function signedPut(
   config: RecordsConfig,
   key: string,
   body: Buffer,
