@@ -28,16 +28,16 @@ importers:
         specifier: 0.162.1
         version: 0.162.1
       '@streamdown/cjk':
-        specifier: ^1.0.4
+        specifier: 1.0.4
         version: 1.0.4(@types/mdast@4.0.4)(micromark-util-types@2.0.3)(micromark@4.0.3)(react@19.3.0)(unified@11.0.5)
       '@streamdown/code':
-        specifier: ^2.0.0
+        specifier: 2.0.0
         version: 2.0.0(react@19.3.0)
       '@streamdown/math':
-        specifier: ^1.0.3
+        specifier: 1.0.3
         version: 1.0.3(react@19.3.0)
       '@streamdown/mermaid':
-        specifier: ^1.0.3
+        specifier: 1.0.3
         version: 1.0.3(react@19.3.0)
       '@tailwindcss/vite':
         specifier: ^4.3.3
