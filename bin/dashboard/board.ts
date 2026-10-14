@@ -5,7 +5,7 @@ import { graphql } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
 import { ORG } from './constants.ts';
 
-export interface BoardIssue {
+interface BoardIssue {
   open: boolean;
   /** Null when the issue is not on the board; the loop treats that as Ask. */
   status: Status | null;
@@ -105,6 +105,7 @@ export async function board() {
                           name
                         }
                       }
+                      # shortcut: 50 subtasks per story (devkit#1 has 26); page them when a story holds more.
                       subIssues(first: 50) {
                         nodes {
                           ${ISSUE}

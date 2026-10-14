@@ -207,6 +207,7 @@ function Board({ version }: { version: number }) {
   const [cards, setCards] = useState<BoardCard[] | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
+    setFailed(false);
     fetch('/api/board')
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
