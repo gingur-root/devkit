@@ -8,7 +8,7 @@ gingur-root/devkit#1.
 
 | Piece                                                        | Use                                                                                                     |
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `actions/toolchain.setup`                                    | Install the repo's declared runtimes with proto, then `pnpm install`.                                   |
+| `actions/toolchain.setup`                                    | Install Vite+, the repo's Node.js and package manager, then its dependencies.                           |
 | `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                                                   |
 | `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).                                                |
 | `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                                        |
