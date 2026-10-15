@@ -42,3 +42,5 @@ runs:
       with:
         name: ${{ inputs.name }}
         path: ${{ runner.temp }}/repo.tgz
+        # Only this run reads it; a long-lived copy would expose the target's code to readers of the caller repo.
+        retention-days: 1
