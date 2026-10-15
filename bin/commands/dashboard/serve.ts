@@ -1,19 +1,23 @@
 import { fileURLToPath } from 'node:url';
 
 import type { ParsedCommand } from '../../command.ts';
-import { DASHBOARD_PORT } from '../../dashboard/constants.ts';
+import { DASHBOARD_PORT, HOOKS_PORT } from '../../dashboard/constants.ts';
 
 interface ServeOptions {
   port: number;
+  hooksPort: number;
 }
 
 export default {
   kind: 'parsed',
-  describe: 'Serve the dashboard on localhost, behind Cloudflare Access (DASHBOARD_ACCESS_AUD)',
+  describe:
+    'Serve the dashboard on localhost, behind Cloudflare Access (DASHBOARD_ACCESS_AUD), and the org webhook receiver that feeds it (WEBHOOK_SECRET)',
   configure(command) {
-    command.option('--port <port>', 'port on localhost', Number, DASHBOARD_PORT);
+    command
+      .option('--port <port>', 'port on localhost', Number, DASHBOARD_PORT)
+      .option('--hooks-port <port>', 'webhook receiver port on localhost', Number, HOOKS_PORT);
   },
-  async run({ port }) {
+  async run({ port, hooksPort }) {
     const aud = process.env.DASHBOARD_ACCESS_AUD;
     if (!aud) throw new Error('DASHBOARD_ACCESS_AUD is not set.');
     const { createDashboard, WEB_DIST } = await import('../../dashboard/server.ts');
@@ -30,8 +34,18 @@ export default {
       logLevel: 'error',
     });
     const { fetchAccessKeys } = await import('../../dashboard/access.ts');
-    // Only cloudflared reaches it from outside, so it listens on loopback only.
-    createDashboard(aud, fetchAccessKeys).listen(port, '127.0.0.1');
+    const secret = process.env.WEBHOOK_SECRET;
+    if (!secret) throw new Error('WEBHOOK_SECRET is not set.');
+    const { webhookBoard } = await import('../../dashboard/events.ts');
+    const { createReceiver } = await import('../../webhooks/receiver.ts');
+    const board = webhookBoard();
+    createReceiver(secret, [board.handle]).listen(hooksPort, '127.0.0.1');
+    console.log(`Webhook receiver on http://127.0.0.1:${hooksPort}`);
+    // Only cloudflared reaches them from outside, so both listen on loopback only.
+    createDashboard(aud, fetchAccessKeys, undefined, undefined, board.source).listen(
+      port,
+      '127.0.0.1',
+    );
     console.log(`Dashboard on http://127.0.0.1:${port}`);
   },
 } satisfies ParsedCommand<ServeOptions>;

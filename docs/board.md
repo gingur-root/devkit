@@ -99,3 +99,24 @@ Troy's own labels and commands work as before, with no Continue needed.
 - Only Troy, through Cloudflare Access, sees or presses buttons.
 - **Stop** finds the run by the issue's title, since an issue event's run is
   named after it. It needs the App's Actions permission (read and write).
+
+## Live updates
+
+The page listens on `/api/events` and refetches when a card or the board
+changes. The org webhook (devkit#118) is the only source. GitHub posts every
+gingur-root event to `hooks.gingur.com/github`, which cloudflared sends to the
+receiver on `127.0.0.1:3001` (`bin/webhooks/receiver.ts`). The receiver
+refuses an unsigned post unread, caps the body at 1 MB, checks the
+`X-Hub-Signature-256` HMAC against `WEBHOOK_SECRET`, drops a delivery ID it
+has already seen, answers 202, then hands the event to each handler. An issue
+or comment event names its card; a project item or sub-issue event names the
+board.
+
+`dashboard serve` refuses to start without `WEBHOOK_SECRET`. There is no
+poller: GitHub does not retry a failed delivery, so a change missed while the
+box was down shows on the next reload.
+
+The receiver has no Access app in front of it, so the signature is its only
+gate, and it listens on its own port so no dashboard route is reachable
+through it. Dedupe lives in memory and forgets on restart; a handler that
+starts runs needs a durable store first.

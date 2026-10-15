@@ -1,93 +1,22 @@
-// A missed change leaves the page stale with no error, and a poll that never
-// stops or overlaps burns the GitHub rate limit quietly.
+// A delivery mapped to the wrong event leaves the page stale with no error.
 import assert from 'node:assert/strict';
-import { afterEach, beforeEach, test, vi } from 'vite-plus/test';
+import { test } from 'vite-plus/test';
 
-import type { Status } from '../agent/constants.ts';
 import { BOARD_EVENT } from './constants.ts';
-import { diffBoard, POLL_MS, pollBoard, snapshot } from './events.ts';
+import { webhookBoard } from './events.ts';
 
-const card = (number: number, updatedAt = 't1', column: Status = 'Ask') => ({
-  repo: 'devkit',
-  number,
-  updatedAt,
-  column,
-});
-
-test('a changed card, a new or removed card, and nothing when nothing changed', () => {
-  const before = snapshot([card(1), card(2)]);
-  assert.deepEqual(diffBoard(before, snapshot([card(1), card(2)])), []);
-  assert.deepEqual(diffBoard(before, snapshot([card(1, 't2'), card(2)])), [
-    { type: BOARD_EVENT.cardChanged, repo: 'devkit', number: 1 },
-  ]);
-  assert.deepEqual(diffBoard(before, snapshot([card(1), card(2, 't1', 'Ready')])), [
-    { type: BOARD_EVENT.cardChanged, repo: 'devkit', number: 2 },
-  ]);
-  assert.deepEqual(diffBoard(before, snapshot([card(1)])), [{ type: BOARD_EVENT.boardChanged }]);
-  assert.deepEqual(diffBoard(before, snapshot([card(1), card(2), card(3)])), [
-    { type: BOARD_EVENT.boardChanged },
-  ]);
-  // Same count, different cards.
-  assert.deepEqual(diffBoard(before, snapshot([card(1), card(3)])), [
-    { type: BOARD_EVENT.boardChanged },
-  ]);
-});
-
-beforeEach(() => {
-  vi.useFakeTimers();
-});
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-test('polls only while someone listens, and emits what changed', async () => {
-  let updatedAt = 't1';
-  const read = vi.fn(async () => [card(1, updatedAt)]);
-  const source = pollBoard(read);
-  await vi.advanceTimersByTimeAsync(POLL_MS * 3);
-  assert.equal(read.mock.calls.length, 0);
-
-  const heard: unknown[] = [];
-  const stopA = source.subscribe((e) => heard.push(e));
-  const stopB = source.subscribe(() => {});
-  await vi.advanceTimersByTimeAsync(0);
-  assert.equal(read.mock.calls.length, 1);
-  updatedAt = 't2';
-  await vi.advanceTimersByTimeAsync(POLL_MS);
-  assert.equal(read.mock.calls.length, 2);
-  assert.deepEqual(heard, [{ type: BOARD_EVENT.cardChanged, repo: 'devkit', number: 1 }]);
-
-  stopA();
-  await vi.advanceTimersByTimeAsync(POLL_MS);
-  assert.equal(read.mock.calls.length, 3);
-  stopB();
-  await vi.advanceTimersByTimeAsync(POLL_MS * 3);
-  assert.equal(read.mock.calls.length, 3);
-});
-
-test('never starts a read while one is running, nor after the last listener left', async () => {
-  let inFlight = 0;
-  let most = 0;
-  let finish = () => {};
-  const read = vi.fn(async () => {
-    most = Math.max(most, ++inFlight);
-    await new Promise<void>((resolve) => (finish = resolve));
-    inFlight--;
-    return [card(1)];
-  });
-  const source = pollBoard(read);
-  // Leave and come back while the first read hangs.
-  source.subscribe(() => {})();
-  const stop = source.subscribe(() => {});
-  await vi.advanceTimersByTimeAsync(POLL_MS * 3);
-  assert.equal(read.mock.calls.length, 1);
-  finish();
-  await vi.advanceTimersByTimeAsync(POLL_MS);
-  assert.equal(read.mock.calls.length, 2);
-  // The last listener leaves mid-read: that read must not schedule another.
-  stop();
-  finish();
-  await vi.advanceTimersByTimeAsync(POLL_MS * 3);
-  assert.equal(read.mock.calls.length, 2);
-  assert.equal(most, 1);
+test('a webhook delivery names its card or the board, and reaches only current listeners', () => {
+  const { source, handle } = webhookBoard();
+  const seen: unknown[] = [];
+  const unsubscribe = source.subscribe((event) => seen.push(event));
+  const issue = { repository: { name: 'scratch' }, issue: { number: 4 } };
+  handle({ id: '1', event: 'issues', payload: { action: 'labeled', ...issue } });
+  handle({ id: '2', event: 'issue_comment', payload: { action: 'created', ...issue } });
+  handle({ id: '3', event: 'projects_v2_item', payload: { action: 'edited' } });
+  handle({ id: '4', event: 'workflow_run', payload: { action: 'completed' } });
+  const card = { type: BOARD_EVENT.cardChanged, repo: 'scratch', number: 4 };
+  assert.deepEqual(seen, [card, card, { type: BOARD_EVENT.boardChanged }]);
+  unsubscribe();
+  handle({ id: '5', event: 'issues', payload: issue });
+  assert.equal(seen.length, 3);
 });

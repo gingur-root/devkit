@@ -1,6 +1,8 @@
 // Live updates (devkit#100): a source tells the page which card or the board
-// changed. Polling stands in until a webhook source emits the same events.
-import type { BoardCard } from './board.ts';
+// changed. The org webhook (devkit#118) is the only source: a delivery that
+// fails is lost, which the alpha accepts.
+import { GITHUB_EVENT } from '../webhooks/constants.ts';
+import type { Delivery, WebhookHandler } from '../webhooks/receiver.ts';
 import { BOARD_EVENT } from './constants.ts';
 
 export type BoardEvent =
@@ -12,13 +14,8 @@ export interface BoardEventSource {
   subscribe(listener: BoardEventListener): () => void;
 }
 
-export const POLL_MS = 30_000;
-
-/**
- * The in-process fan-out every source shares: `onFirst` runs when the first
- * listener arrives and `onLast` when the last one leaves.
- */
-export function createHub(onFirst: () => void, onLast: () => void) {
+/** The in-process fan-out from the receiver to each open page. */
+export function createHub() {
   const listeners = new Set<BoardEventListener>();
   return {
     get size() {
@@ -29,70 +26,32 @@ export function createHub(onFirst: () => void, onLast: () => void) {
     },
     subscribe(listener: BoardEventListener) {
       listeners.add(listener);
-      if (listeners.size === 1) onFirst();
-      return () => {
-        if (listeners.delete(listener) && listeners.size === 0) onLast();
-      };
+      return () => void listeners.delete(listener);
     },
   };
 }
 
-type Snapshot = Map<string, string>;
-
-/** Each card's version: a new `updatedAt` or a new column both count as a change. */
-export function snapshot(cards: Pick<BoardCard, 'repo' | 'number' | 'updatedAt' | 'column'>[]) {
-  return new Map(cards.map((c) => [`${c.repo}#${c.number}`, `${c.updatedAt} ${c.column}`]));
+interface IssuePayload {
+  repository?: { name?: string };
+  issue?: { number?: number };
 }
 
-/** What changed between two reads: each changed card, and the board once if cards came or went. */
-export function diffBoard(before: Snapshot, after: Snapshot): BoardEvent[] {
-  const events: BoardEvent[] = [];
-  let moved = before.size !== after.size;
-  for (const [key, version] of after) {
-    const was = before.get(key);
-    if (was === undefined) moved = true;
-    else if (was !== version) {
-      const [repo, number] = key.split('#');
-      events.push({ type: BOARD_EVENT.cardChanged, repo: repo!, number: Number(number) });
-    }
+/** What a delivery means for the board: an issue or its comments name its card; project and sub-issue changes, the board. */
+export function deliveryEvents({ event, payload }: Delivery): BoardEvent[] {
+  if (event === GITHUB_EVENT.projectItem || event === GITHUB_EVENT.subIssues) {
+    return [{ type: BOARD_EVENT.boardChanged }];
   }
-  if (moved) events.push({ type: BOARD_EVENT.boardChanged });
-  return events;
+  if (event !== GITHUB_EVENT.issues && event !== GITHUB_EVENT.issueComment) return [];
+  const { repository, issue } = payload as IssuePayload;
+  if (!repository?.name || !issue?.number) return [];
+  return [{ type: BOARD_EVENT.cardChanged, repo: repository.name, number: issue.number }];
 }
 
-/** Reads the board every `ms` while anyone listens, one read at a time. */
-export function pollBoard(
-  read: () => Promise<Parameters<typeof snapshot>[0]> = async () =>
-    (await import('./board.ts')).board(),
-  ms = POLL_MS,
-): BoardEventSource {
-  let last: Snapshot | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let reading = false;
-  const tick = async () => {
-    timer = undefined;
-    reading = true;
-    try {
-      const next = snapshot(await read());
-      if (last) for (const event of diffBoard(last, next)) hub.emit(event);
-      last = next;
-    } catch (error) {
-      console.error('Board poll failed:', error instanceof Error ? error.message : error);
-    } finally {
-      reading = false;
-      // The next read is scheduled only after this one ends, so reads never overlap.
-      if (hub.size) timer = setTimeout(tick, ms);
-    }
+/** A source fed by the webhook receiver: `handle` is the receiver's handler. */
+export function webhookBoard(): { source: BoardEventSource; handle: WebhookHandler } {
+  const hub = createHub();
+  return {
+    source: { subscribe: hub.subscribe },
+    handle: (delivery) => deliveryEvents(delivery).forEach(hub.emit),
   };
-  const hub = createHub(
-    () => {
-      // A read still running from before reschedules itself now that someone listens.
-      if (!reading) void tick();
-    },
-    () => {
-      clearTimeout(timer);
-      timer = undefined;
-    },
-  );
-  return { subscribe: hub.subscribe };
 }

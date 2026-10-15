@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { type FetchKeys, verifyAccessToken } from './access.ts';
 import type { MergeHook } from './actions.ts';
 import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, REPO_NAME } from './constants.ts';
-import { type BoardEventSource, pollBoard } from './events.ts';
+import type { BoardEventSource } from './events.ts';
 import { createStore, HOME_THREAD, threadKey } from './store.ts';
 import type { DashboardMessage } from './stream.ts';
 
@@ -40,7 +40,7 @@ export function createDashboard(
   keys: FetchKeys,
   store = createStore(),
   web: URL = WEB_DIST,
-  events: BoardEventSource = pollBoard(),
+  events: BoardEventSource,
   /** Unset until Troy's merge token exists: Merge then answers 501. */
   merge?: MergeHook,
 ): Server {
