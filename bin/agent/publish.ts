@@ -499,7 +499,7 @@ export function retroText(result: Result, runUrl: string, source: number): strin
  * triages them (devkit#115). A retro with no findings, or one on a retro issue,
  * only comments, so retros can't loop. A failed retro posts nothing.
  */
-async function publishRetro(job: Job, issue: Issue, result: Result): Promise<void> {
+export async function publishRetro(job: Job, issue: Issue, result: Result): Promise<void> {
   const runUrl = `${process.env.GITHUB_SERVER_URL}/${job.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
   const text = retroText(result, runUrl, issue.number);
   const comments = `/repos/${job.repo}/issues/${issue.number}/comments`;

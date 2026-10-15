@@ -5,13 +5,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'vite-plus/test';
+import { test, vi } from 'vite-plus/test';
 
 import {
   commitMessage,
   failureReason,
   gated,
   passes,
+  publishRetro,
   readyToBuild,
   repairable,
   stopped,
@@ -142,4 +143,37 @@ test("only a retro issue's plan triages, and its ready plan must", () => {
     'result' in check(retro, { ...plan, outcome: 'needs-input', questions: ['Q?'] }),
     'a retro plan may still ask first',
   );
+});
+
+test('a retro files one issue to plan, but only comments on a retro issue or with no findings', async () => {
+  const retro = Result.parse(
+    JSON.parse(readFileSync(new URL('fixtures/retro.ready.json', import.meta.url), 'utf8')),
+  );
+  const job = { repo: 'o/r', issue: { number: 1, title: 'T', revision: '' } } as Job;
+  const issue = { number: 1, html_url: '', node_id: '', title: 'T', body: '', labels: [] };
+  const writes: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    writes.push(`${init.method} ${new URL(url).pathname} ${String(init.body)}`);
+    return new Response(JSON.stringify({ number: 9 }), { status: 200 });
+  });
+  try {
+    await publishRetro(job, issue, retro);
+    assert.equal(writes.length, 3);
+    assert.match(writes[0]!, /^POST \/repos\/o\/r\/issues .*"labels":\["retro"\]/);
+    assert.match(writes[1]!, /^POST \/repos\/o\/r\/issues\/9\/labels .*agent:plan/);
+    assert.match(writes[2]!, /^POST \/repos\/o\/r\/issues\/1\/comments .*#9/);
+    for (const [why, i, r] of [
+      ['on a retro issue', { ...issue, labels: [{ name: 'retro' }] }, retro],
+      ['no findings', issue, { ...retro, followups: [] }],
+    ] as [string, typeof issue, Result][]) {
+      writes.length = 0;
+      await publishRetro(job, i, r);
+      assert.equal(writes.length, 1, why);
+      assert.match(writes[0]!, /^POST \/repos\/o\/r\/issues\/1\/comments /, why);
+    }
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
 });
