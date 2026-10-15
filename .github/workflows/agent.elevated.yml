@@ -105,7 +105,7 @@ jobs:
           name: agent-in
           path: ${{ runner.temp }}/agent/in
 
-      - uses: gingur-root/devkit/actions/repo.pack@feat/pipeline-target-repo
+      - uses: gingur-root/devkit/actions/repo.pack@main
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.render.outputs.source }}
@@ -121,7 +121,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@feat/pipeline-target-repo
+      - uses: gingur-root/devkit/actions/agent.run@main
         with:
           role: elevated
           source: ${{ needs.start.outputs.source }}

@@ -120,7 +120,7 @@ jobs:
           name: retro-in
           path: ${{ runner.temp }}/agent/in
 
-      - uses: gingur-root/devkit/actions/repo.pack@feat/pipeline-target-repo
+      - uses: gingur-root/devkit/actions/repo.pack@main
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ inputs.source || github.sha }}
@@ -134,7 +134,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@feat/pipeline-target-repo
+      - uses: gingur-root/devkit/actions/agent.run@main
         with:
           role: retro
           prefix: retro
