@@ -204,6 +204,7 @@ proof, then pin it back.
   couldn't deliver (the box was down, or the receiver failed). Add the label
   again, or redeliver it from the org webhook's Recent Deliveries. The
   receiver remembers delivery IDs, so a redelivery that already ran starts
-  nothing.
+  nothing. A delivery whose handler failed is forgotten, and its dispatch may
+  still have gone through, so check the issue's runs before redelivering it.
 - **One run per card at a time.** A second label while one runs waits in the
   queue.

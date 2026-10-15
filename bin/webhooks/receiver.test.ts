@@ -2,7 +2,7 @@
 // must never reach a handler, and a redelivery must not run handlers twice.
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -81,4 +81,12 @@ test('a dedupe file survives a restart, so a redelivery after it starts nothing'
   assert.equal(restarted.fresh('d2'), true);
   restarted.forget('d2');
   assert.equal(createDedupe(file).fresh('d2'), true);
+});
+
+test('a dedupe file that cannot be written does not throw', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dedupe-')), 'deliveries.json');
+  mkdirSync(`${file}.tmp`); // writing the temp file now fails with EISDIR
+  const { fresh } = createDedupe(file);
+  assert.equal(fresh('d1'), true);
+  assert.equal(fresh('d1'), false);
 });

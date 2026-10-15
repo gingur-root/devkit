@@ -42,8 +42,13 @@ export function createDedupe(file?: string, max = SEEN_MAX) {
   // Renamed into place, so a crash mid-write never leaves a file that fails to parse.
   const save = () => {
     if (!file) return;
-    writeFileSync(`${file}.tmp`, JSON.stringify([...seen]));
-    renameSync(`${file}.tmp`, file);
+    // A failed write costs one id's durability; throwing here would kill the dashboard.
+    try {
+      writeFileSync(`${file}.tmp`, JSON.stringify([...seen]));
+      renameSync(`${file}.tmp`, file);
+    } catch (error) {
+      console.error('webhooks: could not save delivery ids', error);
+    }
   };
   return {
     fresh(id: string) {
