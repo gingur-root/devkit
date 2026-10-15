@@ -91,16 +91,30 @@ merges.
 When a plan or build run fails, or a review leaves the card in **Needs you**,
 the same run ends with a retro (`agent.retro.yml`). Claude reads the issue
 thread, the card's history, each job's result and each agent's transcript,
-then posts one **Retro** comment: what went wrong and the fix it suggests for
-each finding (a check, a doc, a persona prompt, a setting).
+and lists what went wrong with the fix for each finding (a check, a doc, a
+persona prompt, a setting). Every finding then goes through plan, so a fix
+lands instead of sitting in a comment (devkit#115):
 
-- It only suggests. It changes no label, card, branch or PR. To act on a
-  fix, open an issue for it and run it through plan and build as usual.
+1. The retro files all its findings as one new issue, labelled `retro`, and
+   adds `agent:plan`. The run's issue gets a comment linking it.
+2. The planner triages each finding: a new issue, a note on an open issue
+   that already covers it, or dropped with a reason. For each new issue it
+   says whether to plan it now or leave it in the backlog, and whether it
+   needs the WSL desk.
+3. Approve the plan as usual (`/approve`, or **Continue**). Instead of a
+   build, the run files the new issues with `retro` (plus `agent:plan` or
+   `needs:elevated` as the plan said), comments on linked issues, and closes
+   the retro issue. No PR.
+
+- A retro with no findings (an outage, a rate limit) only comments, as does
+  a retro on a run of a retro issue, so retros can't loop.
 - One retro per run. A plan that asks you questions gets none, since that is
   the normal flow.
 - It can't read the Actions log, so a job that died before its agent wrote
   anything shows up only as `failure`; the retro names the step to check.
 - Elevated runs get no retro yet.
+- A stub proof run that reaches a retro files a real retro issue, which starts
+  a real plan. Close it if you don't want that.
 
 ## Elevated runs (the WSL desk)
 

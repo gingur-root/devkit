@@ -6,7 +6,7 @@ import { test, vi } from 'vite-plus/test';
 
 import { OPERATOR_ID } from './constants.ts';
 import { CONTRACT_PREFIX, marker, PLAN_END, PLAN_START, revision } from './job.ts';
-import { approvedPlan, render } from './render.ts';
+import { approvedPlan, openIssues, render } from './render.ts';
 
 const APP = 7;
 const ISSUE = revision('Title', 'Body');
@@ -32,6 +32,7 @@ function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP
 
 test('only the App’s ready, unedited plan for the live issue is approved', () => {
   assert.equal(approvedPlan([comment()], APP, ISSUE).plan, PLAN);
+  assert.equal(approvedPlan([comment()], APP, ISSUE).contract.triage, null, 'a pre-triage plan');
   assert.equal(
     approvedPlan([{ ...comment(), body: comment().body.replace(/\n/g, '\r\n') }], APP, ISSUE).plan,
     PLAN,
@@ -92,4 +93,18 @@ test('a build the App started without a Continue never renders, even with a read
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   }
+});
+
+test("a retro plan's issue list holds only the operator's and the App's issues", () => {
+  const base = { body: '', created_at: '', labels: [{ name: 'retro' }] };
+  const list = openIssues(
+    [
+      { ...base, number: 1, title: 'Mine', user: { id: OPERATOR_ID } },
+      { ...base, number: 2, title: 'App', user: { id: 1 }, performed_via_github_app: { id: APP } },
+      { ...base, number: 3, title: 'Stranger', user: { id: 1 } },
+      { ...base, number: 4, title: 'A PR', user: { id: OPERATOR_ID }, pull_request: {} },
+    ],
+    APP,
+  );
+  assert.equal(list, '- #1 Mine `retro`\n- #2 App `retro`');
 });

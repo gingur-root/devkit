@@ -78,6 +78,11 @@ export const OPERATOR_COAUTHOR = `Co-authored-by: Troy Rhinehart <${OPERATOR_ID}
 /** The operator's "put it on the board" label, and his consent for the loop to plan the card (devkit#47). */
 export const READY_LABEL = 'ready-for-agent';
 
+/** Marks an issue a retro filed, or one its plan filed in turn (devkit#115). */
+export const RETRO_LABEL = 'retro';
+/** An agent says the issue needs the WSL desk. It starts nothing. */
+export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
+
 export const BOARD_TITLE = 'Pipeline';
 export const STATUS_FIELD = 'Status';
 export const STATUSES = ['Ask', 'Planning', 'Needs you', 'Building', 'Ready', 'Done'] as const;

@@ -2,8 +2,9 @@
 
 A pipeline run on this issue failed or left the card in Needs you. Find out
 why, and suggest the change to the pipeline's environment that would stop it
-happening again. You only suggest: the operator decides which fixes to plan
-and build. Don't edit the checkout; it is thrown away.
+happening again. Your findings become one `retro` issue, which the planner
+triages and the operator approves. Don't edit the checkout; it is thrown
+away.
 
 Follow the retro skill below, with these changes:
 

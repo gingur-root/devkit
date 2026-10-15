@@ -5,11 +5,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
-import { type Handoff, OPERATOR_ID, STAGE_LABELS } from './constants.ts';
+import { type Handoff, OPERATOR_ID, RETRO_LABEL, STAGE_LABELS } from './constants.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
   ISSUE_FILE,
+  ISSUES_FILE,
   JOB_FILE,
   TIMELINE_FILE,
   type Job,
@@ -19,6 +20,7 @@ import {
   PLAN_START,
   PlanContract,
   revision,
+  TRIAGE_FILE,
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
 
@@ -40,9 +42,11 @@ interface Event {
   label?: { name: string };
 }
 
-interface Issue extends Authored {
+export interface Issue extends Authored {
   number: number;
   title: string;
+  labels: { name: string }[];
+  pull_request?: unknown;
 }
 
 export interface RenderOptions {
@@ -83,6 +87,14 @@ function timeline(events: Event[]): string {
       (e) =>
         `- ${e.created_at ?? ''} ${e.event}${e.label ? ` \`${e.label.name}\`` : ''}${e.actor ? ` by ${e.actor.login}` : ''}`,
     )
+    .join('\n');
+}
+
+/** The repo's open issues a retro plan may link a finding to: only the operator's or the App's, as the snapshot. */
+export function openIssues(issues: Issue[], appId: number): string {
+  return issues
+    .filter((i) => !i.pull_request && trusted(i, appId))
+    .map((i) => `- #${i.number} ${i.title}${i.labels.map((l) => ` \`${l.name}\``).join('')}`)
     .join('\n');
 }
 
@@ -144,6 +156,8 @@ export async function render(options: RenderOptions): Promise<Job> {
     restAll<Authored>(`${path}/comments`),
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
+  const retroPlan =
+    options.role === 'plan' && issue.labels.some((label) => label.name === RETRO_LABEL);
   // A retro reads whatever the run left, ready plan or not.
   let approved: ReturnType<typeof approvedPlan> | null = null;
   if (options.role !== 'plan' && options.role !== 'retro') {
@@ -184,7 +198,8 @@ export async function render(options: RenderOptions): Promise<Job> {
     base: approved && (options.base ?? source),
     // A review checks out the candidate itself.
     candidate: options.role === 'review' ? source : null,
-    artifacts: [],
+    // Publish reads this to hold a retro issue's plan to its triage.
+    artifacts: retroPlan ? [ISSUES_FILE] : [],
     operations: [],
     attemptLimit: null,
   };
@@ -195,6 +210,13 @@ export async function render(options: RenderOptions): Promise<Job> {
     `${issueSnapshot(issue, comments, options.appId)}\n`,
   );
   if (approved) writeFileSync(join(options.out, PLAN_FILE), `${approved.plan}\n`);
+  if (approved?.contract.triage)
+    writeFileSync(join(options.out, TRIAGE_FILE), `${JSON.stringify(approved.contract.triage)}\n`);
+  if (retroPlan)
+    writeFileSync(
+      join(options.out, ISSUES_FILE),
+      `${openIssues(await restAll<Issue>(`/repos/${options.repo}/issues?state=open`), options.appId)}\n`,
+    );
   if (options.role === 'retro')
     writeFileSync(
       join(options.out, TIMELINE_FILE),
