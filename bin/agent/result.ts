@@ -22,6 +22,23 @@ export const SUMMARY_WORDS = 150;
 const Outcome = z.enum(OUTCOMES);
 const Axis = z.enum(['correctness', 'spec', 'standards']);
 
+/**
+ * One retro finding the plan keeps (devkit#115): a new issue, or a comment on
+ * the existing issue `link`. A dropped finding is only in the plan text.
+ */
+export const Triage = z.array(
+  z
+    .object({
+      title: z.string(),
+      body: z.string(),
+      link: z.number().int().nullable(),
+      start: z.enum(['plan', 'backlog']),
+      elevated: z.boolean(),
+    })
+    .strict(),
+);
+export type Triage = z.infer<typeof Triage>;
+
 export const Result = z
   .object({
     job: z.string(),
@@ -112,6 +129,8 @@ export const Result = z
       .array(z.object({ title: z.string(), body: z.string(), pr: z.boolean() }).strict())
       .nullable(),
     followups: z.array(z.object({ title: z.string(), body: z.string() }).strict()).nullable(),
+    // A retro issue's plan: what its approval files. Null on every other result.
+    triage: Triage.nullable(),
     failure: z
       .object({
         class: z.enum(['rate_limit', 'overloaded', 'server_error', 'timeout', 'unknown']),

@@ -3,8 +3,9 @@
 // move the card on. A build also pushes its candidate and opens a draft PR; a
 // review posts on that PR and marks it ready when it passes, or hands its
 // findings to a repair, which pushes a fix to the same PR. The pipeline never
-// merges. A retro only adds its one comment. Only this writes GitHub, and only
-// with the App.
+// merges. A retro files its findings as one `retro` issue for the planner, and
+// that plan's approval files the issues it kept instead of building. Only this
+// writes GitHub, and only with the App.
 
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,10 +15,12 @@ import { armedContinue, readSteps } from './approval.ts';
 import { setStatus } from './board.ts';
 import {
   type Handoff,
+  NEEDS_ELEVATED_LABEL,
   OPERATOR_COAUTHOR,
   OPERATOR_LOGIN,
   PIPELINE_BOT,
   REPAIR_ROUNDS,
+  RETRO_LABEL,
   STAGE_LABELS,
   type Status,
 } from './constants.ts';
@@ -25,6 +28,7 @@ import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
+  ISSUES_FILE,
   JOB_FILE,
   Job,
   marker,
@@ -36,9 +40,10 @@ import {
   REVIEW_FILE,
   revision,
   TRANSCRIPT_FILE,
+  TRIAGE_FILE,
   usage,
 } from './job.ts';
-import { type Failure, Result } from './result.ts';
+import { type Failure, Result, Triage } from './result.ts';
 
 export interface PublishOptions {
   in: string;
@@ -52,9 +57,12 @@ export interface PublishOptions {
 }
 
 interface Issue {
+  number: number;
+  html_url: string;
   node_id: string;
   title: string;
   body: string | null;
+  labels: { name: string }[];
 }
 
 interface Pull {
@@ -120,6 +128,15 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   if (result.status === 'complete' && job.role === 'plan' && !existsSync(join(out, PLAN_FILE))) {
     return { stage: 'validate', reason: `the agent wrote no ${PLAN_FILE}` };
   }
+  // Only a retro issue's plan triages, and its build files that triage instead of building.
+  const retroPlan = job.role === 'plan' && job.artifacts.includes(ISSUES_FILE);
+  if (result.triage !== null && !retroPlan)
+    return {
+      stage: 'validate',
+      reason: `a ${job.role} set \`triage\`, which only a retro issue's plan may`,
+    };
+  if (retroPlan && readyToBuild(result) && result.triage === null)
+    return { stage: 'validate', reason: "the retro issue's plan is ready but has no `triage`" };
   if (result.status !== 'complete' && result.outcome !== null) {
     return {
       stage: 'validate',
@@ -177,7 +194,7 @@ function planComment(job: Job, result: Result, out: string, handoff: Handoff | n
   const head = handoff
     ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
     : result.status === 'complete'
-      ? `**Plan: ${result.outcome === 'ready' ? 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk' : 'needs your input'}**`
+      ? `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`
       : `**Plan ${result.status}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
@@ -186,6 +203,7 @@ function planComment(job: Job, result: Result, out: string, handoff: Handoff | n
     issueRevision: job.issue.revision,
     checks: Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
     critique: result.critique,
+    triage: result.triage,
   };
   return [
     marker(job.role),
@@ -461,19 +479,87 @@ async function publishBuildOrPlan(
   return { body, status, stopped: false };
 }
 
-/**
- * A retro's findings, each with the fix it suggests, as a new comment: one per
- * run. It never touches labels or the card, and a failed retro posts nothing,
- * so it can't loop.
- */
-export function retroComment(result: Result, runUrl: string): string {
-  const findings = (result.followups ?? []).map((f) => `- **${f.title}:** ${f.body}`).join('\n');
+/** A retro's findings, each with the fix it suggests: the retro issue's body, or a comment when it files none. */
+export function retroText(result: Result, runUrl: string, source: number): string {
+  const findings = (result.followups ?? [])
+    .map((f, i) => `${i + 1}. **${f.title}:** ${f.body}`)
+    .join('\n');
   return [
-    marker('retro'),
-    `**Retro on [this run](${runUrl})**. These are suggestions only: plan any you want with a new issue.`,
+    `**Retro on [this run](${runUrl})** of #${source}.`,
     result.summary,
-    findings,
-    numbered(result.questions),
+    findings && `## Findings\n\n${findings}`,
+    result.questions.length > 0 && `## Questions\n\n${numbered(result.questions)}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * Files the retro's findings as one `retro` issue and starts its plan, which
+ * triages them (devkit#115). A retro with no findings, or one on a retro issue,
+ * only comments, so retros can't loop. A failed retro posts nothing.
+ */
+async function publishRetro(job: Job, issue: Issue, result: Result): Promise<void> {
+  const runUrl = `${process.env.GITHUB_SERVER_URL}/${job.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+  const text = retroText(result, runUrl, issue.number);
+  const comments = `/repos/${job.repo}/issues/${issue.number}/comments`;
+  if (!result.followups?.length || issue.labels.some((l) => l.name === RETRO_LABEL)) {
+    await rest('POST', comments, { body: `${marker('retro')}\n\n${text}` });
+    return;
+  }
+  const filed = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
+    title: `Retro: ${issue.title}`,
+    body: text,
+    labels: [RETRO_LABEL],
+  });
+  // Its own call, so the plan starts from a `labeled` event the App sent.
+  await rest('POST', `/repos/${job.repo}/issues/${filed.number}/labels`, {
+    labels: [STAGE_LABELS.plan],
+  });
+  await rest('POST', comments, {
+    body: `${marker('retro')}\n\n**Retro on [this run](${runUrl})** found ${result.followups.length} problem${result.followups.length > 1 ? 's' : ''}. They are in #${filed.number}, which is planning now.`,
+  });
+}
+
+/**
+ * Files what a retro issue's approved plan kept: a new `retro` issue per
+ * finding, or a comment on the existing issue it links to. Then closes the
+ * retro issue. It builds nothing.
+ * shortcut: a retry after a partial failure files the earlier issues again;
+ * make it idempotent if that happens.
+ */
+async function fileTriage(job: Job, triage: Triage): Promise<string> {
+  const lines: string[] = [];
+  for (const item of triage) {
+    const from = `From the retro in #${job.issue.number}.`;
+    if (item.link !== null) {
+      await rest('POST', `/repos/${job.repo}/issues/${item.link}/comments`, {
+        body: `**${item.title}**\n\n${item.body}\n\n${from}`,
+      });
+      lines.push(`- Added to #${item.link}: ${item.title}`);
+      continue;
+    }
+    const filed = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
+      title: item.title,
+      body: `${item.body}\n\n${from}`,
+      labels: [RETRO_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
+    });
+    if (item.start === 'plan')
+      await rest('POST', `/repos/${job.repo}/issues/${filed.number}/labels`, {
+        labels: [STAGE_LABELS.plan],
+      });
+    lines.push(
+      `- Filed #${filed.number}, ${item.start === 'plan' ? 'planning now' : 'in the backlog'}${item.elevated ? ', needs the WSL desk' : ''}`,
+    );
+  }
+  await rest('PATCH', `/repos/${job.repo}/issues/${job.issue.number}`, {
+    state: 'closed',
+    state_reason: 'completed',
+  });
+  return [
+    marker(job.role),
+    `**Retro triage filed${triage.length ? '' : ': nothing to file'}**`,
+    lines.join('\n'),
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -500,11 +586,19 @@ export async function publish(options: PublishOptions): Promise<void> {
   summarizeUsage(stageName(job.role, options.round), options.out);
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
+  // An approved retro triage has no build to check: render wrote it from the plan the gate approved.
+  const triageFile = join(options.in, TRIAGE_FILE);
+  if (job.role === 'build' && existsSync(triageFile)) {
+    const body = await fileTriage(job, Triage.parse(JSON.parse(readFileSync(triageFile, 'utf8'))));
+    await upsertStageComment(job.repo, job.issue.number, job.role, body);
+    await removeLabel(job.repo, job.issue.number, STAGE_LABELS.build);
+    await setStatus(job.repo, issue.node_id, 'Done');
+    return;
+  }
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
   if (job.role === 'retro') {
     if ('stage' in v) throw new Error(`Retro stopped at ${v.stage}: ${v.reason}.`);
-    const runUrl = `${process.env.GITHUB_SERVER_URL}/${job.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-    await rest('POST', `${path}/comments`, { body: retroComment(v.result, runUrl) });
+    await publishRetro(job, issue, v.result);
     return;
   }
   // A ready plan a dashboard Continue started goes straight to its build (devkit#99).

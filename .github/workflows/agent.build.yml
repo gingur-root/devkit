@@ -11,6 +11,8 @@ name: Build
 # The pipeline never merges. Only the operator can start it (the admission
 # gate), so that comment is the approval, or the App right after his dashboard
 # Continue, which render checks (bin/agent/approval.ts).
+# A retro issue's plan (devkit#115) skips the builder: publish files the issues
+# its triage kept and closes the retro issue.
 # Callers set concurrency (one group per card) at their own workflow level.
 
 on:
@@ -70,6 +72,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
+      triage: ${{ steps.render.outputs.triage }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -111,6 +114,8 @@ jobs:
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build ${SOURCE:+--source "$SOURCE"} \
             --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
+          # A retro issue's approved plan files issues instead (devkit#115): publish does it, with no builder.
+          if [ -f "$RUNNER_TEMP/agent/in/triage.json" ]; then echo "triage=true" >>"$GITHUB_OUTPUT"; fi
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
 
       - uses: gingur-root/devkit/actions/repo.pack@main
@@ -128,6 +133,7 @@ jobs:
   build:
     name: Build
     needs: start
+    if: needs.start.outputs.triage != 'true'
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read

@@ -48,7 +48,25 @@ Produce an implementation-ready plan for this issue.
    establish feasibility must have answered its question. Otherwise return
    needs-input with the next owner and action.
 
-## Output
+## Retro issues
+
+When the job directory has `issues.md`, this issue is a retro's findings
+(devkit#115). Your plan triages them instead of planning a build:
+
+- Check each finding against the code and docs. For each, decide one of:
+  file it as a new issue, add it to an open issue in `issues.md` that already
+  covers it, or drop it as noise or already fixed. Merge findings that share
+  one fix.
+- The plan lists every finding and its decision with a one-line reason.
+- `triage` holds one entry per finding you keep. `title` and `body` are the
+  issue: the problem, its evidence, and the change to make, with repo and
+  path. `link` is the open issue's number when you add to one, else null.
+  `start` is `plan` when it should be planned now, `backlog` when it can wait
+  for grooming. `elevated` is true when the fix needs the operator's own
+  access (`needs:elevated`).
+- Approval files these and closes this issue. It builds nothing, so set no
+  `criteria` and leave `critique` false.
+- On any other issue, `triage` is null.
 
 - Write the plan to `plan.md` in the output directory: criteria with IDs
   (A1, A2, …), an acceptance-to-check map, interfaces and code locations,

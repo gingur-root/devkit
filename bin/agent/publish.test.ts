@@ -2,7 +2,9 @@
 // clean pass may say so.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'vite-plus/test';
 
 import {
@@ -13,7 +15,9 @@ import {
   readyToBuild,
   repairable,
   stopped,
+  verdict,
 } from './publish.ts';
+import { ISSUES_FILE, type Job, PLAN_FILE, RESULT_FILE } from './job.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -92,4 +96,50 @@ test('a plan hands off to a build only when it is ready with nothing to ask', ()
   assert.ok(readyToBuild(plan));
   assert.ok(!readyToBuild({ ...plan, questions: ['Which file?'] }));
   assert.ok(!readyToBuild({ ...plan, outcome: 'needs-input' }));
+});
+
+test("only a retro issue's plan triages, and its ready plan must", () => {
+  const plan = Result.parse(
+    JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
+  );
+  const job: Job = {
+    job: 'plan-1',
+    role: 'plan',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 'T', revision: 'rev' },
+    plan: null,
+    source: 'abc',
+    base: null,
+    candidate: null,
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+  };
+  const retro = { ...job, artifacts: [ISSUES_FILE] };
+  const triage = [{ title: 'Fix', body: 'b', link: null, start: 'plan', elevated: false }] as const;
+  const check = (j: Job, r: Result) => {
+    const out = mkdtempSync(join(tmpdir(), 'verdict-'));
+    writeFileSync(join(out, PLAN_FILE), 'plan');
+    writeFileSync(
+      join(out, RESULT_FILE),
+      JSON.stringify({ ...r, job: j.job, role: j.role, inputs: { ...r.inputs, issue: 'rev' } }),
+    );
+    return verdict(j, 'rev', out);
+  };
+  assert.ok('result' in check(job, plan), 'an ordinary plan');
+  assert.ok('result' in check(retro, { ...plan, triage: [...triage] }), 'a retro plan');
+  assert.ok(
+    'result' in check(retro, { ...plan, triage: [] }),
+    'a retro plan that drops everything',
+  );
+  assert.match(
+    String((check(job, { ...plan, triage: [...triage] }) as { reason: string }).reason),
+    /only a retro/,
+  );
+  assert.match(String((check(retro, plan) as { reason: string }).reason), /no `triage`/);
+  assert.ok(
+    'result' in check(retro, { ...plan, outcome: 'needs-input', questions: ['Q?'] }),
+    'a retro plan may still ask first',
+  );
 });

@@ -6,11 +6,16 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { OPERATOR_ID } from './constants.ts';
+import { Triage } from './result.ts';
 
 export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
+/** A retro issue's plan: the repo's open issues, which it may link findings to. */
+export const ISSUES_FILE = 'issues.md';
+/** A retro issue's approved triage, which the build files instead of building. */
+export const TRIAGE_FILE = 'triage.json';
 /** A retro's view of the card's history. */
 export const TIMELINE_FILE = 'timeline.md';
 /** Each agent's event stream, as `agent run` printed it. */
@@ -51,6 +56,8 @@ export const PlanContract = z.object({
   issueRevision: z.string(),
   checks: z.record(z.string(), z.string()),
   critique: z.boolean().nullable(),
+  // Absent on plans published before devkit#115.
+  triage: Triage.nullable().default(null),
 });
 export type PlanContract = z.infer<typeof PlanContract>;
 
