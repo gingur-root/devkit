@@ -31,6 +31,7 @@ test('serves the page and its assets to Troy, nothing else, and refuses a chat f
     keys,
     createStore(join(web, 'state.json')),
     pathToFileURL(`${web}/`),
+    createHub(),
   ).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -61,10 +62,7 @@ test('serves the page and its assets to Troy, nothing else, and refuses a chat f
 });
 
 test('streams board events to a connected page, and lets go when it leaves', async () => {
-  const hub = createHub(
-    () => {},
-    () => {},
-  );
+  const hub = createHub();
   const server = createDashboard(
     'aud',
     keys,

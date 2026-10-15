@@ -109,8 +109,8 @@ function useHash(): string {
 const boardEvents = new EventSource('/api/events');
 
 /**
- * Calls `on` with the live updates the server sends. One poll can name many
- * cards, so events that arrive together come as one batch and cost one refetch.
+ * Calls `on` with the live updates the server sends. Deliveries can land in
+ * bursts, so events that arrive together come as one batch and cost one refetch.
  */
 function useBoardEvents(on: (events: BoardEvent[]) => void) {
   useEffect(() => {

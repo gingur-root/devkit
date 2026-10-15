@@ -11,7 +11,7 @@ interface ServeOptions {
 export default {
   kind: 'parsed',
   describe:
-    'Serve the dashboard on localhost, behind Cloudflare Access (DASHBOARD_ACCESS_AUD), and the org webhook receiver when WEBHOOK_SECRET is set',
+    'Serve the dashboard on localhost, behind Cloudflare Access (DASHBOARD_ACCESS_AUD), and the org webhook receiver that feeds it (WEBHOOK_SECRET)',
   configure(command) {
     command
       .option('--port <port>', 'port on localhost', Number, DASHBOARD_PORT)
@@ -34,19 +34,18 @@ export default {
       logLevel: 'error',
     });
     const { fetchAccessKeys } = await import('../../dashboard/access.ts');
-    const { mergeSources, pollBoard, SAFETY_POLL_MS, webhookBoard } =
-      await import('../../dashboard/events.ts');
-    let events = pollBoard();
     const secret = process.env.WEBHOOK_SECRET;
-    if (secret) {
-      const { createReceiver } = await import('../../webhooks/receiver.ts');
-      const board = webhookBoard();
-      events = mergeSources(board.source, pollBoard(undefined, SAFETY_POLL_MS));
-      createReceiver(secret, [board.handle]).listen(hooksPort, '127.0.0.1');
-      console.log(`Webhook receiver on http://127.0.0.1:${hooksPort}`);
-    }
+    if (!secret) throw new Error('WEBHOOK_SECRET is not set.');
+    const { webhookBoard } = await import('../../dashboard/events.ts');
+    const { createReceiver } = await import('../../webhooks/receiver.ts');
+    const board = webhookBoard();
+    createReceiver(secret, [board.handle]).listen(hooksPort, '127.0.0.1');
+    console.log(`Webhook receiver on http://127.0.0.1:${hooksPort}`);
     // Only cloudflared reaches them from outside, so both listen on loopback only.
-    createDashboard(aud, fetchAccessKeys, undefined, undefined, events).listen(port, '127.0.0.1');
+    createDashboard(aud, fetchAccessKeys, undefined, undefined, board.source).listen(
+      port,
+      '127.0.0.1',
+    );
     console.log(`Dashboard on http://127.0.0.1:${port}`);
   },
 } satisfies ParsedCommand<ServeOptions>;

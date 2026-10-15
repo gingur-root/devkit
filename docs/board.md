@@ -103,18 +103,18 @@ Troy's own labels and commands work as before, with no Continue needed.
 ## Live updates
 
 The page listens on `/api/events` and refetches when a card or the board
-changes. Two sources feed it:
+changes. The org webhook (devkit#118) is the only source. GitHub posts every
+gingur-root event to `hooks.gingur.com/github`, which cloudflared sends to the
+receiver on `127.0.0.1:3001` (`bin/webhooks/receiver.ts`). The receiver
+refuses an unsigned post unread, caps the body at 1 MB, checks the
+`X-Hub-Signature-256` HMAC against `WEBHOOK_SECRET`, drops a delivery ID it
+has already seen, answers 202, then hands the event to each handler. An issue
+or comment event names its card; a project item or sub-issue event names the
+board.
 
-- **The org webhook** (devkit#118). GitHub posts every gingur-root event to
-  `hooks.gingur.com/github`, which cloudflared sends to the receiver on
-  `127.0.0.1:3001` (`bin/webhooks/receiver.ts`). The receiver checks the
-  `X-Hub-Signature-256` HMAC against `WEBHOOK_SECRET`, drops a delivery ID it
-  has already seen, answers 202, then hands the event to each handler. An
-  issue or comment event names its card; a project item or sub-issue event
-  names the board.
-- **The poller**, as a safety net: GitHub does not retry a failed delivery. It
-  reads the board every 5 minutes while the webhook is on, and every 30 s when
-  `WEBHOOK_SECRET` is unset (the receiver then does not start).
+`dashboard serve` refuses to start without `WEBHOOK_SECRET`. There is no
+poller: GitHub does not retry a failed delivery, so a change missed while the
+box was down shows on the next reload.
 
 The receiver has no Access app in front of it, so the signature is its only
 gate, and it listens on its own port so no dashboard route is reachable
