@@ -113,7 +113,7 @@ jobs:
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
 
-      - uses: gingur-root/devkit/actions/repo.pack@main
+      - uses: gingur-root/devkit/actions/repo.pack@feat/pipeline-target-repo
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.render.outputs.source }}
@@ -132,7 +132,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - uses: gingur-root/devkit/actions/agent.run@feat/pipeline-target-repo
         with:
           role: build
           executor: ${{ inputs.executor }}
@@ -223,7 +223,7 @@ jobs:
           path: ${{ runner.temp }}/review/in
 
       - if: steps.publish.outputs.candidate != ''
-        uses: gingur-root/devkit/actions/repo.pack@main
+        uses: gingur-root/devkit/actions/repo.pack@feat/pipeline-target-repo
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.publish.outputs.candidate }}

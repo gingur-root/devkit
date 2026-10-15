@@ -78,7 +78,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - uses: gingur-root/devkit/actions/agent.run@feat/pipeline-target-repo
         with:
           role: repair
           prefix: repair-${{ inputs.round }}
@@ -172,7 +172,7 @@ jobs:
           path: ${{ runner.temp }}/review/in
 
       - if: steps.publish.outputs.candidate != ''
-        uses: gingur-root/devkit/actions/repo.pack@main
+        uses: gingur-root/devkit/actions/repo.pack@feat/pipeline-target-repo
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.publish.outputs.candidate }}
@@ -188,7 +188,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - uses: gingur-root/devkit/actions/agent.run@feat/pipeline-target-repo
         with:
           role: review
           prefix: review-${{ inputs.round }}
@@ -300,7 +300,7 @@ jobs:
           path: ${{ runner.temp }}/repair/in
 
       - if: steps.next.outputs.artifact != ''
-        uses: gingur-root/devkit/actions/repo.pack@main
+        uses: gingur-root/devkit/actions/repo.pack@feat/pipeline-target-repo
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.next.outputs.candidate }}
