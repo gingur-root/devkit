@@ -2,6 +2,9 @@
 // must never reach a handler, and a redelivery must not run handlers twice.
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { test } from 'vite-plus/test';
 
@@ -49,11 +52,19 @@ test('a signed delivery reaches every handler once; forged, unsigned and repeate
 });
 
 test('dedupe forgets the oldest id past its limit', () => {
-  const fresh = createDedupe(2);
+  const fresh = createDedupe(undefined, 2);
   assert.equal(fresh('a'), true);
   assert.equal(fresh('a'), false);
   fresh('b');
   fresh('c');
   assert.equal(fresh('b'), false);
   assert.equal(fresh('a'), true);
+});
+
+test('a dedupe file survives a restart, so a redelivery after it starts nothing', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dedupe-')), 'state', 'deliveries.json');
+  assert.equal(createDedupe(file)('d1'), true);
+  const restarted = createDedupe(file);
+  assert.equal(restarted('d1'), false);
+  assert.equal(restarted('d2'), true);
 });

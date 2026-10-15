@@ -37,9 +37,16 @@ export default {
     const secret = process.env.WEBHOOK_SECRET;
     if (!secret) throw new Error('WEBHOOK_SECRET is not set.');
     const { webhookBoard } = await import('../../dashboard/events.ts');
-    const { createReceiver } = await import('../../webhooks/receiver.ts');
+    const { createDedupe, createReceiver } = await import('../../webhooks/receiver.ts');
+    const { pipelineHandler } = await import('../../webhooks/pipeline.ts');
+    const { homedir } = await import('node:os');
+    const { join } = await import('node:path');
     const board = webhookBoard();
-    createReceiver(secret, [board.handle]).listen(hooksPort, '127.0.0.1');
+    createReceiver(
+      secret,
+      [board.handle, pipelineHandler()],
+      createDedupe(join(homedir(), '.local/state/devkit-dashboard/deliveries.json')),
+    ).listen(hooksPort, '127.0.0.1');
     console.log(`Webhook receiver on http://127.0.0.1:${hooksPort}`);
     // Only cloudflared reaches them from outside, so both listen on loopback only.
     createDashboard(aud, fetchAccessKeys, undefined, undefined, board.source).listen(

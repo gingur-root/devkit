@@ -8,9 +8,17 @@ else do nothing. The one exception is the pipeline App. It may add
 pressed **Continue** on the dashboard, and the stage checks that Continue
 before it starts ([board.md](board.md#how-a-continue-becomes-a-build)).
 
-A repo is enrolled when it has a thin `agents.yml` caller (see
-[scratch's](https://github.com/gingur-root/scratch/blob/main/.github/workflows/agents.yml))
-and the `RUNNER` and `PIPELINE_APP_ID` vars.
+A repo needs no workflow of its own (devkit#118). The org webhook tells the
+dashboard's receiver about every label and comment, and the receiver applies
+the same rule as the admission gate to the event's sender
+(`bin/webhooks/pipeline.ts`). For a stage it starts, it dispatches the one
+central caller,
+[`gingur-root/pipeline`'s `agents.yml`](https://github.com/gingur-root/pipeline/blob/main/.github/workflows/agents.yml),
+with the repo, the issue and the sender. Its jobs read the target repo's code
+from a pack the App-token job makes (`actions/repo.pack`), since their own
+token can't read another private repo. A repo is enrolled when infra lists it
+`enrolled`, which installs the App on it. infra is the exception: the App must
+never reach it, so it keeps its own caller on the WSL desk.
 
 ## The flow
 
@@ -48,8 +56,7 @@ Each decision, including what it skipped, goes in the job summary. It never
 touches a card in **Needs you**, **Ready** or **Done**, and never runs on the
 WSL desk. `--dry-run` prints the decisions without acting.
 
-An enrolled repo's caller runs `agent.loop.yml` on `ready-for-agent` (see
-scratch's). If the VPS is down for more than 24 hours, the loop's own job
+The central caller runs `agent.loop.yml` when Troy adds `ready-for-agent`. If the VPS is down for more than 24 hours, the loop's own job
 expires in GitHub's queue and a card can sit until the repo's next event.
 
 ## Review and merge stage
@@ -153,27 +160,28 @@ scratch's `eval/README.md`.
 
 ## Proving a devkit branch
 
-Never point scratch's main caller at a branch: every other run on scratch
-would run that branch too. Run the proof by hand from your own scratch branch
-instead. scratch's main and its issue events stay on devkit main.
+Never point the pipeline repo's main caller at a branch: every run would run
+that branch too. Run the proof by hand from your own pipeline branch instead,
+on a scratch issue.
 
-1. Branch scratch, and in `.github/workflows/agents.yml` change each
-   `agent.*.yml@main` and `devkitRef: main` to your devkit branch. Push it.
+1. Branch gingur-root/pipeline, and in `.github/workflows/agents.yml` change
+   each `agent.*.yml@main` and `devkitRef: main` to your devkit branch. Push it.
    Don't open a PR.
 2. Run one stage on a scratch issue:
 
    ```bash
-   gh workflow run agents.yml -R gingur-root/scratch --ref <scratch-branch> \
-     -f stage=plan -f issue=<n> -f executor=stub
+   gh workflow run agents.yml -R gingur-root/pipeline --ref <pipeline-branch> \
+     -f stage=plan -f repo=scratch -f issue=<n> -f executor=stub
    ```
 
    `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
 
-3. Delete the scratch branch when you are done.
+3. Delete the pipeline branch when you are done.
 
-The build still starts from scratch's main, so its PR holds only the agent's
-change. Composite actions (`actions/*@main`) and `agent:elevated` always run
-devkit main.
+A dispatched build starts from scratch's main, so its PR holds only the
+agent's change. Composite actions (`actions/*@main`) always run devkit main:
+to prove a change to one, pin it to your branch in the workflows for the
+proof, then pin it back.
 
 ## Known limits
 
@@ -192,8 +200,10 @@ devkit main.
 - **No `/revise` yet.** It passes the gate but no stage handles it; edit the
   issue and re-plan instead, or press **Request changes** on the dashboard,
   which hands the note to the planner.
-- **Enrolled callers repeat the admission** in their `concurrency` group. Until
-  a caller copies the new text, an App hand-off label runs outside the card's
-  group, so the build may start before the plan run's last job ends.
+- **A missed delivery starts nothing.** GitHub doesn't retry a webhook it
+  couldn't deliver (the box was down, or the receiver failed). Add the label
+  again, or redeliver it from the org webhook's Recent Deliveries. The
+  receiver remembers delivery IDs, so a redelivery that already ran starts
+  nothing.
 - **One run per card at a time.** A second label while one runs waits in the
   queue.
