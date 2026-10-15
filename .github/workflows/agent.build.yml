@@ -45,6 +45,16 @@ on:
         type: string
         required: false
         default: ''
+      actor:
+        description: "The event's sender, when the central caller dispatched the run. Empty: github.actor_id."
+        type: string
+        required: false
+        default: ''
+      repo:
+        description: 'The target repo in gingur-root, when the central caller (gingur-root/pipeline) dispatched the run. Empty: the calling repo.'
+        type: string
+        required: false
+        default: ''
     secrets:
       AGENTS_SECRETS_TOKEN:
         required: true
@@ -56,7 +66,7 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
@@ -76,6 +86,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionContents: read
           permissionIssues: write
@@ -88,25 +99,26 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
-          SOURCE: ${{ github.sha }}
-          DISPATCHED: ${{ inputs.issue }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # A dispatched run builds on the head of the default branch (render's
+          # default): a proof run's sha is its scratch branch, whose caller differs
+          # from the default branch, and the App could not push a build on top of it.
+          SOURCE: ${{ inputs.issue == '' && github.sha || '' }}
           APP_ID: ${{ inputs.appId }}
-          ACTOR: ${{ github.actor_id }}
+          ACTOR: ${{ inputs.actor || github.actor_id }}
         run: |
-          # A manual run's sha is its proof branch, whose caller differs from the
-          # default branch; the App could not push a build on top of it.
-          # The self-hosted runners have no `gh`.
-          if [ -n "$DISPATCHED" ]; then
-            SOURCE=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/commits/$DEFAULT_BRANCH" |
-              node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).sha')
-          fi
-          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build --source "$SOURCE" \
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build ${SOURCE:+--source "$SOURCE"} \
             --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
+
+      - uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.render.outputs.source }}
+          token: ${{ steps.app.outputs.token || github.token }}
+          name: agent-repo
 
       - uses: actions/upload-artifact@v7
         with:
@@ -141,6 +153,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionContents: write
           permissionIssues: write
@@ -157,6 +170,7 @@ jobs:
       # The push target. Its credentials stay in repo/.git for publish's git push.
       - uses: actions/checkout@v6
         with:
+          repository: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ref: ${{ needs.start.outputs.source }}
           path: repo
           token: ${{ steps.app.outputs.token }}
@@ -192,7 +206,7 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           SOURCE: ${{ needs.start.outputs.source }}
           CANDIDATE: ${{ steps.publish.outputs.candidate }}
@@ -208,6 +222,14 @@ jobs:
           name: review-0-in
           path: ${{ runner.temp }}/review/in
 
+      - if: steps.publish.outputs.candidate != ''
+        uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.publish.outputs.candidate }}
+          token: ${{ steps.app.outputs.token || github.token }}
+          name: review-0-repo
+
   review:
     name: Review
     needs: publish
@@ -222,6 +244,7 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
       round: 0
       candidate: ${{ needs.publish.outputs.candidate }}
@@ -243,6 +266,7 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
       round: 1
       candidate: ${{ needs.review.outputs.candidate }}
@@ -264,6 +288,7 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
       round: 2
       candidate: ${{ needs.repair-1.outputs.candidate }}
@@ -286,7 +311,9 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
+      source: ${{ needs.start.outputs.source }}
       jobs: ${{ toJSON(needs) }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -305,6 +332,7 @@ jobs:
       appId: ${{ inputs.appId }}
       devkitRef: ${{ inputs.devkitRef }}
       role: build
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
       jobs: ${{ toJSON(needs) }}
     secrets:

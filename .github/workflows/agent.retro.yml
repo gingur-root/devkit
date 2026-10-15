@@ -44,6 +44,16 @@ on:
         description: "The calling workflow's `toJSON(needs)`: each job's result and outputs."
         type: string
         required: true
+      source:
+        description: "The run's source commit, which the agent reads. Empty: the caller's sha."
+        type: string
+        required: false
+        default: ''
+      repo:
+        description: 'The target repo in gingur-root, when the central caller (gingur-root/pipeline) dispatched the run. Empty: the calling repo.'
+        type: string
+        required: false
+        default: ''
     secrets:
       # Both unset on the WSL desk.
       AGENTS_SECRETS_TOKEN:
@@ -56,7 +66,7 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))
+    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
@@ -76,7 +86,9 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionContents: read
           permissionIssues: read
 
       # Every stage's job file, result and transcript so far, one directory each.
@@ -90,12 +102,14 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
-          SOURCE: ${{ github.sha }}
+          SOURCE: ${{ inputs.source || github.sha }}
           APP_ID: ${{ inputs.appId }}
           JOBS: ${{ inputs.jobs }}
         run: |
+          # The run's repo packs are code, not its record.
+          rm -rf "$RUNNER_TEMP"/agent/in/run/*-repo
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role retro --source "$SOURCE" \
             --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
           mkdir -p "$RUNNER_TEMP/agent/in/run"
@@ -105,6 +119,13 @@ jobs:
         with:
           name: retro-in
           path: ${{ runner.temp }}/agent/in
+
+      - uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ inputs.source || github.sha }}
+          token: ${{ steps.app.outputs.token || github.token }}
+          name: retro-repo
 
   retro:
     name: Retro
@@ -119,7 +140,7 @@ jobs:
           prefix: retro
           executor: ${{ inputs.executor }}
           fixture: ${{ inputs.fixture }}
-          source: ${{ github.sha }}
+          source: ${{ inputs.source || github.sha }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
           devkitRef: ${{ inputs.devkitRef }}
 
@@ -154,6 +175,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionIssues: write
 

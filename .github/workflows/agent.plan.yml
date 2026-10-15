@@ -38,6 +38,11 @@ on:
         type: string
         required: false
         default: ''
+      repo:
+        description: 'The target repo in gingur-root, when the central caller (gingur-root/pipeline) dispatched the run. Empty: the calling repo.'
+        type: string
+        required: false
+        default: ''
     secrets:
       # Both unset on the WSL desk.
       AGENTS_SECRETS_TOKEN:
@@ -50,8 +55,10 @@ permissions: {}
 jobs:
   start:
     name: Start
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    outputs:
+      source: ${{ steps.render.outputs.source }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -71,22 +78,34 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionContents: read
           permissionIssues: write
           permissionOrganizationProjects: write
 
-      - name: Render
+      # A dispatched run plans from the head of the default branch (render's default).
+      - id: render
+        name: Render
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
-          SOURCE: ${{ github.sha }}
+          SOURCE: ${{ inputs.issue == '' && github.sha || '' }}
           APP_ID: ${{ inputs.appId }}
         run: |
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Planning
-          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role plan --source "$SOURCE" \
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role plan ${SOURCE:+--source "$SOURCE"} \
             --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+          echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
+
+      - uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.render.outputs.source }}
+          token: ${{ steps.app.outputs.token || github.token }}
+          name: agent-repo
 
       - uses: actions/upload-artifact@v7
         with:
@@ -105,7 +124,7 @@ jobs:
           role: plan
           executor: ${{ inputs.executor }}
           fixture: ${{ inputs.fixture }}
-          source: ${{ github.sha }}
+          source: ${{ needs.start.outputs.source }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
           devkitRef: ${{ inputs.devkitRef }}
 
@@ -145,6 +164,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionIssues: write
           permissionOrganizationProjects: write
@@ -170,7 +190,9 @@ jobs:
       executor: ${{ inputs.executor }}
       fixture: ${{ inputs.fixture }}
       devkitRef: ${{ inputs.devkitRef }}
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
+      source: ${{ needs.start.outputs.source }}
       jobs: ${{ toJSON(needs) }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -189,6 +211,7 @@ jobs:
       appId: ${{ inputs.appId }}
       devkitRef: ${{ inputs.devkitRef }}
       role: plan
+      repo: ${{ inputs.repo }}
       issue: ${{ inputs.issue }}
       jobs: ${{ toJSON(needs) }}
     secrets:

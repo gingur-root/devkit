@@ -18,7 +18,10 @@ const ADMISSION =
   // and `agent:build` or `agent:elevated` for a plan's hand-off after a dashboard Continue, which
   // render then checks (bin/agent/approval.ts, devkit#99).
   "(github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && " +
-  'contains(fromJSON(\'["agent:plan","agent:build","agent:elevated"]\'), github.event.label.name)))';
+  'contains(fromJSON(\'["agent:plan","agent:build","agent:elevated"]\'), github.event.label.name)) || ' +
+  // The org webhook receiver dispatches every stage in the central caller (devkit#118); it applies
+  // the rule above to the event's sender first (bin/webhooks/pipeline.ts).
+  "(github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))";
 
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);

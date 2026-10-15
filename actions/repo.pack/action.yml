@@ -1,0 +1,44 @@
+name: 'Repo pack'
+description: 'Pack a gingur-root repo at one commit as an artifact, for a later job that holds no token to read it.'
+
+# Agent and verify jobs hold no pipeline credential, and in the central caller
+# (gingur-root/pipeline, devkit#118) their own GITHUB_TOKEN can't read the
+# target repo. So the job that holds the App token packs it here, `.git`
+# included, and agent.run or toolchain.verify unpacks it. A tarball keeps file
+# modes, which an artifact's zip drops.
+
+inputs:
+  repo:
+    description: 'The repo name in gingur-root. Empty: the current repo.'
+    required: false
+    default: ''
+  ref:
+    description: 'The commit to pack.'
+    required: true
+  token:
+    description: 'A token that can read the repo: the App token, or github.token for the current repo.'
+    required: true
+  name:
+    description: 'The artifact name: agent.run reads `<prefix>-repo`.'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ inputs.repo && format('gingur-root/{0}', inputs.repo) || github.repository }}
+        ref: ${{ inputs.ref }}
+        token: ${{ inputs.token }}
+        path: .pack
+        persist-credentials: false
+
+    - shell: bash
+      run: |
+        tar -czf "$RUNNER_TEMP/repo.tgz" -C .pack .
+        rm -rf .pack
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ runner.temp }}/repo.tgz

@@ -47,6 +47,11 @@ on:
         description: 'Round 0: the commit to review. Later rounds: the reviewed commit to repair.'
         type: string
         required: true
+      repo:
+        description: 'The target repo in gingur-root, when the central caller (gingur-root/pipeline) dispatched the run. Empty: the calling repo.'
+        type: string
+        required: false
+        default: ''
     secrets:
       AGENTS_SECRETS_TOKEN:
         required: true
@@ -68,7 +73,7 @@ permissions: {}
 jobs:
   repair:
     name: Repair
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && inputs.round > 0
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -95,6 +100,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionContents: write
           permissionIssues: write
@@ -111,6 +117,7 @@ jobs:
       # The push target. Its credentials stay in repo/.git for publish's git push.
       - uses: actions/checkout@v6
         with:
+          repository: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ref: ${{ inputs.candidate }}
           path: repo
           token: ${{ steps.app.outputs.token }}
@@ -147,7 +154,7 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           CANDIDATE: ${{ steps.publish.outputs.candidate }}
           APP_ID: ${{ inputs.appId }}
@@ -164,11 +171,19 @@ jobs:
           name: review-${{ inputs.round }}-in
           path: ${{ runner.temp }}/review/in
 
+      - if: steps.publish.outputs.candidate != ''
+        uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.publish.outputs.candidate }}
+          token: ${{ steps.app.outputs.token }}
+          name: review-${{ inputs.round }}-repo
+
   review:
     name: Review
     needs: push
     # Round 0 skips push, so its candidate is the input.
-    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && (inputs.round == 0 || needs.push.outputs.candidate != '') }}
+    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (inputs.round == 0 || needs.push.outputs.candidate != '') }}
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -188,20 +203,22 @@ jobs:
   verify:
     name: Verify
     needs: push
-    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && (inputs.round == 0 || needs.push.outputs.candidate != '') }}
+    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (inputs.round == 0 || needs.push.outputs.candidate != '') }}
     permissions:
       contents: read
     uses: ./.github/workflows/toolchain.verify.yml
     with:
       runner: ${{ inputs.runner }}
       ref: ${{ needs.push.outputs.candidate || inputs.candidate }}
+      # Round 0's pack comes from the build's publish, a repair round's from push.
+      pack: review-${{ inputs.round }}-repo
       # Red CI is a finding for the repair, not a failed run.
       report: true
 
   verdict:
     name: Verdict
     needs: [push, review, verify]
-    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)))) && (inputs.round == 0 || needs.push.outputs.candidate != '')
+    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (inputs.round == 0 || needs.push.outputs.candidate != '')
     runs-on: ${{ inputs.runner }}
     outputs:
       repair: ${{ steps.publish.outputs.repair }}
@@ -212,6 +229,7 @@ jobs:
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           # Marking a draft ready needs contents: write as well as pull_requests.
           permissionContents: write
@@ -260,7 +278,7 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           APP_ID: ${{ inputs.appId }}
           ROUND: ${{ inputs.round }}
@@ -273,9 +291,18 @@ jobs:
           cp "$RUNNER_TEMP/review/out/review.json" "$RUNNER_TEMP/repair/in/review.json"
           echo "candidate=$candidate" >>"$GITHUB_OUTPUT"
           echo "artifact=repair-$((ROUND + 1))-in" >>"$GITHUB_OUTPUT"
+          echo "pack=repair-$((ROUND + 1))-repo" >>"$GITHUB_OUTPUT"
 
       - if: steps.next.outputs.artifact != ''
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.next.outputs.artifact }}
           path: ${{ runner.temp }}/repair/in
+
+      - if: steps.next.outputs.artifact != ''
+        uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.next.outputs.candidate }}
+          token: ${{ steps.app.outputs.token }}
+          name: ${{ steps.next.outputs.pack }}
