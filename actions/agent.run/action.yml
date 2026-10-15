@@ -1,8 +1,9 @@
 name: 'Agent run'
 description: 'Run one agent role on the job file the controller rendered, and upload its result. Never writes to GitHub.'
 
-# Checks out the target repo at the job's source commit into `repo/` and devkit
-# into `devkit/`, so the agent's working tree holds only the target repo. The
+# Unpacks the target repo at the job's source commit (`<prefix>-repo`, packed by
+# repo.pack in a job that holds the App token) into `repo/`, and checks devkit
+# out into `devkit/`, so the agent's working tree holds only the target repo. The
 # agent starts under `env -i`: with a shell it could otherwise read the job's
 # whole env from /proc.
 
@@ -19,7 +20,7 @@ inputs:
     required: false
     default: 'ready'
   source:
-    description: 'The commit to check out, from the job contract.'
+    description: 'The commit the pack holds, from the job contract: the change is diffed against it.'
     required: true
   token:
     description: "AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login. Empty: Claude uses the runner user's own login (the WSL desk)."
@@ -29,18 +30,24 @@ inputs:
     required: false
     default: 'main'
   prefix:
-    description: "The artifacts' prefix: reads `<prefix>-in`, uploads `<prefix>-out`. A run's later stages each need their own."
+    description: "The artifacts' prefix: reads `<prefix>-in` and `<prefix>-repo`, uploads `<prefix>-out`. A run's later stages each need their own."
     required: false
     default: 'agent'
 
 runs:
   using: 'composite'
   steps:
-    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v8
       with:
-        ref: ${{ inputs.source }}
-        path: repo
-        persist-credentials: false
+        name: ${{ inputs.prefix }}-repo
+        path: ${{ runner.temp }}/pack
+
+    # A self-hosted runner keeps the workspace between jobs.
+    - shell: bash
+      run: |
+        rm -rf repo && mkdir repo
+        tar -xzf "$RUNNER_TEMP/pack/repo.tgz" -C repo
+        rm -rf "$RUNNER_TEMP/pack"
 
     - uses: actions/checkout@v6
       with:

@@ -16,7 +16,10 @@ export default {
           .choices(Object.keys(ROLES))
           .makeOptionMandatory(),
       )
-      .requiredOption('--source <sha>', 'commit the stage works from')
+      .option(
+        '--source <sha>',
+        'commit the stage works from (default: the head of its default branch)',
+      )
       .option('--base <sha>', "a review's base: the commit the candidate was built from")
       .requiredOption('--app-id <id>', "the pipeline App's ID; its text counts as trusted", Number)
       .option('--actor <id>', 'who started the run (github.actor_id)', Number)
