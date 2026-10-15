@@ -2,6 +2,9 @@
 // must never reach a handler, and a redelivery must not run handlers twice.
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { test } from 'vite-plus/test';
 
@@ -11,12 +14,13 @@ const SECRET = 'test-secret';
 const sign = (body: string, secret = SECRET) =>
   `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
 
-test('a signed delivery reaches every handler once; forged, unsigned and repeated ones do not', async () => {
+test('a signed delivery reaches every handler; forged and unsigned ones never do, and a repeat runs only after a failure', async () => {
   const seen: Delivery[] = [];
+  let fail = true;
   const server = createReceiver(SECRET, [
     (delivery) => void seen.push(delivery),
     () => {
-      throw new Error('a failing handler must not stop the others');
+      if (fail) throw new Error('a failing handler must not stop the others');
     },
   ]).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -35,12 +39,23 @@ test('a signed delivery reaches every handler once; forged, unsigned and repeate
     assert.equal((await post({ 'x-hub-signature-256': sign(body) }, `${body} `)).status, 401);
     assert.equal(seen.length, 0);
 
-    assert.equal((await post({ 'x-hub-signature-256': sign(body) })).status, 202);
-    assert.equal((await post({ 'x-hub-signature-256': sign(body) })).status, 202);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.deepEqual(seen, [
-      { id: 'd1', event: 'issues', payload: { action: 'labeled', issue: { number: 7 } } },
-    ]);
+    const delivered = {
+      id: 'd1',
+      event: 'issues',
+      payload: { action: 'labeled', issue: { number: 7 } },
+    };
+    const deliver = async () => {
+      assert.equal((await post({ 'x-hub-signature-256': sign(body) })).status, 202);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    };
+    // A handler failed, so the delivery is forgotten and its redelivery runs again.
+    await deliver();
+    fail = false;
+    await deliver();
+    assert.deepEqual(seen, [delivered, delivered]);
+    // It succeeded this time, so a third delivery runs nothing.
+    await deliver();
+    assert.deepEqual(seen, [delivered, delivered]);
 
     assert.equal((await fetch(url.replace(WEBHOOK_PATH, '/'), { method: 'POST' })).status, 404);
   } finally {
@@ -49,11 +64,29 @@ test('a signed delivery reaches every handler once; forged, unsigned and repeate
 });
 
 test('dedupe forgets the oldest id past its limit', () => {
-  const fresh = createDedupe(2);
+  const { fresh } = createDedupe(undefined, 2);
   assert.equal(fresh('a'), true);
   assert.equal(fresh('a'), false);
   fresh('b');
   fresh('c');
   assert.equal(fresh('b'), false);
   assert.equal(fresh('a'), true);
+});
+
+test('a dedupe file survives a restart, so a redelivery after it starts nothing', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dedupe-')), 'state', 'deliveries.json');
+  assert.equal(createDedupe(file).fresh('d1'), true);
+  const restarted = createDedupe(file);
+  assert.equal(restarted.fresh('d1'), false);
+  assert.equal(restarted.fresh('d2'), true);
+  restarted.forget('d2');
+  assert.equal(createDedupe(file).fresh('d2'), true);
+});
+
+test('a dedupe file that cannot be written does not throw', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dedupe-')), 'deliveries.json');
+  mkdirSync(`${file}.tmp`); // writing the temp file now fails with EISDIR
+  const { fresh } = createDedupe(file);
+  assert.equal(fresh('d1'), true);
+  assert.equal(fresh('d1'), false);
 });

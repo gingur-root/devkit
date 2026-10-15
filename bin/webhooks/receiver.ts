@@ -2,14 +2,15 @@
 // here. It keeps gingur/hooks' shape: verify the signature, drop a delivery it
 // has seen, then hand the event to each handler.
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { dirname } from 'node:path';
 
 export const WEBHOOK_PATH = '/github';
 // Anyone can post here, and the body is read before its signature can be
 // checked, so it is capped well under GitHub's 25 MB: the events subscribed
 // to (issues, comments, items, PRs, runs) are far smaller.
 const MAX_BODY = 1024 * 1024;
-// shortcut: dedupe lives in memory and forgets on restart; make it durable when a handler starts runs.
 const SEEN_MAX = 10_000;
 
 export interface Delivery {
@@ -28,14 +29,39 @@ export function verifySignature(secret: string, body: Buffer, header: string | u
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-/** True the first time it sees an id. It remembers the last `max` ids. */
-export function createDedupe(max = SEEN_MAX) {
-  const seen = new Set<string>();
-  return (id: string) => {
-    if (seen.has(id)) return false;
-    seen.add(id);
-    if (seen.size > max) seen.delete(seen.values().next().value!);
-    return true;
+/**
+ * `fresh` is true the first time it sees an id. It remembers the last `max`
+ * ids, in `file` when given, so a restart or a redelivery can't start a run
+ * twice. `forget` lets a delivery whose handler failed be redelivered.
+ */
+export function createDedupe(file?: string, max = SEEN_MAX) {
+  const seen = new Set<string>(
+    file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [],
+  );
+  if (file) mkdirSync(dirname(file), { recursive: true });
+  // Renamed into place, so a crash mid-write never leaves a file that fails to parse.
+  const save = () => {
+    if (!file) return;
+    // A failed write costs one id's durability; throwing here would kill the dashboard.
+    try {
+      writeFileSync(`${file}.tmp`, JSON.stringify([...seen]));
+      renameSync(`${file}.tmp`, file);
+    } catch (error) {
+      console.error('webhooks: could not save delivery ids', error);
+    }
+  };
+  return {
+    fresh(id: string) {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      if (seen.size > max) seen.delete(seen.values().next().value!);
+      // Saved before any handler runs, so a crash mid-handler never repeats it.
+      save();
+      return true;
+    },
+    forget(id: string) {
+      if (seen.delete(id)) save();
+    },
   };
 }
 
@@ -54,8 +80,11 @@ async function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
  * The receiver's own server. It is public through the tunnel with no Access in
  * front, so the signature is the only gate.
  */
-export function createReceiver(secret: string, handlers: WebhookHandler[]): Server {
-  const fresh = createDedupe();
+export function createReceiver(
+  secret: string,
+  handlers: WebhookHandler[],
+  dedupe = createDedupe(),
+): Server {
   return createServer(async (req, res) => {
     const text = (status: number, message: string) =>
       res.writeHead(status, { 'content-type': 'text/plain' }).end(`${message}\n`);
@@ -82,16 +111,18 @@ export function createReceiver(secret: string, handlers: WebhookHandler[]): Serv
     // Answer before the handlers run: GitHub gives up on a delivery after 10 s.
     res.writeHead(202).end();
     // A redelivery is answered like the first, so GitHub's log shows it landed.
-    if (!fresh(id)) return;
+    if (!dedupe.fresh(id)) return;
     for (const handle of handlers) {
       Promise.resolve()
         .then(() => handle({ id, event, payload }))
-        .catch((error: unknown) =>
+        .catch((error: unknown) => {
+          // Redelivering it from the hook's log runs every handler again; the board's is idempotent.
+          dedupe.forget(id);
           console.error(
             `Webhook handler failed on ${event} ${id}:`,
             error instanceof Error ? error.message : error,
-          ),
-        );
+          );
+        });
     }
   });
 }
