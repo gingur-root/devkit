@@ -2,7 +2,7 @@
 // here. It keeps gingur/hooks' shape: verify the signature, drop a delivery it
 // has seen, then hand the event to each handler.
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { dirname } from 'node:path';
 
@@ -30,21 +30,33 @@ export function verifySignature(secret: string, body: Buffer, header: string | u
 }
 
 /**
- * True the first time it sees an id. It remembers the last `max` ids, in
- * `file` when given, so a restart or a manual redelivery can't start a run twice.
+ * `fresh` is true the first time it sees an id. It remembers the last `max`
+ * ids, in `file` when given, so a restart or a redelivery can't start a run
+ * twice. `forget` lets a delivery whose handler failed be redelivered.
  */
 export function createDedupe(file?: string, max = SEEN_MAX) {
   const seen = new Set<string>(
     file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [],
   );
   if (file) mkdirSync(dirname(file), { recursive: true });
-  return (id: string) => {
-    if (seen.has(id)) return false;
-    seen.add(id);
-    if (seen.size > max) seen.delete(seen.values().next().value!);
-    // Written before any handler runs, so a crash mid-handler never repeats it.
-    if (file) writeFileSync(file, JSON.stringify([...seen]));
-    return true;
+  // Renamed into place, so a crash mid-write never leaves a file that fails to parse.
+  const save = () => {
+    if (!file) return;
+    writeFileSync(`${file}.tmp`, JSON.stringify([...seen]));
+    renameSync(`${file}.tmp`, file);
+  };
+  return {
+    fresh(id: string) {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      if (seen.size > max) seen.delete(seen.values().next().value!);
+      // Saved before any handler runs, so a crash mid-handler never repeats it.
+      save();
+      return true;
+    },
+    forget(id: string) {
+      if (seen.delete(id)) save();
+    },
   };
 }
 
@@ -66,7 +78,7 @@ async function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
 export function createReceiver(
   secret: string,
   handlers: WebhookHandler[],
-  fresh = createDedupe(),
+  dedupe = createDedupe(),
 ): Server {
   return createServer(async (req, res) => {
     const text = (status: number, message: string) =>
@@ -94,16 +106,18 @@ export function createReceiver(
     // Answer before the handlers run: GitHub gives up on a delivery after 10 s.
     res.writeHead(202).end();
     // A redelivery is answered like the first, so GitHub's log shows it landed.
-    if (!fresh(id)) return;
+    if (!dedupe.fresh(id)) return;
     for (const handle of handlers) {
       Promise.resolve()
         .then(() => handle({ id, event, payload }))
-        .catch((error: unknown) =>
+        .catch((error: unknown) => {
+          // Redelivering it from the hook's log runs every handler again; the board's is idempotent.
+          dedupe.forget(id);
           console.error(
             `Webhook handler failed on ${event} ${id}:`,
             error instanceof Error ? error.message : error,
-          ),
-        );
+          );
+        });
     }
   });
 }
