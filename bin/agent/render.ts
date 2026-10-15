@@ -49,7 +49,8 @@ export interface RenderOptions {
   repo: string;
   issue: number;
   role: RoleName;
-  source: string;
+  /** Unset: the head of the repo's default branch, as a dispatched run reads it. */
+  source?: string;
   /** A review's base: the commit the candidate was built from. */
   base?: string;
   appId: number;
@@ -134,6 +135,9 @@ async function refuse(options: RenderOptions, reason: string): Promise<void> {
 }
 
 export async function render(options: RenderOptions): Promise<Job> {
+  const source =
+    options.source ||
+    (await rest<{ sha: string }>('GET', `/repos/${options.repo}/commits/HEAD`)).sha;
   const path = `/repos/${options.repo}/issues/${options.issue}`;
   const [issue, comments] = await Promise.all([
     rest<Issue>('GET', path),
@@ -176,10 +180,10 @@ export async function render(options: RenderOptions): Promise<Job> {
     },
     // A build works from the default branch as it is now, not the plan's older
     // source: the App can't push a branch whose workflow files differ from it.
-    source: options.source,
-    base: approved && (options.base ?? options.source),
+    source,
+    base: approved && (options.base ?? source),
     // A review checks out the candidate itself.
-    candidate: options.role === 'review' ? options.source : null,
+    candidate: options.role === 'review' ? source : null,
     artifacts: [],
     operations: [],
     attemptLimit: null,

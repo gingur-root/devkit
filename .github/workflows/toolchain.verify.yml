@@ -51,6 +51,11 @@ on:
         type: string
         required: false
         default: ''
+      pack:
+        description: 'An artifact from repo.pack to verify instead of checking out this repo: how the central caller verifies another repo (devkit#118).'
+        type: string
+        required: false
+        default: ''
       report:
         description: 'Report a failed check in `verified` instead of failing the job.'
         type: boolean
@@ -74,10 +79,25 @@ jobs:
       run:
         working-directory: ${{ inputs.cwd }}
     steps:
-      - uses: actions/checkout@v6
+      - if: inputs.pack == ''
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+
+      - if: inputs.pack != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.pack }}
+          path: ${{ runner.temp }}/pack
+
+      # A self-hosted runner keeps the workspace between jobs.
+      - if: inputs.pack != ''
+        working-directory: .
+        run: |
+          find . -mindepth 1 -delete
+          tar -xzf "$RUNNER_TEMP/pack/repo.tgz"
+          rm -rf "$RUNNER_TEMP/pack"
 
       - uses: gingur-root/devkit/actions/toolchain.setup@main
         with:
