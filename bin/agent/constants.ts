@@ -65,7 +65,21 @@ export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
 
 /** The stub's fixtures, in bin/agent/fixtures/. */
 /** `red` builds a change CI rejects, which the stub repair then fixes. */
-export const STUB_FIXTURES = ['ready', 'invalid', 'needs-you', 'rate-limit', 'red'] as const;
+export const STUB_FIXTURES = [
+  'ready',
+  'invalid',
+  'needs-you',
+  'rate-limit',
+  'red',
+  'story',
+  'followups',
+  'crash',
+  'timeout',
+  'missing',
+  'changes',
+  'never',
+  'advisory',
+] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
 /** The operator's GitHub user ID, as in the admission expression. */
@@ -82,6 +96,11 @@ export const READY_LABEL = 'ready-for-agent';
 export const RETRO_LABEL = 'retro';
 /** An agent says the issue needs the WSL desk. It starts nothing. */
 export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
+/** What an elevated subtask says. The pipeline never adds `agent:elevated` itself. */
+export const ELEVATED_NOTE = 'Needs the WSL desk: add `agent:elevated` after the plan.';
+
+/** Follow-ups one stage may file (devkit#12); the rest are dropped and reported. */
+export const FOLLOWUP_CAP = 5;
 
 export const BOARD_TITLE = 'Pipeline';
 export const STATUS_FIELD = 'Status';

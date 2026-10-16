@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 
-import { PRIORITIES } from './constants.ts';
+import { FOLLOWUP_CAP, PRIORITIES } from './constants.ts';
 
 const OUTCOMES = [
   'ready',
@@ -133,9 +133,17 @@ export const Result = z
       )
       .nullable(),
     subtasks: z
-      .array(z.object({ title: z.string(), body: z.string(), pr: z.boolean() }).strict())
-      .nullable(),
-    followups: z.array(z.object({ title: z.string(), body: z.string() }).strict()).nullable(),
+      .array(
+        z
+          .object({ title: z.string(), body: z.string(), pr: z.boolean(), elevated: z.boolean() })
+          .strict(),
+      )
+      .nullable()
+      .describe('A ready plan files each as a sub-issue of the card, which becomes a story.'),
+    followups: z
+      .array(z.object({ title: z.string(), body: z.string() }).strict())
+      .nullable()
+      .describe(`New issues to file, at most ${FOLLOWUP_CAP} per stage; extras are dropped.`),
     // A plan's proposed board Priority (devkit#115). Null on every other result.
     priority: z.enum(PRIORITIES).nullable(),
     // A retro issue's plan: what its approval files. Null on every other result.
@@ -152,6 +160,8 @@ export const Result = z
 
 export type Result = z.infer<typeof Result>;
 export type Failure = NonNullable<Result['failure']>;
+export type Subtask = NonNullable<Result['subtasks']>[number];
+export type Followup = NonNullable<Result['followups']>[number];
 
 // Without `$schema`: Claude's validator can't resolve the 2020-12 meta-schema URL.
 const { $schema: _, ...schema } = z.toJSONSchema(Result, { unrepresentable: 'any' });

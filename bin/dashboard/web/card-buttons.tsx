@@ -137,7 +137,7 @@ function NoteDialog({
           </DialogTitle>
           <DialogDescription>
             {confirming
-              ? 'The build runs on the WSL desk with your own admin access. It waits until you run elevated on there.'
+              ? 'The build runs on the WSL desk with your own admin access. It waits while the desk is off.'
               : isContinue
                 ? 'Approves the build. The planner reads your note, updates the plan if needed, then builds or asks again.'
                 : 'The planner reads your note, re-plans, then builds again.'}

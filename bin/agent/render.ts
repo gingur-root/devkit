@@ -1,11 +1,14 @@
 // Renders the job file and issue snapshot for one stage. The snapshot holds only
 // text by the operator or the pipeline App, so nobody else can steer an agent.
+// A subtask's snapshot starts with its parent story, and a story never builds:
+// each of its subtasks does (devkit#12).
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
 import { type Handoff, OPERATOR_ID, PIPELINE_BOT, RETRO_LABEL, STAGE_LABELS } from './constants.ts';
+import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
@@ -44,9 +47,11 @@ interface Event {
 
 export interface Issue extends Authored {
   number: number;
+  node_id?: string;
   title: string;
   labels: { name: string }[];
   pull_request?: unknown;
+  sub_issues_summary?: { total: number };
 }
 
 export interface RenderOptions {
@@ -76,14 +81,33 @@ function trusted(item: Authored, appId: number): boolean {
   );
 }
 
-export function issueSnapshot(issue: Issue, comments: Authored[], appId: number): string {
+export function issueSnapshot(
+  issue: Issue,
+  comments: Authored[],
+  appId: number,
+  parent: Issue | null = null,
+): string {
   const head = trusted(issue, appId)
     ? `# ${issue.title}\n\n${issue.body ?? ''}`
     : `# Issue #${issue.number}\n\n(Written by someone else, so left out.)`;
   const thread = comments
     .filter((comment) => trusted(comment, appId))
     .map((comment) => `## Comment, ${comment.created_at}\n\n${comment.body ?? ''}`);
-  return [head, ...thread].join('\n\n');
+  const snapshot = [head, ...thread].join('\n\n');
+  if (!parent) return snapshot;
+  // Only the story's title and body, so a subtask is planned within it.
+  const story = trusted(parent, appId)
+    ? `# Parent story #${parent.number}: ${parent.title}\n\n${parent.body ?? ''}`
+    : `# Parent story #${parent.number}\n\n(Written by someone else, so left out.)`;
+  return `${story}\n\n---\n\n${snapshot}`;
+}
+
+/** The issue's parent story, or null when it has none. */
+async function parentOf(path: string): Promise<Issue | null> {
+  return rest<Issue>('GET', `${path}/parent`).catch((error: Error) => {
+    if (!error.message.includes(' 404 ')) throw error;
+    return null;
+  });
 }
 
 /** The card's history for a retro: one line per timeline event. Comments are in the snapshot. */
@@ -158,13 +182,17 @@ export async function render(options: RenderOptions): Promise<Job> {
     options.source ||
     (await rest<{ sha: string }>('GET', `/repos/${options.repo}/commits/HEAD`)).sha;
   const path = `/repos/${options.repo}/issues/${options.issue}`;
-  const [issue, comments] = await Promise.all([
+  const [issue, comments, parent] = await Promise.all([
     rest<Issue>('GET', path),
     restAll<Authored>(`${path}/comments`),
+    parentOf(path),
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
   const retroPlan =
     options.role === 'plan' && issue.labels.some((label) => label.name === RETRO_LABEL);
+  // One run never carries out a whole story: each subtask builds on its own.
+  const subtasks = issue.sub_issues_summary?.total ?? 0;
+  const story = HANDOFF_ROLES.includes(options.role) && subtasks > 0;
   // A retro reads whatever the run left, ready plan or not.
   let approved: ReturnType<typeof approvedPlan> | null = null;
   if (options.role !== 'plan' && options.role !== 'retro') {
@@ -179,9 +207,15 @@ export async function render(options: RenderOptions): Promise<Job> {
         if (why) throw new Error(`Not approved: ${why}.`);
       }
       approved = approvedPlan(comments, options.appId, issueRevision);
+      if (story)
+        throw new Error(
+          `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
+        );
     } catch (error) {
       // The refusal itself still fails the job, even if saying so on the issue fails.
       await refuse(options, (error as Error).message).catch(console.error);
+      // Approved, so the story itself is why: it waits on the operator.
+      if (story && approved) await setStatus(options.repo, issue.node_id!, 'Needs you');
       throw error;
     }
   }
@@ -214,7 +248,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),
-    `${issueSnapshot(issue, comments, options.appId)}\n`,
+    `${issueSnapshot(issue, comments, options.appId, parent)}\n`,
   );
   if (approved) writeFileSync(join(options.out, PLAN_FILE), `${approved.plan}\n`);
   if (approved?.contract.triage)

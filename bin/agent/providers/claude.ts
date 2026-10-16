@@ -30,6 +30,7 @@ export function claudeOptions(
     env: ctx.env,
     model: role.model,
     effort: role.effort,
+    maxTurns: role.maxTurns,
     // No user, project or local settings, so no CLAUDE.md, hooks, plugins or
     // MCP servers from disk: only the role's own.
     settingSources: [],
@@ -140,9 +141,11 @@ export async function runClaude(input: RunInput): Promise<RunOutput> {
         if (message.subtype === 'success') result = message.structured_output;
         if (!ok)
           error =
-            message.subtype === 'success'
-              ? message.result
-              : message.errors.join('; ') || message.subtype;
+            message.subtype === 'error_max_turns'
+              ? `hit the ${role.maxTurns}-turn cap`
+              : message.subtype === 'success'
+                ? message.result
+                : message.errors.join('; ') || message.subtype;
         emit({
           type: 'result',
           subtype: message.subtype,

@@ -36,6 +36,16 @@ export function marker(role: string): string {
   return `<!-- devkit:${role} -->`;
 }
 
+/** Ends the body of a subtask the card's plan filed, so a retry finds it (devkit#12). */
+export function subtaskMarker(card: number): string {
+  return `<!-- devkit:subtask #${card} -->`;
+}
+
+/** Ends the body of a follow-up the card's stage filed, so a retry finds it (devkit#12). */
+export function followupMarker(card: number, stage: string): string {
+  return `<!-- devkit:followup #${card} ${stage} -->`;
+}
+
 /**
  * The stage's own comment: the App's, or the operator's when his `gh` writes on
  * the WSL desk (repos the App can't reach, infra#47).
