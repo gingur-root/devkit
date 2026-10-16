@@ -6,6 +6,7 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { cn } from 'cn';
 import {
+  type ComponentProps,
   lazy,
   type ReactNode,
   Suspense,
@@ -17,6 +18,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { ExtraProps } from 'streamdown';
 
 import { READY_LABEL, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
@@ -47,6 +49,7 @@ import {
   CardTitle,
 } from './components/ui/card.tsx';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from './components/ui/sheet.tsx';
+import { cardRef } from './links.ts';
 import './style.css';
 
 interface Ref {
@@ -294,6 +297,25 @@ function Board({ version }: { version: number }) {
   );
 }
 
+function ChatLink({ href, children, title }: ComponentProps<'a'> & ExtraProps) {
+  const card = cardRef(href);
+  return card ? (
+    <Badge
+      asChild
+      variant="outline"
+      className="max-w-full align-baseline whitespace-normal break-words"
+    >
+      <a href={`#${card.repo}/${card.number}`} title={title}>
+        {children}
+      </a>
+    </Badge>
+  ) : (
+    <a href={href} title={title} target="_blank" rel="noreferrer" className="underline">
+      {children}
+    </a>
+  );
+}
+
 function ChatMessage({ message, running }: { message: DashboardMessage; running: boolean }) {
   return (
     <Message from={message.role}>
@@ -306,7 +328,7 @@ function ChatMessage({ message, running }: { message: DashboardMessage; running:
               </p>
             ) : (
               // The coordinator's links open directly.
-              <MessageResponse key={i} linkSafety={{ enabled: false }}>
+              <MessageResponse key={i} linkSafety={{ enabled: false }} components={{ a: ChatLink }}>
                 {part.text}
               </MessageResponse>
             );
