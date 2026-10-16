@@ -5,8 +5,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vite-plus/test';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import { coordinatorOptions, routeOf } from './coordinator.ts';
+import { coordinatorOptions, routeOf, turnEvents } from './coordinator.ts';
 
 test('only a valid open_thread call routes', () => {
   assert.deepEqual(routeOf('mcp__github__open_thread', { repo: 'devkit', number: 71 }), {
@@ -38,4 +39,43 @@ test('only home turns can route (devkit#104)', () => {
   assert.ok(toolNames(true).includes('open_thread'));
   assert.ok(!toolNames(false).includes('open_thread'));
   assert.ok(toolNames(false).includes('read_issue'));
+});
+
+test('SDK progress, tool call and final answer become events in order', async () => {
+  // Only fields read by turnEvents; no SDK process or GitHub calls.
+  const messages = [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'note' }] } },
+    {
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'read-1',
+            name: 'mcp__github__read_issue',
+            input: { repo: 'devkit', number: 129 },
+          },
+        ],
+      },
+    },
+    {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'issue details' }],
+      },
+    },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'answer' }] } },
+    { type: 'result', subtype: 'success', is_error: false },
+  ] as SDKMessage[];
+  async function* sdkMessages() {
+    yield* messages;
+  }
+
+  assert.deepEqual(await Array.fromAsync(turnEvents(sdkMessages(), {})), [
+    { type: 'text', text: 'note' },
+    { type: 'tool', name: 'mcp__github__read_issue' },
+    { type: 'text', text: 'answer' },
+    { type: 'done', ok: true },
+  ]);
 });

@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 import { type FetchKeys, verifyAccessToken } from './access.ts';
 import type { MergeHook } from './actions.ts';
-import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, REPO_NAME } from './constants.ts';
+import { ACCESS_JWT_HEADER, DASHBOARD_ORIGIN, KEEP_ALIVE_MS, REPO_NAME } from './constants.ts';
 import type { BoardEventSource } from './events.ts';
 import { createStore, HOME_THREAD, threadKey } from './store.ts';
 import type { DashboardMessage } from './stream.ts';
@@ -13,8 +13,6 @@ export const WEB_DIST = new URL('./web/dist/', import.meta.url);
 const ASSET = /^\/assets\/[\w.-]+\.(js|css)$/;
 const TYPES = { js: 'text/javascript', css: 'text/css' } as const;
 const MAX_BODY = 64 * 1024;
-// Under Cloudflare's 100 s idle cutoff, so a quiet stream stays open.
-const KEEP_ALIVE_MS = 25_000;
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let body = '';
