@@ -71,6 +71,8 @@ export const STUB_FIXTURES = [
   'needs-you',
   'rate-limit',
   'red',
+  'story',
+  'followups',
   'crash',
   'timeout',
   'missing',
@@ -94,6 +96,11 @@ export const READY_LABEL = 'ready-for-agent';
 export const RETRO_LABEL = 'retro';
 /** An agent says the issue needs the WSL desk. It starts nothing. */
 export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
+/** What an elevated subtask says. The pipeline never adds `agent:elevated` itself. */
+export const ELEVATED_NOTE = 'Needs the WSL desk: add `agent:elevated` after the plan.';
+
+/** Follow-ups one stage may file (devkit#12); the rest are dropped and reported. */
+export const FOLLOWUP_CAP = 5;
 
 export const BOARD_TITLE = 'Pipeline';
 export const STATUS_FIELD = 'Status';

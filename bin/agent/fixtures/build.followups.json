@@ -1,0 +1,82 @@
+{
+  "job": "",
+  "role": "build",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "implemented",
+  "summary": "Stub build: adds STUB.md and proposes seven follow-ups, two more than one stage may file.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": [
+    {
+      "ref": "A1",
+      "change": "Added STUB.md.",
+      "response": null,
+      "evidence": null
+    }
+  ],
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Review the pull request.",
+  "findings": null,
+  "subtasks": null,
+  "followups": [
+    {
+      "title": "Stub follow-up 1",
+      "body": "Follow-up 1 of 7 from the stub build."
+    },
+    {
+      "title": "Stub follow-up 2",
+      "body": "Follow-up 2 of 7 from the stub build."
+    },
+    {
+      "title": "Stub follow-up 3",
+      "body": "Follow-up 3 of 7 from the stub build."
+    },
+    {
+      "title": "Stub follow-up 4",
+      "body": "Follow-up 4 of 7 from the stub build."
+    },
+    {
+      "title": "Stub follow-up 5",
+      "body": "Follow-up 5 of 7 from the stub build."
+    },
+    {
+      "title": "Stub follow-up 6",
+      "body": "Follow-up 6 of 7 from the stub build."
+    },
+    {
+      "title": "Stub follow-up 7",
+      "body": "Follow-up 7 of 7 from the stub build."
+    }
+  ],
+  "priority": null,
+  "triage": null,
+  "failure": null
+}

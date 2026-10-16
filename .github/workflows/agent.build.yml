@@ -14,6 +14,8 @@ name: Build
 # inputs.actor when the central caller dispatched the run, else github.actor_id.
 # A retro issue's plan (devkit#115) skips the builder: publish files the issues
 # its triage kept and closes the retro issue.
+# A story (an issue with sub-issues) is refused and goes to Needs you: build
+# each subtask instead (devkit#12).
 # Callers set concurrency (one group per card) at their own workflow level.
 
 on:
@@ -34,7 +36,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit` or `red`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story` or `followups`.'
         type: string
         required: false
         default: 'ready'

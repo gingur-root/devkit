@@ -2,10 +2,10 @@
 // comment; a loosened schema would pass a bad result silently.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 
-import { Result } from './result.ts';
+import { Result, RESULT_JSON_SCHEMA } from './result.ts';
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`fixtures/${name}.json`, import.meta.url), 'utf8'));
@@ -18,4 +18,20 @@ test('only a complete, strict result envelope validates', () => {
   assert.ok(!Result.safeParse({ ...ready, criteria: undefined }).success, 'null, never absent');
   const long = Result.parse({ ...ready, summary: 'word '.repeat(163) });
   assert.equal(long.summary.split(' ').length, 151, 'a long summary is clipped to 150 words and …');
+});
+
+test('every role may return follow-ups, and each subtask says whether it needs the desk', () => {
+  const required = RESULT_JSON_SCHEMA.required as string[];
+  assert.ok(required.includes('followups') && required.includes('subtasks'));
+  const valid = readdirSync(new URL('fixtures/', import.meta.url)).filter(
+    (f) => f.endsWith('.json') && !f.endsWith('.invalid.json'),
+  );
+  assert.ok(valid.includes('plan.story.json') && valid.includes('build.followups.json'));
+  for (const file of valid) {
+    const parsed = Result.safeParse(fixture(file.replace(/\.json$/, '')));
+    assert.ok(parsed.success, `${file}: ${parsed.error?.message}`);
+  }
+  const story = fixture('plan.story');
+  const { elevated: _, ...noDesk } = story.subtasks[0];
+  assert.ok(!Result.safeParse({ ...story, subtasks: [noDesk] }).success, 'elevated is required');
 });
