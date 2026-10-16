@@ -37,7 +37,7 @@ on:
         required: false
         default: 'test'
       build:
-        description: 'pnpm script for build. Empty skips it.'
+        description: 'pnpm script for build. Empty skips it, and so does a repo without that script.'
         type: string
         required: false
         default: 'build'
@@ -140,7 +140,8 @@ jobs:
         name: Build
         continue-on-error: ${{ inputs.report }}
         if: ${{ inputs.build != '' }}
-        run: pnpm "$SCRIPT"
+        # A source-only repo has no build, and callers like review pass the default.
+        run: pnpm run --if-present "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.build }}
 

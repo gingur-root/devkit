@@ -32,7 +32,10 @@ Produce an implementation-ready plan for this issue.
    where a reviewer could accept one deliverable and reject its neighbor.
    For wide compatibility changes, propose expand, migrate, and contract steps
    when separate green slices are feasible. Return proposed child issues as
-   artifacts for the controller to publish.
+   artifacts for the controller to publish. Keep `.github/workflows` edits out
+   of every build: the App can't push them, so a build that needs one stops
+   blocked. List each workflow edit as a follow-up for the operator to land by
+   hand, and keep the build's criteria checkable without it.
 
 6. Read the plan as a capable builder without this conversation. Resolve
    questions answered by the repo and make routine choices explicitly.
