@@ -3,7 +3,7 @@
 // retry must never file them twice.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, vi } from 'vite-plus/test';
@@ -20,6 +20,7 @@ import {
   needsYouText,
   nextStep,
   passes,
+  planComment,
   publish,
   publishRetro,
   readyToBuild,
@@ -32,11 +33,13 @@ import {
 } from './publish.ts';
 import type { Gate, LoopState } from './publish.ts';
 import {
+  CONTRACT_PREFIX,
   ISSUES_FILE,
   JOB_FILE,
   type Job,
   marker,
   PLAN_FILE,
+  PlanContract,
   RESULT_FILE,
   revision,
 } from './job.ts';
@@ -83,7 +86,7 @@ const planJob: Job = {
   role: 'plan',
   objective: '',
   repo: 'o/r',
-  issue: { number: 1, title: 'T', revision: 'rev' },
+  issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
   plan: null,
   source: 'abc',
   base: null,
@@ -92,6 +95,47 @@ const planJob: Job = {
   operations: [],
   attemptLimit: null,
 };
+
+test('plan comments record body visibility and name a withheld body in every bold head', () => {
+  const out = mkdtempSync(join(tmpdir(), 'plan-body-'));
+  const ready = Result.parse(
+    JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
+  );
+  writeFileSync(join(out, PLAN_FILE), 'plan');
+  const variants = [
+    { result: ready, handoff: null, story: [] },
+    { result: ready, handoff: 'build', story: [] },
+    { result: ready, handoff: 'elevated', story: [] },
+    { result: ready, handoff: null, story: [{ number: 2, title: 'Subtask', elevated: false }] },
+    { result: { ...ready, outcome: 'needs-input' }, handoff: null, story: [] },
+    { result: { ...ready, status: 'failed', outcome: null }, handoff: null, story: [] },
+    { result: { ...ready, triage: [] }, handoff: null, story: [] },
+  ] as const;
+  try {
+    for (const bodySeen of [false, true]) {
+      for (const variant of variants) {
+        const body = planComment(
+          { ...planJob, issue: { ...planJob.issue, bodySeen } },
+          variant.result as Result,
+          out,
+          variant.handoff,
+          [...variant.story],
+        );
+        const head = body.split('\n\n')[1]!;
+        if (bodySeen) assert.doesNotMatch(head, /without the issue body/);
+        else
+          assert.match(
+            head,
+            /^\*\*Plan: .* \(written without the issue body, which someone else wrote\)\*\*$/,
+          );
+        const json = body.split(CONTRACT_PREFIX)[1]!.split(' -->')[0]!;
+        assert.equal(PlanContract.parse(JSON.parse(json)).bodySeen, bodySeen);
+      }
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
 
 for (const status of ['blocked', 'failed'] as const) {
   test(`a ${status} result stops at its role with the reason`, () => {
@@ -170,7 +214,7 @@ test('candidate mismatches are stale, while other contract mismatches stay contr
     role: 'review',
     objective: '',
     repo: 'o/r',
-    issue: { number: 1, title: 'T', revision: 'rev' },
+    issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
     plan: null,
     source: 'new',
     base: null,
@@ -395,7 +439,7 @@ test("a stop names the CLI's failure class and a rate limit's reset time", () =>
 });
 
 test('every pushed commit lists the operator as co-author', () => {
-  const issue = { number: 76, title: 'Add a thing', revision: '' };
+  const issue = { number: 76, title: 'Add a thing', revision: '', bodySeen: true };
   for (const role of ['build', 'repair', 'elevated']) {
     const trailers = commitMessage({ role, issue }).split('\n\n').at(-1);
     assert.equal(
@@ -424,7 +468,7 @@ test("only a retro issue's plan triages, and every other plan sets a priority", 
     role: 'plan',
     objective: '',
     repo: 'o/r',
-    issue: { number: 1, title: 'T', revision: 'rev' },
+    issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
     plan: null,
     source: 'abc',
     base: null,
@@ -474,7 +518,7 @@ test('a retro files one issue to plan, but only comments on a retro issue or wit
   );
   const job = {
     repo: 'gingur-root/scratch',
-    issue: { number: 1, title: 'T', revision: '' },
+    issue: { number: 1, title: 'T', revision: '', bodySeen: true },
   } as Job;
   const issue = {
     id: 1,
@@ -622,7 +666,12 @@ const storyJob: Job = {
   role: 'plan',
   objective: '',
   repo: 'o/r',
-  issue: { number: 1, title: CARD.title, revision: revision(CARD.title, CARD.body) },
+  issue: {
+    number: 1,
+    title: CARD.title,
+    revision: revision(CARD.title, CARD.body),
+    bodySeen: true,
+  },
   plan: null,
   source: 'abc',
   base: null,

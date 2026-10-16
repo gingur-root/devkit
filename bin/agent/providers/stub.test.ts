@@ -25,7 +25,7 @@ for (const [fixture, failureClass, reason] of [
       role: 'plan',
       objective: '',
       repo: 'o/r',
-      issue: { number: 1, title: 'T', revision: 'rev' },
+      issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
       plan: null,
       source: 'abc',
       base: null,

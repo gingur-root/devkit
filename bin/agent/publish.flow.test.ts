@@ -101,7 +101,12 @@ function harness() {
       role,
       objective: '',
       repo: 'o/r',
-      issue: { number: 1, title: issue.title, revision: revision(issue.title, issue.body) },
+      issue: {
+        number: 1,
+        title: issue.title,
+        revision: revision(issue.title, issue.body),
+        bodySeen: true,
+      },
       plan: null,
       source: pull.head.sha,
       base: 'base',

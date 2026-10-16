@@ -143,6 +143,7 @@ export function approvedPlan(
   comments: Authored[],
   appId: number,
   issueRevision: string,
+  bodySeen: boolean,
 ): { plan: string; contract: PlanContract } {
   // The operator's own comment is the plan where his `gh` publishes (infra#47).
   const comment = comments.find(
@@ -161,6 +162,8 @@ export function approvedPlan(
     throw new Error('The plan text was edited after it was published. Run `agent:plan` again.');
   if (contract.issueRevision !== issueRevision)
     throw new Error('The issue changed after the plan. Run `agent:plan` again.');
+  if (contract.bodySeen === false && bodySeen)
+    throw new Error('The plan was written without the issue body. Run `agent:plan` again.');
   return { plan, contract };
 }
 
@@ -188,6 +191,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     parentOf(path),
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
+  const bodySeen = trusted(issue, options.appId);
   const retroPlan =
     options.role === 'plan' && issue.labels.some((label) => label.name === RETRO_LABEL);
   // One run never carries out a whole story: each subtask builds on its own.
@@ -206,7 +210,7 @@ export async function render(options: RenderOptions): Promise<Job> {
         );
         if (why) throw new Error(`Not approved: ${why}.`);
       }
-      approved = approvedPlan(comments, options.appId, issueRevision);
+      approved = approvedPlan(comments, options.appId, issueRevision, bodySeen);
       if (story)
         throw new Error(
           `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
@@ -228,6 +232,7 @@ export async function render(options: RenderOptions): Promise<Job> {
       number: issue.number,
       title: issue.title,
       revision: issueRevision,
+      bodySeen,
     },
     plan: approved && {
       revision: approved.contract.planRevision,

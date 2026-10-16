@@ -10,7 +10,7 @@ import { test, vi } from 'vite-plus/test';
 
 import renderCommand from '../commands/agent/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
-import { CONTRACT_PREFIX, marker, PLAN_END, PLAN_START, revision } from './job.ts';
+import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
 import { approvedPlan, issueSnapshot, openIssues, render } from './render.ts';
 
 const APP = 7;
@@ -36,22 +36,141 @@ function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP
 }
 
 test('only the App’s ready, unedited plan for the live issue is approved', () => {
-  assert.equal(approvedPlan([comment()], APP, ISSUE).plan, PLAN);
-  assert.equal(approvedPlan([comment()], APP, ISSUE).contract.triage, null, 'a pre-triage plan');
+  assert.equal(approvedPlan([comment()], APP, ISSUE, true).plan, PLAN);
   assert.equal(
-    approvedPlan([{ ...comment(), body: comment().body.replace(/\n/g, '\r\n') }], APP, ISSUE).plan,
+    approvedPlan([comment()], APP, ISSUE, true).contract.triage,
+    null,
+    'a pre-triage plan',
+  );
+  assert.equal(
+    approvedPlan([{ ...comment(), body: comment().body.replace(/\n/g, '\r\n') }], APP, ISSUE, true)
+      .plan,
     PLAN,
     'CRLF from GitHub still matches',
   );
-  assert.throws(() => approvedPlan([comment(PLAN, {}, 99)], APP, ISSUE), /No plan comment/);
+  assert.throws(() => approvedPlan([comment(PLAN, {}, 99)], APP, ISSUE, true), /No plan comment/);
   const desk = { ...comment(PLAN, {}, 99), user: { id: OPERATOR_ID } };
-  assert.equal(approvedPlan([desk], APP, ISSUE).plan, PLAN, 'the operator’s gh published it');
-  assert.throws(() => approvedPlan([comment(`${PLAN}!`)], APP, ISSUE), /edited/);
+  assert.equal(approvedPlan([desk], APP, ISSUE, true).plan, PLAN, 'the operator’s gh published it');
+  assert.throws(() => approvedPlan([comment(`${PLAN}!`)], APP, ISSUE, true), /edited/);
   assert.throws(
-    () => approvedPlan([comment(PLAN, { outcome: 'needs-input' })], APP, ISSUE),
+    () => approvedPlan([comment(PLAN, { outcome: 'needs-input' })], APP, ISSUE, true),
     /not ready/,
   );
-  assert.throws(() => approvedPlan([comment()], APP, revision('Title', 'New body')), /changed/);
+  assert.throws(
+    () => approvedPlan([comment()], APP, revision('Title', 'New body'), true),
+    /changed/,
+  );
+});
+
+test('a plan written without the body is refused once the issue is trusted', () => {
+  assert.throws(
+    () => approvedPlan([comment(PLAN, { bodySeen: false })], APP, ISSUE, true),
+    /The plan was written without the issue body\. Run `agent:plan` again\./,
+  );
+});
+
+test('legacy plans and plans with the same body visibility are approved', () => {
+  const legacy = approvedPlan([comment()], APP, ISSUE, true);
+  assert.equal(legacy.plan, PLAN);
+  assert.equal(legacy.contract.bodySeen, null);
+  assert.equal(approvedPlan([comment(PLAN, { bodySeen: true })], APP, ISSUE, true).plan, PLAN);
+  assert.equal(approvedPlan([comment(PLAN, { bodySeen: false })], APP, ISSUE, false).plan, PLAN);
+});
+
+test('render records whether the planner can see the body, and Job.parse keeps it', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-body-'));
+  let author = OPERATOR_ID;
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: author },
+        labels: [],
+      },
+    };
+    return new Response(JSON.stringify(routes[new URL(url).pathname] ?? []));
+  });
+  try {
+    for (const [id, bodySeen] of [
+      [OPERATOR_ID, true],
+      [1, false],
+    ] as const) {
+      author = id;
+      await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'abc', appId: APP, out });
+      const json = JSON.parse(readFileSync(join(out, 'job.json'), 'utf8'));
+      assert.equal(json.issue.bodySeen, bodySeen);
+      assert.equal(Job.parse(json).issue.bodySeen, bodySeen);
+      assert.equal(readFileSync(join(out, 'issue.md'), 'utf8').includes('Body'), bodySeen);
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+test('refusing a plan written without the body comments and drops the stage label', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-refuse-body-'));
+  const writes: { method: string | undefined; path: string; body: unknown }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      },
+      '/repos/o/r/issues/1/comments': [comment(PLAN, { bodySeen: false })],
+    };
+    if (init.method !== 'GET') {
+      writes.push({
+        method: init.method,
+        path,
+        body: init.body ? JSON.parse(String(init.body)) : null,
+      });
+    }
+    return new Response(JSON.stringify(init.method === 'GET' ? (routes[path] ?? []) : {}));
+  });
+  try {
+    for (const [role, label] of [
+      ['build', 'agent%3Abuild'],
+      ['elevated', 'agent%3Aelevated'],
+      ['review', 'agent%3Abuild'],
+    ] as const) {
+      writes.length = 0;
+      await assert.rejects(
+        render({
+          repo: 'o/r',
+          issue: 1,
+          role,
+          source: 'abc',
+          appId: APP,
+          dispatcher: OPERATOR_ID,
+          out,
+        }),
+        /without the issue body/,
+      );
+      assert.equal(writes.length, 2);
+      assert.equal(writes[0]!.method, 'POST');
+      assert.equal(writes[0]!.path, '/repos/o/r/issues/1/comments');
+      assert.match(
+        (writes[0]!.body as { body: string }).body,
+        /The plan was written without the issue body\. Run `agent:plan` again\./,
+      );
+      assert.equal(writes[1]!.method, 'DELETE');
+      assert.equal(writes[1]!.path, `/repos/o/r/issues/1/labels/${label}`);
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
 });
 
 test('a build the App started without a Continue never renders, even with a ready plan', async () => {

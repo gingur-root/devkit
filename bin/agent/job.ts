@@ -64,6 +64,8 @@ export const PlanContract = z.object({
   outcome: z.string().nullable(),
   source: z.string(),
   issueRevision: z.string(),
+  // Absent on plans published before devkit#168.
+  bodySeen: z.boolean().nullable().default(null),
   checks: z.record(z.string(), z.string()),
   critique: z.boolean().nullable(),
   // Absent on plans published before devkit#115.
@@ -76,7 +78,12 @@ export const Job = z.object({
   role: z.string(),
   objective: z.string(),
   repo: z.string(),
-  issue: z.object({ number: z.number().int(), title: z.string(), revision: z.string() }),
+  issue: z.object({
+    number: z.number().int(),
+    title: z.string(),
+    revision: z.string(),
+    bodySeen: z.boolean(),
+  }),
   plan: z.object({ revision: z.string(), criteria: z.array(z.string()) }).nullable(),
   source: z.string(),
   base: z.string().nullable(),

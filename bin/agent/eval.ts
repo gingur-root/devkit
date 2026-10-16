@@ -179,7 +179,12 @@ function runCase(
       role,
       objective: ROLES[role].objective,
       repo: `eval/${name}`,
-      issue: { number: 1, title: issue.title, revision: revision(issue.title, issue.body) },
+      issue: {
+        number: 1,
+        title: issue.title,
+        revision: revision(issue.title, issue.body),
+        bodySeen: true,
+      },
       plan: null,
       source,
       base: null,
