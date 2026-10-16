@@ -39,12 +39,13 @@ export default {
     const { webhookBoard } = await import('../../dashboard/events.ts');
     const { createDedupe, createReceiver } = await import('../../webhooks/receiver.ts');
     const { pipelineHandler } = await import('../../webhooks/pipeline.ts');
+    const { boardEventsHandler } = await import('../../webhooks/board-events.ts');
     const { homedir } = await import('node:os');
     const { join } = await import('node:path');
     const board = webhookBoard();
     createReceiver(
       secret,
-      [board.handle, pipelineHandler()],
+      [board.handle, pipelineHandler(), boardEventsHandler()],
       createDedupe(join(homedir(), '.local/state/devkit-dashboard/deliveries.json')),
     ).listen(hooksPort, '127.0.0.1');
     console.log(`Webhook receiver on http://127.0.0.1:${hooksPort}`);
