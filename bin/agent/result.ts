@@ -66,8 +66,11 @@ export const Result = z
     outcome: Outcome.nullable(),
     summary: z
       .string()
-      .refine((text) => text.split(/\s+/).filter(Boolean).length <= SUMMARY_WORDS, {
-        message: `summary is over ${SUMMARY_WORDS} words`,
+      // Clipped, not refused: the schema can't count words, so an agent never sees
+      // the cap, and a refusal threw away whole plans (devkit#145).
+      .overwrite((text) => {
+        const words = text.split(/\s+/).filter(Boolean);
+        return words.length > SUMMARY_WORDS ? `${words.slice(0, SUMMARY_WORDS).join(' ')} …` : text;
       }),
     evidence: z.array(
       z
@@ -152,5 +155,5 @@ export type Failure = NonNullable<Result['failure']>;
 // Without `$schema`: Claude's validator can't resolve the 2020-12 meta-schema URL.
 const { $schema: _, ...schema } = z.toJSONSchema(Result, { unrepresentable: 'any' });
 
-/** What the executors' native schema options take. The word cap is checked on validation only. */
+/** What the executors' native schema options take. The word cap is applied on validation only. */
 export const RESULT_JSON_SCHEMA: Record<string, unknown> = schema;
