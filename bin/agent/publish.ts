@@ -10,7 +10,7 @@
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { git } from '../git.ts';
+import { git, gitAsOperator } from '../git.ts';
 import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
@@ -261,7 +261,8 @@ function pushCandidate(
     ['commit-tree', tree, '-p', parent, '-m', commitMessage(job)],
     PIPELINE_BOT,
   );
-  git(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
+  // A checkout with saved credentials pushes as the App; the desk's has none.
+  gitAsOperator(checkout, ['push', 'origin', `${commit}:refs/heads/${branch}`]);
   return { branch, commit };
 }
 

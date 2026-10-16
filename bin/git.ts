@@ -13,6 +13,15 @@ export function git(cwd: string, args: string[], as?: Identity): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: identityEnv(as) }).trim();
 }
 
+/**
+ * Runs git without GH_TOKEN, so on the WSL desk `gh`'s credential helper uses
+ * the operator's own login, which can push workflow files (the App can't).
+ */
+export function gitAsOperator(cwd: string, args: string[]): string {
+  const { GH_TOKEN: _, ...env } = process.env;
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env }).trim();
+}
+
 /** Runs git in `cwd` and returns its raw output, for binary patches. */
 export function gitBytes(cwd: string, args: string[]): Buffer {
   return execFileSync('git', args, { cwd });

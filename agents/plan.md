@@ -32,10 +32,10 @@ Produce an implementation-ready plan for this issue.
    where a reviewer could accept one deliverable and reject its neighbor.
    For wide compatibility changes, propose expand, migrate, and contract steps
    when separate green slices are feasible. Return proposed child issues as
-   artifacts for the controller to publish. Keep `.github/workflows` edits out
-   of every build: the App can't push them, so a build that needs one stops
-   blocked. List each workflow edit as a follow-up for the operator to land by
-   hand, and keep the build's criteria checkable without it.
+   artifacts for the controller to publish. A plan that edits `.github/workflows` is an
+   elevated plan: the App can't push workflow files, so a build stops blocked.
+   Say in the summary to approve it with `agent:elevated`, not `/approve`:
+   the elevated run on the WSL desk pushes as the operator.
 
 6. Read the plan as a capable builder without this conversation. Resolve
    questions answered by the repo and make routine choices explicitly.
