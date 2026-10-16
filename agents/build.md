@@ -46,4 +46,9 @@ Implement the supplied approved issue and plan in the assigned worktree.
 - `outcome` is `implemented` when the change is in the tree and its checks
   pass. Otherwise `status` is `blocked` or `failed`, with the reason in
   `summary` and any question in `questions`.
+- A check that needs access you don't have (the App token, a live pipeline or
+  scratch run, the WSL desk) is the reviewer's or operator's. It doesn't block
+  you: record it in `evidence` as `not-verified`, with why, and still return
+  `implemented` when every check you can run passes. Blocking throws your
+  change away.
 - The summary opens the pull request, so lead with what changed.

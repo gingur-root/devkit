@@ -138,8 +138,9 @@ lands instead of sitting in a comment (devkit#115):
    says whether to plan it now or leave it in the backlog, and whether it
    needs the WSL desk.
 3. Approve the plan as usual (`/approve`, or **Continue**). Instead of a
-   build, the run files the new issues with `retro` (plus `agent:plan` or
-   `needs:elevated` as the plan said), comments on linked issues, and closes
+   build, the run files the new issues (with `agent:plan` or
+   `needs:elevated` as the plan said, and a link back to the retro), comments
+   on linked issues, and closes
    the retro issue. No PR.
 
 - A retro with no findings (an outage, a rate limit) only comments, as does
