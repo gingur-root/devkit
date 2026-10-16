@@ -484,7 +484,7 @@ export function loopComment(state: LoopState): string {
 }
 
 export function readLoopState(body: string | null): LoopState {
-  const json = /^<!-- devkit:loop-state (.*) -->$/m.exec(body ?? '')?.[1];
+  const json = [...(body ?? '').matchAll(/^<!-- devkit:loop-state (.*) -->$/gm)].at(-1)?.[1];
   return json
     ? (JSON.parse(json) as LoopState)
     : { rounds: REPAIR_ROUNDS, failures: 0, entries: [] };
@@ -706,9 +706,9 @@ async function publishBuildOrPlan(
     }
   }
   if (job.role === 'repair') {
-    pull ??= (await openPull(job, branchOf(job))) ?? null;
-    if (pull)
-      await updateLoop(job, pull, options, {
+    const logPull = pull ?? (await openPull(job, branchOf(job)));
+    if (logPull)
+      await updateLoop(job, logPull, options, {
         candidate: candidate || job.source,
         ...('result' in v
           ? { hypotheses: v.result.hypotheses ?? [] }
@@ -854,7 +854,8 @@ export async function publish(options: PublishOptions): Promise<void> {
   const reviewFile = join(options.in, REVIEW_FILE);
   if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {
     const reason = repairMap(Result.parse(JSON.parse(readFileSync(reviewFile, 'utf8'))), v.result);
-    if (reason) v = { stage: 'validate', reason };
+    if (reason)
+      v = { stage: 'validate', reason: `${reason}\n\n${v.result.summary.replace(/\.$/, '')}` };
   }
   if (job.role === 'retro') {
     if ('stage' in v) throw new Error(`Retro stopped at ${v.stage}: ${v.reason}.`);

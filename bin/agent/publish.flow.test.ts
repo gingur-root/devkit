@@ -256,3 +256,53 @@ test('an incomplete repair map stops at validate before any git write', async ()
   assert.equal(state.entries.at(-1)?.step, 'stop');
   assert.deepEqual(state.entries.at(-1)?.open, ['F1']);
 });
+
+test('a blocked repair logs its hypotheses without claiming a fix was pushed', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const summary = 'No change: F1 is already fixed on this candidate.';
+  const result = await h.stage(
+    {
+      ...repair,
+      status: 'blocked',
+      outcome: null,
+      summary,
+      changes: [
+        { ref: 'F1', change: null, response: 'Already fixed', evidence: 'Checked the candidate' },
+      ],
+    },
+    1,
+    { review: changes },
+  );
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+  assert.ok(!result.output.includes('candidate='));
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  const issueComment = h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!;
+  assert.match(String(issueComment.body.body), /\*\*Repair blocked\*\*/);
+  assert.ok(String(issueComment.body.body).includes(summary));
+  assert.ok(!String(issueComment.body.body).includes('pushed a fix'));
+  assert.ok(!String(issueComment.body.body).includes('reviewing it again'));
+  assert.equal(h.writes.filter((w) => w.path.endsWith('/reviews')).length, 1);
+  assert.equal(h.comments.length, 1);
+  const state = readLoopState(h.comments[0]!.body);
+  assert.equal(state.entries.at(-1)?.candidate, 'candidate');
+  assert.deepEqual(state.entries.at(-1)?.hypotheses, repair.hypotheses);
+});
+
+for (const status of ['blocked', 'failed'] as const) {
+  test(`a ${status} repair with no map retains its summary in the validation stop`, async () => {
+    const h = harness();
+    const summary = 'Repair cannot continue: fixture access is unavailable.';
+    await h.stage({ ...repair, status, outcome: null, summary, changes: null }, 1, {
+      review: changes,
+    });
+    assert.equal(vi.mocked(git).mock.calls.length, 0);
+    assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    const issueComment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+    assert.match(String(issueComment.body.body), /stopped at `validate`/);
+    assert.match(String(issueComment.body.body), /repair map is missing refs: F1/);
+    assert.ok(String(issueComment.body.body).includes(summary));
+  });
+}

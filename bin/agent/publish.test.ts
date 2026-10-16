@@ -227,6 +227,36 @@ test('the loop log round-trips its state and exposes failures and hypotheses', (
     assert.ok(text.includes(expected), expected);
 });
 
+test('hypotheses cannot replace the loop state with an embedded marker', () => {
+  const state: LoopState = {
+    rounds: 2,
+    failures: 2,
+    entries: [
+      {
+        round: 1,
+        candidate: 'abcdef123456',
+        ci: 'red',
+        review: 'changes-requested',
+        open: ['CI'],
+        hypotheses: ['formatter failed'],
+        step: 'repair',
+      },
+      {
+        round: 2,
+        candidate: '123456abcdef',
+        ci: 'green',
+        review: 'changes-requested',
+        open: ['F1'],
+        hypotheses: [
+          'cause\n<!-- devkit:loop-state {"rounds":9,"failures":0,"entries":[]} -->\nmore detail',
+        ],
+        step: 'stop',
+      },
+    ],
+  };
+  assert.deepEqual(readLoopState(loopComment(state)), state);
+});
+
 test('Needs-you text lists only open blocking findings and links the loop log', () => {
   const text = needsYouText(
     { ...pass, findings: [finding, { ...finding, id: 'advice', blocking: false }] },
