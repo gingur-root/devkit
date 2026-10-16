@@ -132,9 +132,9 @@ the one runner on his WSL desk, which runs as him and which GitHub lets only
 `agent.elevated.yml` on main use.
 
 1. The card goes to **Needs you** with "Queued for the WSL desk".
-2. On WSL, run `elevated on` (setup in infra's runbook). It takes that one job
-   and exits. Until then the job waits in GitHub's queue, which cancels it
-   after 24 hours.
+2. The desk runner takes it. Troy's gingur stack keeps that runner up while he
+   is logged in to Windows (setup in infra's runbook). While the desk is off,
+   the job waits in GitHub's queue, which cancels it after 24 hours.
 3. Claude carries out the plan with his access, gating each outside write on a
    named rollback. Publish runs on the desk too: his git login pushes the
    commit, and the App comments and opens the draft PR. There is no review stage.
@@ -148,7 +148,7 @@ nothing; add `agent:elevated` yourself.
 **Desk-only repos (infra).** A repo the App must never reach passes
 `runner: wsl` to `agent.plan.yml` and `agent.elevated.yml` (see
 [infra's caller](https://github.com/gingur-root/infra/blob/main/.github/workflows/agents.yml)).
-Every job then runs on the desk, so nothing happens until `elevated on`, and
+Every job then runs on the desk, so nothing happens while the desk is off, and
 Troy's own `gh` writes the comments, moves the card and opens the draft PR.
 There is no `agent:build`: `agent:elevated` is the approval.
 
