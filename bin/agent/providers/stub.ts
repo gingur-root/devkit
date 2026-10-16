@@ -5,12 +5,14 @@
 // operator a question; every other role runs `ready`. `rate-limit` returns no
 // result and a rate limit, as a CLI that hit one does. `red` changes only the
 // build, whose STUB.md fails a format check until the repair rewrites it.
+// `changes` asks for repair until STUB.md matches the repair fixture; `never`
+// always asks for repair; `advisory` passes with an inline advisory finding.
 
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
-import { JOB_FILE, Job, PLAN_FILE } from '../job.ts';
+import { JOB_FILE, Job, PLAN_FILE, REVIEW_FILE } from '../job.ts';
 import type { RunInput, RunOutput } from './shared.ts';
 
 const FIXTURES = new URL('../fixtures/', import.meta.url);
@@ -28,14 +30,33 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     };
   }
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
-  const own = new URL(`${job.role}.${fixture}.json`, FIXTURES);
+  const repaired =
+    fixture === 'changes' &&
+    job.role === 'review' &&
+    existsSync(join(input.cwd, 'STUB.md')) &&
+    readFileSync(join(input.cwd, 'STUB.md'), 'utf8') ===
+      readFileSync(new URL('repair.md', FIXTURES), 'utf8');
+  const own = new URL(`${job.role}.${repaired ? 'ready' : fixture}.json`, FIXTURES);
   const file = existsSync(own) ? own : new URL(`${job.role}.ready.json`, FIXTURES);
   const result = JSON.parse(readFileSync(file, 'utf8'));
+  const reviewFile = join(input.in, REVIEW_FILE);
+  if (job.role === 'repair' && existsSync(reviewFile)) {
+    const review = JSON.parse(readFileSync(reviewFile, 'utf8'));
+    result.changes = (review.findings ?? []).map((finding: { id: string }) => ({
+      ref: finding.id,
+      change: 'Rewrote STUB.md.',
+      response: null,
+      evidence: null,
+    }));
+  }
   // A plan writes plan.md; a build or repair changes the checkout; a review or retro writes nothing.
   if (job.role !== 'review' && job.role !== 'retro') {
     const target = job.role === 'plan' ? join(input.out, PLAN_FILE) : join(input.cwd, 'STUB.md');
     const ownText = new URL(`${job.role}.${fixture}.md`, FIXTURES);
     copyFileSync(existsSync(ownText) ? ownText : new URL(`${job.role}.md`, FIXTURES), target);
+    // Every never-pass repair must produce a new candidate to reach the cap.
+    if (fixture === 'never' && job.role === 'repair')
+      appendFileSync(target, `\nRepair of candidate ${job.source}.\n`);
   }
   input.emit({ type: 'init', fixture });
   input.emit({ type: 'result', ok: true, usage: { input_tokens: 0, output_tokens: 0 } });

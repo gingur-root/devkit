@@ -11,6 +11,7 @@ export default {
       .requiredOption('--out <dir>', "the agent's output directory ($AGENT_OUT)")
       .option('--checkout <dir>', "a build's target repo at the job's source, with push access")
       .option('--round <n>', "a review's repair round: 0 for the build's review", Number)
+      .option('--rounds <n>', 'the repair-round cap; default REPAIR_ROUNDS', Number)
       .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed");
   },
   async run(options) {

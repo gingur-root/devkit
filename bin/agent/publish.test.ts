@@ -11,13 +11,20 @@ import {
   commitMessage,
   failureReason,
   gated,
+  loopComment,
+  needsYouText,
+  nextStep,
   passes,
   publishRetro,
   readyToBuild,
+  readLoopState,
+  repairMap,
   repairable,
+  reviewComments,
   stopped,
   verdict,
 } from './publish.ts';
+import type { Gate, LoopState } from './publish.ts';
 import { ISSUES_FILE, type Job, PLAN_FILE, RESULT_FILE } from './job.ts';
 import { Result } from './result.ts';
 
@@ -36,6 +43,229 @@ const finding = {
   impact: '',
   fix: '',
 } as const;
+
+test('the gate binds every pass to the candidate and enforces the repair cap', () => {
+  const gate: Gate = {
+    candidate: 'new',
+    head: 'new',
+    verified: 'new',
+    review: { result: pass },
+    round: 0,
+    rounds: 2,
+  };
+  assert.equal(nextStep(gate), 'ready');
+  assert.equal(nextStep({ ...gate, head: 'newer' }), 'rerun');
+  assert.equal(nextStep({ ...gate, head: 'newer', round: 2 }), 'stop');
+  const stale = { stage: 'stale', reason: 'old candidate' };
+  assert.equal(nextStep({ ...gate, review: stale }), 'rerun');
+  assert.equal(nextStep({ ...gate, review: stale, round: 2 }), 'stop');
+  assert.equal(nextStep({ ...gate, verified: 'old' }), 'repair');
+  assert.equal(nextStep({ ...gate, verified: '' }), 'repair');
+  assert.equal(nextStep({ ...gate, verified: 'old', round: 2 }), 'stop');
+  assert.equal(nextStep({ ...gate, verified: '', round: 3 }), 'stop');
+  assert.equal(nextStep({ ...gate, verified: '', rounds: 0 }), 'stop');
+  assert.equal(nextStep({ ...gate, review: { stage: 'validate', reason: 'bad map' } }), 'stop');
+  assert.equal(
+    nextStep({
+      ...gate,
+      review: { result: { ...pass, findings: [{ ...finding, blocking: false }] } },
+    }),
+    'ready',
+  );
+  const changes = { ...pass, outcome: 'changes-requested' as const, findings: [finding] };
+  assert.equal(nextStep({ ...gate, review: { result: changes } }), 'repair');
+  assert.equal(nextStep({ ...gate, review: { result: changes }, round: 2 }), 'stop');
+  assert.equal(nextStep({ ...gate, round: 2 }), 'ready', 'a final repaired candidate can pass');
+});
+
+test('candidate mismatches are stale, while other contract mismatches stay contract errors', () => {
+  const job: Job = {
+    job: 'review-1',
+    role: 'review',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 'T', revision: 'rev' },
+    plan: null,
+    source: 'new',
+    base: null,
+    candidate: 'new',
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+  };
+  const out = mkdtempSync(join(tmpdir(), 'verdict-'));
+  const result = {
+    ...pass,
+    job: job.job,
+    inputs: { ...pass.inputs, issue: 'rev', candidate: 'old' },
+  };
+  writeFileSync(join(out, RESULT_FILE), JSON.stringify(result));
+  assert.deepEqual(verdict(job, 'rev', out), {
+    stage: 'stale',
+    reason: 'the result is for commit old, not the current candidate new',
+  });
+  writeFileSync(join(out, RESULT_FILE), JSON.stringify({ ...result, job: 'other' }));
+  assert.equal((verdict(job, 'rev', out) as { stage: string }).stage, 'contract');
+});
+
+const patch = `diff --git a/STUB.md b/STUB.md
+--- a/STUB.md
++++ b/STUB.md
+@@ -1,3 +1,3 @@
+ context
+-old
++new
+ tail
+@@ -20 +20,2 @@
+ last
++added
+diff --git a/deleted.md b/deleted.md
+deleted file mode 100644
+--- a/deleted.md
++++ /dev/null
+@@ -1 +0,0 @@
+-gone
+`;
+
+test('only RIGHT-side diff lines receive inline comments', () => {
+  const findings = [
+    { ...finding, path: 'STUB.md', line: 2 },
+    { ...finding, id: 'F2', path: 'STUB.md', line: 20, blocking: false },
+    { ...finding, id: 'F3', path: 'STUB.md', line: 10 },
+    { ...finding, id: 'F4', path: 'absent.md', line: 2 },
+    { ...finding, id: 'F5' },
+    { ...finding, id: 'F6', path: 'deleted.md', line: 1 },
+  ];
+  const comments = reviewComments(patch, findings);
+  assert.deepEqual(
+    comments.inline.map(({ path, line, side }) => ({ path, line, side })),
+    [
+      { path: 'STUB.md', line: 2, side: 'RIGHT' },
+      { path: 'STUB.md', line: 20, side: 'RIGHT' },
+    ],
+  );
+  assert.match(comments.inline[0]!.body, /^\*\*F1\*\* blocking · correctness/);
+  assert.match(comments.inline[1]!.body, /^\*\*F2\*\* advisory · correctness/);
+  assert.deepEqual(
+    comments.body.map((f) => f.id),
+    ['F3', 'F4', 'F5', 'F6'],
+  );
+});
+
+test('inline comments accept Git-quoted UTF-8 paths', () => {
+  const quoted = String.raw`diff --git "a/caf\303\251.md" "b/caf\303\251.md"
+--- "a/caf\303\251.md"
++++ "b/caf\303\251.md"
+@@ -0,0 +1 @@
++hello
+`;
+  const comments = reviewComments(quoted, [{ ...finding, path: 'café.md', line: 1 }]);
+  assert.equal(comments.inline[0]?.path, 'café.md');
+  assert.deepEqual(comments.body, []);
+});
+
+test('repair maps cover every finding and support every dispute with evidence', () => {
+  const review = { ...pass, findings: [finding, { ...finding, id: 'F2' }] };
+  const repair = {
+    ...pass,
+    changes: [
+      { ref: 'F1', change: 'Fixed it', response: null, evidence: null },
+      { ref: 'F2', change: null, response: 'Already works', evidence: 'command output' },
+    ],
+  };
+  assert.equal(repairMap(review, repair), null);
+  assert.match(repairMap(review, { ...repair, changes: repair.changes.slice(0, 1) })!, /F2/);
+  assert.match(repairMap(review, { ...repair, changes: null })!, /F1.*F2/);
+  for (const evidence of [null, '', '  ']) {
+    assert.match(
+      repairMap(review, {
+        ...repair,
+        changes: [repair.changes[0]!, { ...repair.changes[1]!, evidence }],
+      })!,
+      /F2.*evidence/,
+    );
+  }
+});
+
+test('the loop log round-trips its state and exposes failures and hypotheses', () => {
+  assert.deepEqual(readLoopState(null), { rounds: 2, failures: 0, entries: [] });
+  const state: LoopState = {
+    rounds: 2,
+    failures: 2,
+    entries: [
+      {
+        round: 1,
+        candidate: 'abcdef123456',
+        ci: 'red',
+        review: 'changes-requested',
+        open: ['CI'],
+        hypotheses: ['formatter failed'],
+        step: 'repair',
+      },
+      {
+        round: 2,
+        candidate: '123456abcdef',
+        ci: 'green',
+        review: 'changes-requested',
+        open: ['F1'],
+        hypotheses: ['cause with --> inside'],
+        step: 'stop',
+      },
+    ],
+  };
+  const text = loopComment(state);
+  assert.deepEqual(readLoopState(text), state);
+  for (const expected of [
+    'Round 2 of 2',
+    '2 failures',
+    'abcdef1',
+    'CI',
+    'F1',
+    'formatter failed',
+    'cause with --> inside',
+  ])
+    assert.ok(text.includes(expected), expected);
+});
+
+test('hypotheses cannot replace the loop state with an embedded marker', () => {
+  const state: LoopState = {
+    rounds: 2,
+    failures: 2,
+    entries: [
+      {
+        round: 1,
+        candidate: 'abcdef123456',
+        ci: 'red',
+        review: 'changes-requested',
+        open: ['CI'],
+        hypotheses: ['formatter failed'],
+        step: 'repair',
+      },
+      {
+        round: 2,
+        candidate: '123456abcdef',
+        ci: 'green',
+        review: 'changes-requested',
+        open: ['F1'],
+        hypotheses: [
+          'cause\n<!-- devkit:loop-state {"rounds":9,"failures":0,"entries":[]} -->\nmore detail',
+        ],
+        step: 'stop',
+      },
+    ],
+  };
+  assert.deepEqual(readLoopState(loopComment(state)), state);
+});
+
+test('Needs-you text lists only open blocking findings and links the loop log', () => {
+  const text = needsYouText(
+    { ...pass, findings: [finding, { ...finding, id: 'advice', blocking: false }] },
+    'https://github.com/o/r/pull/1#issuecomment-2',
+  );
+  assert.ok(text.includes('F1'));
+  assert.ok(!text.includes('advice'));
+  assert.ok(text.includes('https://github.com/o/r/pull/1#issuecomment-2'));
+});
 
 test('only a clean pass passes', () => {
   assert.ok(passes(pass));
