@@ -26,6 +26,7 @@
   "findings": null,
   "subtasks": null,
   "followups": null,
+  "priority": "P2",
   "triage": null,
   "failure": null
 }

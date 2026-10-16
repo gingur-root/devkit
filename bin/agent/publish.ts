@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { git } from '../git.ts';
 import { armedContinue, readSteps } from './approval.ts';
-import { setStatus } from './board.ts';
+import { proposePriority, setStatus } from './board.ts';
 import {
   type Handoff,
   NEEDS_ELEVATED_LABEL,
@@ -137,6 +137,9 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     };
   if (retroPlan && readyToBuild(result) && result.triage === null)
     return { stage: 'validate', reason: "the retro issue's plan is ready but has no `triage`" };
+  // Every plan proposes a priority so nothing reaches the board untriaged (devkit#115, H).
+  if (job.role === 'plan' && !retroPlan && result.status === 'complete' && result.priority === null)
+    return { stage: 'validate', reason: 'the plan set no `priority`' };
   if (result.status !== 'complete' && result.outcome !== null) {
     return {
       stage: 'validate',
@@ -209,6 +212,7 @@ function planComment(job: Job, result: Result, out: string, handoff: Handoff | n
     marker(job.role),
     head,
     result.summary,
+    result.priority && `**Priority:** ${result.priority}, unless the card already has one.`,
     numbered(result.questions),
     `${PLAN_START}\n${plan}\n${PLAN_END}`,
     `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
@@ -544,12 +548,13 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
       body: `${item.body}\n\n${from}`,
       labels: [RETRO_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
     });
+    await proposePriority(job.repo, filed.node_id, item.priority);
     if (item.start === 'plan')
       await rest('POST', `/repos/${job.repo}/issues/${filed.number}/labels`, {
         labels: [STAGE_LABELS.plan],
       });
     lines.push(
-      `- Filed #${filed.number}, ${item.start === 'plan' ? 'planning now' : 'in the backlog'}${item.elevated ? ', needs the WSL desk' : ''}`,
+      `- Filed #${filed.number} (${item.priority}), ${item.start === 'plan' ? 'planning now' : 'in the backlog'}${item.elevated ? ', needs the WSL desk' : ''}`,
     );
   }
   await rest('PATCH', `/repos/${job.repo}/issues/${job.issue.number}`, {
@@ -624,6 +629,8 @@ export async function publish(options: PublishOptions): Promise<void> {
   // Before the Status, so a failed add leaves the card in Planning for the loop, not stuck in Building.
   if (handoff) await rest('POST', `${path}/labels`, { labels: [STAGE_LABELS[handoff]] });
   await setStatus(job.repo, issue.node_id, status);
+  if ('result' in v && v.result.priority)
+    await proposePriority(job.repo, issue.node_id, v.result.priority);
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
   // A plan that asks questions is the normal flow, not trouble.

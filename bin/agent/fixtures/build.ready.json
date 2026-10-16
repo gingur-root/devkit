@@ -47,6 +47,7 @@
   "findings": null,
   "subtasks": null,
   "followups": null,
+  "priority": null,
   "triage": null,
   "failure": null
 }

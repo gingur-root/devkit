@@ -99,7 +99,7 @@ test('a plan hands off to a build only when it is ready with nothing to ask', ()
   assert.ok(!readyToBuild({ ...plan, outcome: 'needs-input' }));
 });
 
-test("only a retro issue's plan triages, and its ready plan must", () => {
+test("only a retro issue's plan triages, and every other plan sets a priority", () => {
   const plan = Result.parse(
     JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
   );
@@ -118,7 +118,9 @@ test("only a retro issue's plan triages, and its ready plan must", () => {
     attemptLimit: null,
   };
   const retro = { ...job, artifacts: [ISSUES_FILE] };
-  const triage = [{ title: 'Fix', body: 'b', link: null, start: 'plan', elevated: false }] as const;
+  const triage = [
+    { title: 'Fix', body: 'b', link: null, start: 'plan', elevated: false, priority: 'P2' },
+  ] as const;
   const check = (j: Job, r: Result) => {
     const out = mkdtempSync(join(tmpdir(), 'verdict-'));
     writeFileSync(join(out, PLAN_FILE), 'plan');
@@ -143,6 +145,11 @@ test("only a retro issue's plan triages, and its ready plan must", () => {
     'result' in check(retro, { ...plan, outcome: 'needs-input', questions: ['Q?'] }),
     'a retro plan may still ask first',
   );
+  assert.match(
+    String((check(job, { ...plan, priority: null }) as { reason: string }).reason),
+    /no `priority`/,
+  );
+  assert.ok('result' in check(retro, { ...plan, priority: null, triage: [] }), 'a retro plan');
 });
 
 test('a retro files one issue to plan, but only comments on a retro issue or with no findings', async () => {

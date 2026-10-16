@@ -4,6 +4,8 @@
 
 import { z } from 'zod';
 
+import { PRIORITIES } from './constants.ts';
+
 const OUTCOMES = [
   'ready',
   'needs-input',
@@ -34,6 +36,7 @@ export const Triage = z.array(
       link: z.number().int().nullable(),
       start: z.enum(['plan', 'backlog']),
       elevated: z.boolean(),
+      priority: z.enum(PRIORITIES),
     })
     .strict(),
 );
@@ -129,6 +132,8 @@ export const Result = z
       .array(z.object({ title: z.string(), body: z.string(), pr: z.boolean() }).strict())
       .nullable(),
     followups: z.array(z.object({ title: z.string(), body: z.string() }).strict()).nullable(),
+    // A plan's proposed board Priority (devkit#115). Null on every other result.
+    priority: z.enum(PRIORITIES).nullable(),
     // A retro issue's plan: what its approval files. Null on every other result.
     triage: Triage.nullable(),
     failure: z

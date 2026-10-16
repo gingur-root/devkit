@@ -87,6 +87,10 @@ export const BOARD_TITLE = 'Pipeline';
 export const STATUS_FIELD = 'Status';
 export const STATUSES = ['Ask', 'Planning', 'Needs you', 'Building', 'Ready', 'Done'] as const;
 export type Status = (typeof STATUSES)[number];
+/** Single-select on the board (devkit#115): P0 drop everything, P1 next, P2 soon, P3 someday. Unset means untriaged. */
+export const PRIORITY_FIELD = 'Priority';
+export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const;
+export type Priority = (typeof PRIORITIES)[number];
 
 /** The label that starts each stage; the pipeline removes it when the run ends. Review and repair run inside the build's run. */
 export const STAGE_LABELS = {
