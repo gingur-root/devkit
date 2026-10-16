@@ -18,7 +18,7 @@ import {
   stopped,
   verdict,
 } from './publish.ts';
-import { ISSUES_FILE, type Job, PLAN_FILE, RESULT_FILE } from './job.ts';
+import { ISSUES_FILE, type Job, PLAN_FILE, RESULT_FILE, STEPS_FILE } from './job.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -97,6 +97,51 @@ test('a plan hands off to a build only when it is ready with nothing to ask', ()
   assert.ok(readyToBuild(plan));
   assert.ok(!readyToBuild({ ...plan, questions: ['Which file?'] }));
   assert.ok(!readyToBuild({ ...plan, outcome: 'needs-input' }));
+});
+
+test('a missing result names the first failed setup step, but not a failed run', () => {
+  const job: Job = {
+    job: 'review-1',
+    role: 'review',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 'T', revision: 'rev' },
+    plan: null,
+    source: 'abc',
+    base: null,
+    candidate: null,
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+  };
+  const out = mkdtempSync(join(tmpdir(), 'verdict-'));
+  const missing = { stage: 'review', reason: 'the agent ended without a result' };
+  assert.deepEqual(verdict(job, 'rev', out), missing, 'no out files');
+
+  const steps = {
+    pack: 'success',
+    unpack: 'success',
+    checkout: 'success',
+    toolchain: 'failure',
+    jobIn: 'skipped',
+    secrets: 'skipped',
+    run: 'skipped',
+  };
+  writeFileSync(join(out, STEPS_FILE), JSON.stringify(steps));
+  const setupFailure = {
+    stage: 'review',
+    reason: 'the review job failed at toolchain before the agent started; see the job log',
+  };
+  assert.deepEqual(verdict(job, 'rev', out), setupFailure, 'a failed setup step');
+
+  writeFileSync(join(out, STEPS_FILE), JSON.stringify({ ...steps, jobIn: 'failure' }));
+  assert.deepEqual(verdict(job, 'rev', out), setupFailure, 'the first failure in file order');
+
+  writeFileSync(
+    join(out, STEPS_FILE),
+    JSON.stringify({ ...steps, toolchain: 'success', jobIn: 'success', run: 'failure' }),
+  );
+  assert.deepEqual(verdict(job, 'rev', out), missing, 'only run failed');
 });
 
 test("only a retro issue's plan triages, and every other plan sets a priority", () => {

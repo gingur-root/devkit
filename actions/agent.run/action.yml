@@ -37,30 +37,35 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/download-artifact@v8
+    - id: pack
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.prefix }}-repo
         path: ${{ runner.temp }}/pack
 
     # A self-hosted runner keeps the workspace between jobs.
-    - shell: bash
+    - id: unpack
+      shell: bash
       run: |
         rm -rf repo && mkdir repo
         tar -xzf "$RUNNER_TEMP/pack/repo.tgz" -C repo
         rm -rf "$RUNNER_TEMP/pack"
 
-    - uses: actions/checkout@v6
+    - id: checkout
+      uses: actions/checkout@v6
       with:
         repository: gingur-root/devkit
         ref: ${{ inputs.devkitRef }}
         path: devkit
         persist-credentials: false
 
-    - uses: gingur-root/devkit/actions/toolchain.setup@main
+    - id: toolchain
+      uses: gingur-root/devkit/actions/toolchain.setup@main
       with:
         cwd: devkit
 
-    - uses: actions/download-artifact@v8
+    - id: jobIn
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.prefix }}-in
         path: ${{ runner.temp }}/agent/in
@@ -76,6 +81,7 @@ runs:
           2cf223b6-0ed8-415b-a651-b4e2000da674 > CLAUDE_CODE_OAUTH_TOKEN
 
     - name: Run
+      id: run
       shell: bash
       working-directory: devkit
       env:
@@ -112,6 +118,24 @@ runs:
         # (an agent's `fmt:check.log` lost review-0-out, devkit#150).
         find "$out" -depth -name '*[":<>|*?]*' -exec sh -c \
           'for f; do mv "$f" "$(dirname "$f")/$(basename "$f" | tr "\":<>|*?" _______)"; done' sh {} +
+
+    # The filename matches STEPS_FILE in bin/agent/job.ts.
+    - name: Steps
+      if: ${{ always() }}
+      shell: bash
+      env:
+        PACK: ${{ steps.pack.outcome }}
+        UNPACK: ${{ steps.unpack.outcome }}
+        CHECKOUT: ${{ steps.checkout.outcome }}
+        TOOLCHAIN: ${{ steps.toolchain.outcome }}
+        JOB_IN: ${{ steps.jobIn.outcome }}
+        SECRETS: ${{ steps.secrets.outcome }}
+        RUN: ${{ steps.run.outcome }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/agent/out"
+        printf '{"pack":"%s","unpack":"%s","checkout":"%s","toolchain":"%s","jobIn":"%s","secrets":"%s","run":"%s"}\n' \
+          "$PACK" "$UNPACK" "$CHECKOUT" "$TOOLCHAIN" "$JOB_IN" "$SECRETS" "$RUN" \
+          > "$RUNNER_TEMP/agent/out/steps.json"
 
     - if: ${{ always() }}
       uses: actions/upload-artifact@v7
