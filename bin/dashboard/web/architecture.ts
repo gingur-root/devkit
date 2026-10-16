@@ -98,7 +98,7 @@ export const PARTS = {
   elevated: {
     provider: 'WSL desk',
     title: 'Elevated runner',
-    detail: 'runner group wsl, started by `elevated on`',
+    detail: 'runner group wsl, kept up by the gingur stack',
     logo: siUbuntu,
     at: [5, 0],
   },
@@ -136,7 +136,6 @@ export interface Link {
 export const LINKS: readonly Link[] = [
   { from: 'troy', to: 'claude', label: 'asks in chat' },
   { from: 'troy', to: 'issues', label: 'labels' },
-  { from: 'troy', to: 'elevated', label: 'elevated on' },
   { from: 'troy', to: 'tunnel', label: 'browser' },
   { from: 'claude', to: 'desk', label: 'threads' },
   { from: 'claude', to: 'dashboard', label: 'subscription token' },
