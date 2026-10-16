@@ -50,6 +50,7 @@ import {
   TRIAGE_FILE,
   usage,
 } from './job.ts';
+import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
 
 export interface PublishOptions {
@@ -738,6 +739,7 @@ export async function publish(options: PublishOptions): Promise<void> {
     await upsertStageComment(job.repo, job.issue.number, job.role, body);
     await removeLabel(job.repo, job.issue.number, STAGE_LABELS.build);
     await setStatus(job.repo, issue.node_id, 'Done');
+    await settle(job.repo, job.issue.number, 'done');
     return;
   }
   const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
@@ -775,8 +777,16 @@ export async function publish(options: PublishOptions): Promise<void> {
   await setStatus(job.repo, issue.node_id, status);
   if ('result' in v && v.result.priority)
     await proposePriority(job.repo, issue.node_id, v.result.priority);
-  // Last, so a failed filing never hides the stage's own result; a retry files only what is missing.
-  await fileFollowups(job, issue, stage, followups);
+  const receipt = receiptFor(job.role, status, stopped, 'result' in v && readyToBuild(v.result));
+  if (receipt) await settle(job.repo, job.issue.number, receipt);
+  // Last and best effort: a failed filing must not skip the review or the retro; a retry files only what is missing.
+  try {
+    await fileFollowups(job, issue, stage, followups);
+  } catch (error) {
+    console.log(
+      `::warning::filing follow-ups failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
   // A plan that asks questions is the normal flow, not trouble.
