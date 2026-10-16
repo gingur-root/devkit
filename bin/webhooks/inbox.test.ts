@@ -1,7 +1,7 @@
 // The inbox is public through the receiver's tunnel: without the token nobody
 // reads or writes it, and only signed deliveries may speak for GitHub.
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,7 +52,7 @@ test('the token gates every read and write, and github is reserved for signed de
   }
 });
 
-test('ids keep growing across a restart, and GitHub deliveries land as summaries', () => {
+test('ids keep growing across a restart, trimmed events are archived, and GitHub deliveries land as summaries', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'inbox-')), 'events.jsonl');
   const first = createInbox(file, 2);
   githubInboxHandler(first)({
@@ -83,4 +83,13 @@ test('ids keep growing across a restart, and GitHub deliveries land as summaries
     ],
   );
   assert.equal(second.add('stripe', 'paid').id, 4);
+  // The event trimmed from the live log is archived by month, never dropped.
+  const month = new Date().toISOString().slice(0, 7);
+  assert.deepEqual(
+    readFileSync(`${file}.${month}`, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => (JSON.parse(line) as { id: number }).id),
+    [1],
+  );
 });
