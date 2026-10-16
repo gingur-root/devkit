@@ -222,7 +222,9 @@ the one runner on his WSL desk, which runs as him and which GitHub lets only
    the job waits in GitHub's queue, which cancels it after 24 hours.
 3. Claude carries out the plan with his access, gating each outside write on a
    named rollback. Publish runs on the desk too: his git login pushes the
-   commit, and the App comments and opens the draft PR. There is no review stage.
+   commit, and the App comments and opens the draft PR. Then the same review and repair rounds as a
+   build run on the VPS (not for a desk-only repo). A repair pushes as the App,
+   so a finding that needs a workflow edit ends in Needs you.
 
 A plan that edits `.github/workflows` runs elevated: the App has no
 `workflows` permission, so only the desk can push those files.
