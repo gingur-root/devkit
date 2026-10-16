@@ -124,3 +124,21 @@ The receiver has no Access app in front of it, so the signature is its only
 gate, and it listens on its own port so no dashboard route is reachable
 through it. Dedupe lives in memory and forgets on restart; a handler that
 starts runs needs a durable store first.
+
+## Events inbox
+
+The receiver also keeps one ordered log of events, whatever sent them, in
+`~/.local/state/devkit-dashboard/events.jsonl` (the last 10,000). Every GitHub
+delivery lands there as a short summary: `issues.opened`, the repo, the number,
+the title and the sender. Any other source posts its own events, and readers
+page through the log by id:
+
+```sh
+curl -H "Authorization: Bearer $EVENTS_TOKEN" -d '{"type":"paid","data":{}}' https://hooks.gingur.com/events/stripe
+curl -H "Authorization: Bearer $EVENTS_TOKEN" 'https://hooks.gingur.com/events?since=0&source=github'
+```
+
+Both routes need `EVENTS_TOKEN`. Without it the receiver still records, but
+both routes answer 404. The source `github` is reserved for signed deliveries
+on `/github`. A redelivery after a failed handler lands twice; the event's
+`delivery` id tells the copies apart.

@@ -3,7 +3,7 @@
 // has seen, then hand the event to each handler.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 
 export const WEBHOOK_PATH = '/github';
@@ -20,6 +20,8 @@ export interface Delivery {
   payload: unknown;
 }
 export type WebhookHandler = (delivery: Delivery) => void | Promise<void>;
+/** Extra routes on the receiver's server; true when it answered the request. */
+export type Routes = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 
 /** Whether `header` is GitHub's `X-Hub-Signature-256` for `body` under `secret`. */
 export function verifySignature(secret: string, body: Buffer, header: string | undefined): boolean {
@@ -84,10 +86,12 @@ export function createReceiver(
   secret: string,
   handlers: WebhookHandler[],
   dedupe = createDedupe(),
+  routes?: Routes,
 ): Server {
   return createServer(async (req, res) => {
     const text = (status: number, message: string) =>
       res.writeHead(status, { 'content-type': 'text/plain' }).end(`${message}\n`);
+    if (routes && (await routes(req, res))) return;
     if (req.method !== 'POST' || req.url !== WEBHOOK_PATH) return text(404, 'Not found');
     if (!req.headers['x-hub-signature-256']) return text(401, 'Bad signature');
     const body = await readBody(req);
