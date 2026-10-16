@@ -102,7 +102,7 @@ When the job directory has `issues.md`, this issue is a retro's findings
 - On any other issue, `triage` is null.
 
 - Write the plan to `plan.md` in the output directory. It opens with a
-  `## What` section holding the five parts, then the how: criteria with IDs
+  `## What` section holding the parts above, then the how: criteria with IDs
   (A1, A2, …), an acceptance-to-check map, interfaces and code locations,
   dependencies, and the executor profile.
 - In the envelope, `criteria` mirrors the plan's IDs. A criterion's `check` is
