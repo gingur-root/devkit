@@ -5,6 +5,8 @@ export const ACCESS_CERTS_URL = `${ACCESS_TEAM_URL}/cdn-cgi/access/certs`;
 export const ACCESS_JWT_HEADER = 'cf-access-jwt-assertion';
 export const OPERATOR_EMAIL = 'troy.rhinehart@gmail.com';
 export const DASHBOARD_PORT = 3000;
+// Under Cloudflare's 100 s idle cutoff, so a quiet stream stays open.
+export const KEEP_ALIVE_MS = 25_000;
 // The org webhook receiver (devkit#118), public with no Access: its own port, so no dashboard route is reachable there.
 export const HOOKS_PORT = 3001;
 export const DASHBOARD_ORIGIN = 'https://dashboard.gingur.com';

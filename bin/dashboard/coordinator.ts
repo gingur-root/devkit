@@ -4,7 +4,13 @@
 // this process holds. Every GitHub write happens here, in code.
 import { readFileSync } from 'node:fs';
 
-import { createSdkMcpServer, type Options, query, tool } from '@anthropic-ai/claude-agent-sdk';
+import {
+  createSdkMcpServer,
+  type Options,
+  query,
+  type SDKMessage,
+  tool,
+} from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 import { READY_LABEL, STAGE_LABELS } from '../agent/constants.ts';
@@ -231,8 +237,8 @@ export async function* coordinate(
   }
 }
 
-async function* turnEvents(
-  messages: ReturnType<typeof query>,
+export async function* turnEvents(
+  messages: AsyncIterable<SDKMessage>,
   options: Options,
 ): AsyncGenerator<CoordinatorEvent> {
   for await (const message of messages) {
