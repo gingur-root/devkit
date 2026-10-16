@@ -10,7 +10,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { assertClaudeInit, claudeFailure, claudeOptions } from './claude.ts';
 import { codexFailure } from './codex.ts';
 
-test('every role passes its configured turn cap to Claude', () => {
+test('every role passes its turn cap to Claude', () => {
   const defaults = {
     hello: 10,
     plan: 100,

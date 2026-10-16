@@ -146,14 +146,16 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
       reason: `a ${result.status} run set outcome \`${result.outcome}\``,
     };
   }
-  const summary = result.summary.replace(/\.$/, '');
   if (result.status === 'stale')
     return {
       stage: 'contract',
-      reason: `the ${job.role} found its input superseded: ${summary}`,
+      reason: `the ${job.role} found its input superseded: ${result.summary.replace(/\.$/, '')}`,
     };
   if (result.status === 'blocked' || result.status === 'failed')
-    return { stage: job.role, reason: `\`${result.status}\`: ${summary}` };
+    return {
+      stage: job.role,
+      reason: `\`${result.status}\`: ${result.summary.replace(/\.$/, '')}`,
+    };
   const candidate = join(out, CANDIDATE_FILE);
   if (
     result.outcome === 'implemented' &&
@@ -553,7 +555,8 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
     const filed = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
       title: item.title,
       body: `${item.body}\n\n${from}`,
-      labels: [RETRO_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
+      // Not `retro`: that label makes a plan triage the issue again instead of building it.
+      labels: item.elevated ? [NEEDS_ELEVATED_LABEL] : [],
     });
     await proposePriority(job.repo, filed.node_id, item.priority);
     if (item.start === 'plan')

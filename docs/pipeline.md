@@ -109,8 +109,9 @@ lands instead of sitting in a comment (devkit#115):
    says whether to plan it now or leave it in the backlog, and whether it
    needs the WSL desk.
 3. Approve the plan as usual (`/approve`, or **Continue**). Instead of a
-   build, the run files the new issues with `retro` (plus `agent:plan` or
-   `needs:elevated` as the plan said), comments on linked issues, and closes
+   build, the run files the new issues (with `agent:plan` or
+   `needs:elevated` as the plan said, and a link back to the retro), comments
+   on linked issues, and closes
    the retro issue. No PR.
 
 - A retro with no findings (an outage, a rate limit) only comments, as does
@@ -199,8 +200,7 @@ on a scratch issue.
    ```
 
    `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
-   For failure smoke runs, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`,
-   `timeout` or `missing` on the proof branch.
+   To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 
 3. Delete the pipeline branch when you are done.
 
@@ -211,8 +211,7 @@ proof, then pin it back.
 
 ## Known limits
 
-- **Codex has no turn cap.** Its timeout is its only run limit; Claude also has
-  a per-role `maxTurns` cap in `bin/agent/roles.ts`.
+- **Codex has no turn cap.** Its per-role timeout is its only run limit.
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the
   Actions "Re-run" button skips everything. Add the label again instead.
 - **Editing the issue or the plan comment voids the plan.** `agent:build`

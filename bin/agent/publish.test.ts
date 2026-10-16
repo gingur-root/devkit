@@ -2,7 +2,7 @@
 // clean pass may say so.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, vi } from 'vite-plus/test';
@@ -39,63 +39,75 @@ const finding = {
 
 function check(job: Job, result: Result) {
   const out = mkdtempSync(join(tmpdir(), 'verdict-'));
-  try {
-    writeFileSync(join(out, PLAN_FILE), 'plan');
-    writeFileSync(
-      join(out, RESULT_FILE),
-      JSON.stringify({
-        ...result,
-        job: job.job,
-        role: job.role,
-        inputs: { ...result.inputs, issue: 'rev' },
-      }),
-    );
-    return verdict(job, 'rev', out);
-  } finally {
-    rmSync(out, { recursive: true, force: true });
-  }
+  writeFileSync(join(out, PLAN_FILE), 'plan');
+  writeFileSync(
+    join(out, RESULT_FILE),
+    JSON.stringify({
+      ...result,
+      job: job.job,
+      role: job.role,
+      inputs: {
+        ...result.inputs,
+        issue: job.issue.revision,
+        plan: job.plan?.revision ?? null,
+        candidate: job.candidate,
+      },
+    }),
+  );
+  return verdict(job, job.issue.revision, out);
 }
 
-for (const status of ['blocked', 'failed', 'stale'] as const) {
-  test(`a ${status} result stops before normal publishing in every stage`, () => {
-    for (const role of ['plan', 'build', 'review', 'repair', 'elevated', 'retro']) {
-      const job: Job = {
-        job: `${role}-1`,
-        role,
-        objective: '',
-        repo: 'o/r',
-        issue: { number: 1, title: 'T', revision: 'rev' },
-        plan: null,
-        source: 'abc',
-        base: null,
-        candidate: null,
-        artifacts: [],
-        operations: [],
-        attemptLimit: null,
-      };
-      const result = { ...pass, status, outcome: null, summary: 'No fixture.', failure: null };
-      assert.deepEqual(
-        check(job, result),
-        {
-          stage: status === 'stale' ? 'contract' : role,
-          reason:
-            status === 'stale'
-              ? `the ${role} found its input superseded: No fixture`
-              : `\`${status}\`: No fixture`,
-        },
-        role,
-      );
-      assert.deepEqual(
-        check(job, { ...result, outcome: 'ready' }),
-        {
-          stage: 'validate',
-          reason: `a ${status} run set outcome \`ready\``,
-        },
-        'an invalid outcome still fails validation first',
-      );
+const planJob: Job = {
+  job: 'plan-1',
+  role: 'plan',
+  objective: '',
+  repo: 'o/r',
+  issue: { number: 1, title: 'T', revision: 'rev' },
+  plan: null,
+  source: 'abc',
+  base: null,
+  candidate: null,
+  artifacts: [],
+  operations: [],
+  attemptLimit: null,
+};
+
+for (const status of ['blocked', 'failed'] as const) {
+  test(`a ${status} result stops at its role with the reason`, () => {
+    const result = { ...pass, status, outcome: null, summary: 'No fixture.', failure: null };
+    for (const role of ['plan', 'build', 'repair', 'review', 'retro', 'elevated']) {
+      assert.deepEqual(check({ ...planJob, role }, result), {
+        stage: role,
+        reason: `\`${status}\`: No fixture`,
+      });
     }
+    assert.deepEqual(check(planJob, { ...result, outcome: 'ready' }), {
+      stage: 'validate',
+      reason: `a ${status} run set outcome \`ready\``,
+    });
   });
 }
+
+test('a stale result stops at contract and names the superseded input', () => {
+  for (const role of ['plan', 'build', 'repair', 'review', 'retro', 'elevated']) {
+    assert.deepEqual(
+      check(
+        { ...planJob, role },
+        {
+          ...pass,
+          status: 'stale',
+          outcome: null,
+          summary: 'The candidate changed.',
+          failure: null,
+        },
+      ),
+      {
+        stage: 'contract',
+        reason: `the ${role} found its input superseded: The candidate changed`,
+      },
+    );
+  }
+});
 
 test('only a clean pass passes', () => {
   assert.ok(passes(pass));
@@ -163,20 +175,7 @@ test("only a retro issue's plan triages, and every other plan sets a priority", 
   const plan = Result.parse(
     JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
   );
-  const job: Job = {
-    job: 'plan-1',
-    role: 'plan',
-    objective: '',
-    repo: 'o/r',
-    issue: { number: 1, title: 'T', revision: 'rev' },
-    plan: null,
-    source: 'abc',
-    base: null,
-    candidate: null,
-    artifacts: [],
-    operations: [],
-    attemptLimit: null,
-  };
+  const job = planJob;
   const retro = { ...job, artifacts: [ISSUES_FILE] };
   const triage = [
     { title: 'Fix', body: 'b', link: null, start: 'plan', elevated: false, priority: 'P2' },

@@ -1,4 +1,3 @@
-// Exercise failures through the same run/result/verdict seam the pipeline uses.
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,13 +9,13 @@ import { verdict } from '../publish.ts';
 import { Result } from '../result.ts';
 import { run } from '../run.ts';
 
-for (const [fixture, failureClass, summary] of [
-  ['crash', 'unknown', /stub crash/],
-  ['timeout', 'timeout', /stub timeout/],
-  ['missing', 'unknown', /without a structured result/],
+for (const [fixture, failureClass, reason] of [
+  ['crash', 'unknown', 'stub crash'],
+  ['timeout', 'timeout', 'stub timeout'],
+  ['missing', 'unknown', 'without a structured result'],
 ] as const) {
-  test(`the ${fixture} stub writes a failed result and stops at plan`, async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'devkit-stub-'));
+  test(`the ${fixture} stub writes a failed result and stops publication`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'stub-'));
     const input = join(cwd, 'in');
     const out = join(cwd, 'out');
     mkdirSync(input);
@@ -41,22 +40,21 @@ for (const [fixture, failureClass, summary] of [
     try {
       await run({ role: 'plan', executor: 'stub', cwd, in: input, out });
       const result = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
-      assert.equal(process.exitCode, 1);
       assert.equal(result.status, 'failed');
       assert.equal(result.outcome, null);
-      assert.match(result.summary, summary);
       assert.deepEqual(result.failure, { class: failureClass, resetsAt: null });
-      const stop = verdict(job, 'rev', out);
-      assert.ok('stage' in stop);
-      assert.equal(stop.stage, 'plan');
-      assert.ok(stop.reason.startsWith(`\`${failureClass}\`:`));
-      assert.match(stop.reason, summary);
+      assert.ok(result.summary.includes(reason), result.summary);
+      assert.equal(process.exitCode, 1);
       const events = readFileSync(join(out, TRANSCRIPT_FILE), 'utf8')
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line));
       assert.equal(events[0].type, 'init');
       assert.equal(events[0].fixture, fixture);
+      assert.deepEqual(verdict(job, 'rev', out), {
+        stage: 'plan',
+        reason: `\`${failureClass}\`: ${result.summary.replace(/\.$/, '')}`,
+      });
     } finally {
       process.exitCode = exitCode;
       vi.unstubAllEnvs();
