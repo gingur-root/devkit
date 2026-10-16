@@ -14,7 +14,8 @@ import type { WebhookHandler } from './receiver.ts';
 export const EVENTS_PATH = '/events';
 export const GITHUB_SOURCE = 'github';
 const MAX_EVENTS = 10_000;
-const MAX_POST = 64 * 1024;
+// Small, so a full log stays well under 100 MB in memory.
+const MAX_POST = 8 * 1024;
 const PAGE = 100;
 const SOURCE = /^[a-z0-9-]{1,32}$/;
 
@@ -40,8 +41,14 @@ export function createInbox(file?: string, max = MAX_EVENTS) {
     file && existsSync(file)
       ? readFileSync(file, 'utf8')
           .split('\n')
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as InboxEvent)
+          .flatMap((line) => {
+            // A crash mid-append leaves a cut line; skipping it beats a dashboard that won't start.
+            try {
+              return [JSON.parse(line) as InboxEvent];
+            } catch {
+              return [];
+            }
+          })
           .slice(-max)
       : [];
   if (file) {
@@ -56,7 +63,14 @@ export function createInbox(file?: string, max = MAX_EVENTS) {
       const event: InboxEvent = { id: next++, at: new Date().toISOString(), source, type, data };
       events.push(event);
       if (events.length > max) events = events.slice(-max);
-      if (file) appendFileSync(file, `${JSON.stringify(event)}\n`);
+      // A failed write costs one event's durability; throwing here would kill the dashboard.
+      if (file) {
+        try {
+          appendFileSync(file, `${JSON.stringify(event)}\n`);
+        } catch (error) {
+          console.error('inbox: could not save event', error);
+        }
+      }
       return event;
     },
     /** Events after `since`, oldest first, at most one page. */
