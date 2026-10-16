@@ -547,7 +547,8 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
     const filed = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
       title: item.title,
       body: `${item.body}\n\n${from}`,
-      labels: [RETRO_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
+      // Not `retro`: that label makes a plan triage the issue again instead of building it.
+      labels: item.elevated ? [NEEDS_ELEVATED_LABEL] : [],
     });
     await proposePriority(job.repo, filed.node_id, item.priority);
     if (item.start === 'plan')
