@@ -44,6 +44,78 @@ const finding = {
   fix: '',
 } as const;
 
+function check(job: Job, result: Result) {
+  const out = mkdtempSync(join(tmpdir(), 'verdict-'));
+  writeFileSync(join(out, PLAN_FILE), 'plan');
+  writeFileSync(
+    join(out, RESULT_FILE),
+    JSON.stringify({
+      ...result,
+      job: job.job,
+      role: job.role,
+      inputs: {
+        ...result.inputs,
+        issue: job.issue.revision,
+        plan: job.plan?.revision ?? null,
+        candidate: job.candidate,
+      },
+    }),
+  );
+  return verdict(job, job.issue.revision, out);
+}
+
+const planJob: Job = {
+  job: 'plan-1',
+  role: 'plan',
+  objective: '',
+  repo: 'o/r',
+  issue: { number: 1, title: 'T', revision: 'rev' },
+  plan: null,
+  source: 'abc',
+  base: null,
+  candidate: null,
+  artifacts: [],
+  operations: [],
+  attemptLimit: null,
+};
+
+for (const status of ['blocked', 'failed'] as const) {
+  test(`a ${status} result stops at its role with the reason`, () => {
+    const result = { ...pass, status, outcome: null, summary: 'No fixture.', failure: null };
+    for (const role of ['plan', 'build', 'review', 'retro', 'elevated']) {
+      assert.deepEqual(check({ ...planJob, role }, result), {
+        stage: role,
+        reason: `\`${status}\`: No fixture`,
+      });
+    }
+    assert.deepEqual(check(planJob, { ...result, outcome: 'ready' }), {
+      stage: 'validate',
+      reason: `a ${status} run set outcome \`ready\``,
+    });
+  });
+}
+
+test('a stale result stops at stale and names the superseded input', () => {
+  for (const role of ['plan', 'build', 'repair', 'review', 'retro', 'elevated']) {
+    assert.deepEqual(
+      check(
+        { ...planJob, role },
+        {
+          ...pass,
+          status: 'stale',
+          outcome: null,
+          summary: 'The candidate changed.',
+          failure: null,
+        },
+      ),
+      {
+        stage: 'stale',
+        reason: `the ${role} found its input superseded: The candidate changed`,
+      },
+    );
+  }
+});
+
 test('the gate binds every pass to the candidate and enforces the repair cap', () => {
   const gate: Gate = {
     candidate: 'new',

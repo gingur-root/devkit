@@ -251,6 +251,7 @@ on a scratch issue.
    ```
 
    `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
+   To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 
 3. Delete the pipeline branch when you are done.
 
@@ -261,6 +262,7 @@ proof, then pin it back.
 
 ## Known limits
 
+- **Codex has no turn cap.** Its per-role timeout is its only run limit.
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the
   Actions "Re-run" button skips everything. Add the label again instead.
 - **Editing the issue or the plan comment voids the plan.** `agent:build`
