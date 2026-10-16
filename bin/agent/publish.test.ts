@@ -58,6 +58,78 @@ const finding = {
   fix: '',
 } as const;
 
+function check(job: Job, result: Result) {
+  const out = mkdtempSync(join(tmpdir(), 'verdict-'));
+  writeFileSync(join(out, PLAN_FILE), 'plan');
+  writeFileSync(
+    join(out, RESULT_FILE),
+    JSON.stringify({
+      ...result,
+      job: job.job,
+      role: job.role,
+      inputs: {
+        ...result.inputs,
+        issue: job.issue.revision,
+        plan: job.plan?.revision ?? null,
+        candidate: job.candidate,
+      },
+    }),
+  );
+  return verdict(job, job.issue.revision, out);
+}
+
+const planJob: Job = {
+  job: 'plan-1',
+  role: 'plan',
+  objective: '',
+  repo: 'o/r',
+  issue: { number: 1, title: 'T', revision: 'rev' },
+  plan: null,
+  source: 'abc',
+  base: null,
+  candidate: null,
+  artifacts: [],
+  operations: [],
+  attemptLimit: null,
+};
+
+for (const status of ['blocked', 'failed'] as const) {
+  test(`a ${status} result stops at its role with the reason`, () => {
+    const result = { ...pass, status, outcome: null, summary: 'No fixture.', failure: null };
+    for (const role of ['plan', 'build', 'review', 'retro', 'elevated']) {
+      assert.deepEqual(check({ ...planJob, role }, result), {
+        stage: role,
+        reason: `\`${status}\`: No fixture`,
+      });
+    }
+    assert.deepEqual(check(planJob, { ...result, outcome: 'ready' }), {
+      stage: 'validate',
+      reason: `a ${status} run set outcome \`ready\``,
+    });
+  });
+}
+
+test('a stale result stops at stale and names the superseded input', () => {
+  for (const role of ['plan', 'build', 'repair', 'review', 'retro', 'elevated']) {
+    assert.deepEqual(
+      check(
+        { ...planJob, role },
+        {
+          ...pass,
+          status: 'stale',
+          outcome: null,
+          summary: 'The candidate changed.',
+          failure: null,
+        },
+      ),
+      {
+        stage: 'stale',
+        reason: `the ${role} found its input superseded: The candidate changed`,
+      },
+    );
+  }
+});
+
 test('the gate binds every pass to the candidate and enforces the repair cap', () => {
   const gate: Gate = {
     candidate: 'new',
@@ -545,7 +617,7 @@ function teardown() {
   vi.unstubAllEnvs();
 }
 
-const planJob: Job = {
+const storyJob: Job = {
   job: 'plan-1',
   role: 'plan',
   objective: '',
@@ -564,7 +636,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
   const github = fakeGitHub();
   const subtasks = fixtureResult('plan.story').subtasks!;
   try {
-    const filed = await fileSubtasks(planJob, CARD, subtasks);
+    const filed = await fileSubtasks(storyJob, CARD, subtasks);
     const posts = () => github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
     const links = () =>
       github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues/1/sub_issues '));
@@ -594,7 +666,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
     github.linked.delete(elevated!.id);
     github.calls.length = 0;
     github.statuses.length = 0;
-    await fileSubtasks(planJob, CARD, subtasks);
+    await fileSubtasks(storyJob, CARD, subtasks);
     assert.equal(posts().length, 0, 'no duplicate issue');
     assert.deepEqual(links(), [
       `POST /repos/o/r/issues/1/sub_issues {"sub_issue_id":${elevated!.id}}`,
@@ -606,7 +678,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
     github.issues.length = 0;
     github.issues.push({ ...plain!, id: 7, number: 7, user: { id: 1 } });
     github.calls.length = 0;
-    await fileSubtasks(planJob, CARD, subtasks.slice(0, 1));
+    await fileSubtasks(storyJob, CARD, subtasks.slice(0, 1));
     assert.equal(posts().length, 1);
     assert.ok(!links().some((c) => c.includes('"sub_issue_id":7')));
   } finally {
@@ -616,7 +688,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
 
 test('follow-ups are filed unlabelled in Ask, capped at 5 per stage, and once', async () => {
   const github = fakeGitHub();
-  const job = { ...planJob, job: 'build-1', role: 'build' };
+  const job = { ...storyJob, job: 'build-1', role: 'build' };
   const seven = fixtureResult('build.followups').followups!;
   try {
     const line = await fileFollowups(job, CARD, 'build', seven.slice(0, 2));
@@ -702,7 +774,7 @@ test('a story plan lists its subtasks and never hands off, even after a Continue
   const github = fakeGitHub(CARD, comments, events);
   const story = fixtureResult('plan.story');
   try {
-    await publish(staged(planJob, { ...story, followups: [{ title: 'Later', body: 'b' }] }));
+    await publish(staged(storyJob, { ...story, followups: [{ title: 'Later', body: 'b' }] }));
     const posts = github.calls.filter((c) => c.startsWith('POST '));
     assert.ok(!posts.some((c) => c.includes('/labels')), 'no hand-off label');
     assert.ok(!github.calls.some((c) => c.includes('agent:build')));
@@ -734,7 +806,7 @@ test('a story plan lists its subtasks and never hands off, even after a Continue
 
     // The control: the same Continue hands an ordinary ready plan to its build.
     github.calls.length = 0;
-    await publish(staged(planJob, fixtureResult('plan.ready')));
+    await publish(staged(storyJob, fixtureResult('plan.ready')));
     assert.ok(github.calls.includes('POST /repos/o/r/issues/1/labels {"labels":["agent:build"]}'));
   } finally {
     teardown();
@@ -743,7 +815,7 @@ test('a story plan lists its subtasks and never hands off, even after a Continue
 
 test('a retro files its findings as one retro issue, never as follow-ups', async () => {
   const github = fakeGitHub();
-  const job = { ...planJob, job: 'retro-1', role: 'retro' };
+  const job = { ...storyJob, job: 'retro-1', role: 'retro' };
   try {
     await publish(staged(job, fixtureResult('retro.ready')));
     const filed = github.issues;

@@ -17,6 +17,8 @@ export interface Role {
   tools: readonly string[];
   web: boolean;
   timeoutMinutes: number;
+  /** Claude only; Codex has no turn cap, so its timeout bounds the run. */
+  maxTurns: number;
   /** Whether the run returns the result envelope (bin/agent/result.ts). */
   result: boolean;
 }
@@ -31,6 +33,7 @@ export const ROLES = {
     tools: ['Bash', 'Read'],
     web: false,
     timeoutMinutes: 5,
+    maxTurns: 10,
     result: false,
   },
   plan: {
@@ -43,6 +46,7 @@ export const ROLES = {
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
     web: true,
     timeoutMinutes: 30,
+    maxTurns: 100,
     result: true,
   },
   build: {
@@ -55,6 +59,7 @@ export const ROLES = {
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
     web: true,
     timeoutMinutes: 60,
+    maxTurns: 200,
     result: true,
   },
   repair: {
@@ -67,6 +72,7 @@ export const ROLES = {
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
     web: true,
     timeoutMinutes: 60,
+    maxTurns: 200,
     result: true,
   },
   review: {
@@ -80,6 +86,7 @@ export const ROLES = {
     tools: ['Bash', 'Read', 'Glob', 'Grep'],
     web: true,
     timeoutMinutes: 30,
+    maxTurns: 100,
     result: true,
   },
   retro: {
@@ -94,6 +101,7 @@ export const ROLES = {
     tools: ['Bash', 'Read', 'Glob', 'Grep'],
     web: false,
     timeoutMinutes: 20,
+    maxTurns: 50,
     result: true,
   },
   elevated: {
@@ -113,6 +121,7 @@ export const ROLES = {
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
     web: true,
     timeoutMinutes: 60,
+    maxTurns: 200,
     result: true,
   },
 } as const satisfies Record<string, Role>;

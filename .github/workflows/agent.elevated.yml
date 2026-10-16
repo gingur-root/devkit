@@ -6,8 +6,9 @@ name: Elevated
 # gate), or the App's hand-off right after his elevated Continue on the
 # dashboard, which render checks (bin/agent/approval.ts). GitHub lets only this
 # workflow on main use the `wsl` runner group.
-# The desk is off until he runs `elevated on`; until then the job waits in
-# GitHub's queue (cancelled after 24h) and the card sits in Needs you.
+# His gingur stack keeps the desk runner up while he is logged in to Windows
+# (infra's runbook); while the desk is off the job waits in GitHub's queue
+# (cancelled after 24h) and the card sits in Needs you.
 # Like a build, the agent only returns files. Publish runs on the desk too, so
 # his git login pushes the commit: the App has no `workflows` permission, and
 # this is the path for changes under `.github/workflows`. The App still writes
@@ -110,7 +111,7 @@ jobs:
           SOURCE: ${{ inputs.issue == '' && github.sha || '' }}
           APP_ID: ${{ inputs.appId }}
           ACTOR: ${{ inputs.actor || github.actor_id }}
-          NOTE: ${{ inputs.runner == 'wsl' && '**Running on the WSL desk.**' || '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.' }}
+          NOTE: ${{ inputs.runner == 'wsl' && '**Running on the WSL desk.**' || '**Queued for the WSL desk.** It starts as soon as STR4090 is on.' }}
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role elevated ${SOURCE:+--source "$SOURCE"} \
             --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"

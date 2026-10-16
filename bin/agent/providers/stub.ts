@@ -8,6 +8,7 @@
 // `story` changes only the plan, which proposes two subtasks, one elevated.
 // `followups` changes only the build, which proposes seven follow-ups, two over
 // the cap.
+// `crash` throws, `timeout` reports a timeout, and `missing` returns no result.
 // `changes` asks for repair until STUB.md matches the repair fixture; `never`
 // always asks for repair; `advisory` passes with an inline advisory finding.
 
@@ -24,6 +25,16 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   const fixture = (process.env.DEVKIT_STUB_FIXTURE ?? 'ready') as StubFixture;
   if (!STUB_FIXTURES.includes(fixture)) throw new Error(`No stub fixture "${fixture}".`);
   if (!input.in || !input.out) throw new Error('The stub needs --in and --out.');
+  if (fixture === 'crash' || fixture === 'timeout' || fixture === 'missing') {
+    input.emit({ type: 'init', fixture });
+    if (fixture === 'crash') throw new Error('stub crash');
+    if (fixture === 'missing') return { ok: true };
+    return {
+      ok: false,
+      failure: { class: 'timeout', resetsAt: null },
+      error: 'stub timeout',
+    };
+  }
   if (fixture === 'rate-limit') {
     input.emit({ type: 'init', fixture });
     return {

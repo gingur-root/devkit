@@ -184,6 +184,18 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
       reason: `a ${result.status} run set outcome \`${result.outcome}\``,
     };
   }
+  // `stale`, not `contract`: a review round reruns on it instead of stopping (nextStep).
+  if (result.status === 'stale')
+    return {
+      stage: 'stale',
+      reason: `the ${job.role} found its input superseded: ${result.summary.replace(/\.$/, '')}`,
+    };
+  // A repair's blocked or failed result still goes through the repair-map check and the loop log (#161).
+  if ((result.status === 'blocked' || result.status === 'failed') && job.role !== 'repair')
+    return {
+      stage: job.role,
+      reason: `\`${result.status}\`: ${result.summary.replace(/\.$/, '')}`,
+    };
   const candidate = join(out, CANDIDATE_FILE);
   if (
     result.outcome === 'implemented' &&
@@ -242,9 +254,7 @@ function planComment(
     ? '**Plan: ready. This card is a story: approve and build each subtask, not this card**'
     : handoff
       ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
-      : result.status === 'complete'
-        ? `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`
-        : `**Plan ${result.status}**`;
+      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
@@ -274,7 +284,9 @@ function buildComment(job: Job, result: Result, pull: Pull | null): string {
     job.role === 'elevated' ? 'Elevated run' : job.role === 'repair' ? 'Repair' : 'Build';
   const link = pull && `[#${pull.number}](${pull.html_url})`;
   const head = !link
-    ? `**${stage} ${result.status}**`
+    ? result.status !== 'complete'
+      ? `**${stage} ${result.status}**`
+      : `**${stage}: ${result.outcome === 'needs-input' ? 'needs your input' : result.outcome}**`
     : job.role === 'repair'
       ? `**Repair: pushed a fix to ${link}; reviewing it again**`
       : `**${stage}: ${link} is ready for review**`;
