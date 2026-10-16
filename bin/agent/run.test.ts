@@ -10,7 +10,7 @@ import { test } from 'vite-plus/test';
 import type { Job } from './job.ts';
 import { Result } from './result.ts';
 import { ROLES } from './roles.ts';
-import { failedResult, instructions, skillRoles } from './run.ts';
+import { failedResult, instructions, settle, skillRoles } from './run.ts';
 
 function repoSkill(cwd: string, name: string, roles: string, body: string): void {
   mkdirSync(join(cwd, '.devkit', 'skills', name), { recursive: true });
@@ -61,7 +61,20 @@ test('the envelope written for a run with no result passes the schema publish ch
     operations: [],
     attemptLimit: null,
   };
+  const missing = settle({ ok: true }, true);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error, 'the agent finished without a structured result');
+  const absent = Result.parse(failedResult(job, missing));
+  assert.equal(absent.status, 'failed');
+  assert.equal(absent.failure?.class, 'unknown');
+  assert.ok(absent.summary.includes(missing.error));
+  const success = { ok: true, result: absent };
+  assert.equal(settle(success, true), success);
+  const noSchema = { ok: true };
+  assert.equal(settle(noSchema, false), noSchema);
+
   const long = { ok: false, error: 'word '.repeat(400) };
+  assert.equal(settle(long, true), long);
   const result = Result.parse(failedResult(job, long));
   assert.equal(result.failure?.class, 'unknown');
   assert.equal(result.inputs.plan, 'plan');

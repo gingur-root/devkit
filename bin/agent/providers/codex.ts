@@ -177,5 +177,6 @@ export async function runCodex(input: RunInput): Promise<RunOutput> {
   }
   // With an output schema, the final message is the result as JSON.
   if (ok) return { ok, result: input.schema ? JSON.parse(last) : undefined };
-  return { ok, failure: codexFailure(error ?? ''), error };
+  error ??= 'Codex ended without a result';
+  return { ok, failure: codexFailure(error), error };
 }
