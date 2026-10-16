@@ -10,7 +10,8 @@ name: Build
 # one `repair-<n>` job each; anything else moves the card to Needs you.
 # The pipeline never merges. Only the operator can start it (the admission
 # gate), so that comment is the approval, or the App right after his dashboard
-# Continue, which render checks (bin/agent/approval.ts).
+# Continue, which render checks (bin/agent/approval.ts) against the dispatcher:
+# inputs.actor when the central caller dispatched the run, else github.actor_id.
 # A retro issue's plan (devkit#115) skips the builder: publish files the issues
 # its triage kept and closes the retro issue.
 # A story (an issue with sub-issues) is refused and goes to Needs you: build

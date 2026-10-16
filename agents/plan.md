@@ -85,4 +85,9 @@ When the job directory has `issues.md`, this issue is a retro's findings
   card has none yet. A retro issue's plan may leave it null.
 - `outcome` is `ready` or `needs-input`. For `needs-input`, ask one focused
   question in `questions` with two or three options, recommended first.
-- The plan comment leads with `summary`; `plan.md` follows below it.
+- The plan comment leads with `summary`; `plan.md` follows below it in
+  the same comment. Keep `summary` near 80 words: the result, then the
+  approval action, then the one or two points the operator must weigh.
+  Put the approval action, and the `agent:elevated` note for an elevated
+  plan, before the other points, so clipping at 150 words can't remove it.
+  Don't list the plan's steps.

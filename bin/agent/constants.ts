@@ -73,6 +73,9 @@ export const STUB_FIXTURES = [
   'red',
   'story',
   'followups',
+  'changes',
+  'never',
+  'advisory',
 ] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
