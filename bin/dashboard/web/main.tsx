@@ -5,6 +5,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { cn } from 'cn';
+import { ChevronDown, ChevronUp, ChevronsUp, Equal, type LucideIcon } from 'lucide-react';
 import {
   lazy,
   type ReactNode,
@@ -18,7 +19,7 @@ import {
 } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { READY_LABEL, STATUSES } from '../../agent/constants.ts';
+import { type Priority, READY_LABEL, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
 import { BOARD_EVENT } from '../constants.ts';
 import type { BoardEvent } from '../events.ts';
@@ -73,6 +74,13 @@ const MAP_HASH = '#map';
 const HOME_HINT = 'Ask, queue, start, or follow up on an issue.';
 // Below this width the chat is a sheet over the board, not a panel beside it.
 const WIDE = '(min-width: 1024px)';
+
+const PRIORITY_ICONS: Record<Priority, { icon: LucideIcon; className: string }> = {
+  P0: { icon: ChevronsUp, className: 'text-red-600 dark:text-red-400' },
+  P1: { icon: ChevronUp, className: 'text-orange-500 dark:text-orange-400' },
+  P2: { icon: Equal, className: 'text-amber-500 dark:text-amber-400' },
+  P3: { icon: ChevronDown, className: 'text-blue-500 dark:text-blue-400' },
+};
 
 function useWide(): boolean {
   return useSyncExternalStore(
@@ -192,6 +200,19 @@ function StartButton({ thread, className }: { thread: Ref; className?: string })
   );
 }
 
+function PriorityIcon({ priority }: { priority: Priority }) {
+  const { icon: Icon, className } = PRIORITY_ICONS[priority];
+  return (
+    <span
+      title={`Priority ${priority}`}
+      className="relative mr-1 inline-flex items-center gap-0.5 align-middle"
+    >
+      <Icon aria-hidden className={cn('size-3.5', className)} />
+      {priority}
+    </span>
+  );
+}
+
 function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => void }) {
   const running = card.labels.find((l) => l.startsWith('agent:'));
   return (
@@ -211,16 +232,9 @@ function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => vo
         </CardTitle>
         <CardDescription className="text-xs">
           {card.priority && (
-            <Badge
-              variant="outline"
-              className={cn(
-                'mr-1 px-1 py-0',
-                card.priority === 'P0' && 'border-red-500 text-red-700 dark:text-red-400',
-                card.priority === 'P1' && 'border-amber-500 text-amber-700 dark:text-amber-400',
-              )}
-            >
-              {card.priority}
-            </Badge>
+            <a href={`#${card.repo}/${card.number}`}>
+              <PriorityIcon priority={card.priority} />
+            </a>
           )}
           {card.repo}#{card.number}
           {running && ` · ${running} running`}
