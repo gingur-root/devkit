@@ -4,8 +4,10 @@
 // review posts on that PR and marks it ready when it passes, or hands its
 // findings to a repair, which pushes a fix to the same PR. The pipeline never
 // merges. A retro files its findings as one `retro` issue for the planner, and
-// that plan's approval files the issues it kept instead of building. Only this
-// writes GitHub, and only with the App.
+// that plan's approval files the issues it kept instead of building. A ready
+// plan with subtasks files them as sub-issues, which makes the card a story,
+// and every other stage files its follow-ups as new issues (devkit#12). Only
+// this writes GitHub, and only with the App.
 
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,9 +16,12 @@ import { git, gitAsOperator } from '../git.ts';
 import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
+  ELEVATED_NOTE,
+  FOLLOWUP_CAP,
   type Handoff,
   NEEDS_ELEVATED_LABEL,
   OPERATOR_COAUTHOR,
+  OPERATOR_ID,
   OPERATOR_LOGIN,
   PIPELINE_BOT,
   REPAIR_ROUNDS,
@@ -24,10 +29,11 @@ import {
   STAGE_LABELS,
   type Status,
 } from './constants.ts';
-import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
+import { graphql, removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
+  followupMarker,
   ISSUES_FILE,
   JOB_FILE,
   Job,
@@ -39,11 +45,12 @@ import {
   RESULT_FILE,
   REVIEW_FILE,
   revision,
+  subtaskMarker,
   TRANSCRIPT_FILE,
   TRIAGE_FILE,
   usage,
 } from './job.ts';
-import { type Failure, Result, Triage } from './result.ts';
+import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
 
 export interface PublishOptions {
   in: string;
@@ -57,12 +64,15 @@ export interface PublishOptions {
 }
 
 interface Issue {
+  id: number;
   number: number;
   html_url: string;
   node_id: string;
   title: string;
   body: string | null;
   labels: { name: string }[];
+  created_at: string;
+  user: { id: number } | null;
 }
 
 interface Pull {
@@ -191,14 +201,22 @@ function numbered(questions: string[]): string {
   return questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
 }
 
-function planComment(job: Job, result: Result, out: string, handoff: Handoff | null): string {
+function planComment(
+  job: Job,
+  result: Result,
+  out: string,
+  handoff: Handoff | null,
+  story: Filed[],
+): string {
   const planFile = join(out, PLAN_FILE);
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
-  const head = handoff
-    ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
-    : result.status === 'complete'
-      ? `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`
-      : `**Plan ${result.status}**`;
+  const head = story.length
+    ? '**Plan: ready. This card is a story: approve and build each subtask, not this card**'
+    : handoff
+      ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
+      : result.status === 'complete'
+        ? `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`
+        : `**Plan ${result.status}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
@@ -213,6 +231,8 @@ function planComment(job: Job, result: Result, out: string, handoff: Handoff | n
     head,
     result.summary,
     result.priority && `**Priority:** ${result.priority}, unless the card already has one.`,
+    story.length &&
+      `## Subtasks\n\n${story.map((s) => `- #${s.number} ${s.title}${s.elevated ? ', needs the WSL desk' : ''}`).join('\n')}`,
     numbered(result.questions),
     `${PLAN_START}\n${plan}\n${PLAN_END}`,
     `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
@@ -377,7 +397,7 @@ export function gated(result: Result, candidate: string | null, verified: string
     criterion: null,
     path: null,
     line: null,
-    evidence: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    evidence: runUrl(),
     scenario: `toolchain.verify did not pass on ${candidate}.`,
     impact: 'CI is red on this commit, so it is not safe to merge.',
     fix: 'Run the failing check from the run log locally and make it pass.',
@@ -447,12 +467,23 @@ export function readyToBuild(result: Result): boolean {
 
 async function publishBuildOrPlan(
   job: Job,
+  issue: Issue,
   v: Verdict,
   out: string,
   checkout: string | undefined,
   handoff: Handoff | null,
+  subtasks: Subtask[],
 ): Promise<Outcome> {
   let pull: Pull | null = null;
+  let story: Filed[] = [];
+  if ('result' in v && subtasks.length) {
+    try {
+      story = await fileSubtasks(job, issue, subtasks);
+    } catch (error) {
+      console.error(error);
+      v = { stage: 'publish', reason: 'filing the subtasks failed; see the run log' };
+    }
+  }
   if ('result' in v && v.result.outcome === 'implemented') {
     try {
       if (!checkout) throw new Error('publish needs --checkout for a build.');
@@ -479,7 +510,7 @@ async function publishBuildOrPlan(
   if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
     job.role === 'plan'
-      ? planComment(job, v.result, out, handoff)
+      ? planComment(job, v.result, out, handoff, story)
       : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
@@ -505,8 +536,7 @@ export function retroText(result: Result, runUrl: string, source: number): strin
  * only comments, so retros can't loop. A failed retro posts nothing.
  */
 export async function publishRetro(job: Job, issue: Issue, result: Result): Promise<void> {
-  const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-  const text = retroText(result, runUrl, issue.number);
+  const text = retroText(result, runUrl(), issue.number);
   const comments = `/repos/${job.repo}/issues/${issue.number}/comments`;
   if (!result.followups?.length || issue.labels.some((l) => l.name === RETRO_LABEL)) {
     await rest('POST', comments, { body: `${marker('retro')}\n\n${text}` });
@@ -522,7 +552,7 @@ export async function publishRetro(job: Job, issue: Issue, result: Result): Prom
     labels: [STAGE_LABELS.plan],
   });
   await rest('POST', comments, {
-    body: `${marker('retro')}\n\n**Retro on [this run](${runUrl})** found ${result.followups.length} problem${result.followups.length > 1 ? 's' : ''}. They are in #${filed.number}, which is planning now.`,
+    body: `${marker('retro')}\n\n**Retro on [this run](${runUrl()})** found ${result.followups.length} problem${result.followups.length > 1 ? 's' : ''}. They are in #${filed.number}, which is planning now.`,
   });
 }
 
@@ -572,6 +602,113 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
     .join('\n\n');
 }
 
+/** This pipeline run's page. */
+function runUrl(): string {
+  return `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+}
+
+/** An issue a stage filed or found for the card. */
+export interface Filed {
+  number: number;
+  title: string;
+  elevated: boolean;
+}
+
+/**
+ * The issues an earlier try filed for the card, found by the marker that ends
+ * their body. Each was filed after the card, so it was updated since then too.
+ * Only the App's or the operator's count: anyone may copy a marker.
+ */
+async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]> {
+  const since = encodeURIComponent(card.created_at);
+  return (await restAll<Issue>(`/repos/${job.repo}/issues?state=all&since=${since}`)).filter(
+    (i) => (i.user?.id === PIPELINE_BOT.id || i.user?.id === OPERATOR_ID) && i.body?.includes(mark),
+  );
+}
+
+/**
+ * Files or finds each subtask, links it as a native sub-issue of the card, and
+ * puts a new one in Ask. A retry only files and links what is missing, so it
+ * never moves a subtask that has started back to Ask. An elevated subtask asks
+ * for the WSL desk; the operator still adds `agent:elevated` himself.
+ */
+export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): Promise<Filed[]> {
+  const mark = subtaskMarker(card.number);
+  const earlier = await filedBefore(job, card, mark);
+  const path = `/repos/${job.repo}/issues/${card.number}/sub_issues`;
+  const linked = new Set((await restAll<{ id: number }>(path)).map((i) => i.id));
+  const filed: Filed[] = [];
+  for (const subtask of subtasks) {
+    const issue =
+      earlier.find((i) => i.title === subtask.title) ??
+      (await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
+        title: subtask.title,
+        body: [subtask.body, `Part of #${card.number}.`, subtask.elevated && ELEVATED_NOTE, mark]
+          .filter(Boolean)
+          .join('\n\n'),
+        labels: subtask.elevated ? [NEEDS_ELEVATED_LABEL] : [],
+      }));
+    if (!linked.has(issue.id)) {
+      // The numeric id, not the number.
+      await rest('POST', path, { sub_issue_id: issue.id });
+      await setStatus(job.repo, issue.node_id, 'Ask');
+    }
+    filed.push({ number: issue.number, title: issue.title, elevated: subtask.elevated });
+  }
+  return filed;
+}
+
+/** What the stage comment says about its follow-ups, drops included, or '' when there are none. */
+export function followupLine(count: number): string {
+  if (count === 0) return '';
+  const filed = Math.min(count, FOLLOWUP_CAP);
+  const dropped = count - filed;
+  return [
+    `Filed ${filed} follow-up${filed > 1 ? 's' : ''}, listed below.`,
+    dropped > 0 &&
+      `${dropped} more ${dropped > 1 ? 'were' : 'was'} dropped: the cap is ${FOLLOWUP_CAP} per stage.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * Files or finds the stage's first FOLLOWUP_CAP follow-ups, puts a new one in
+ * Ask, and lists them in the card's `followups:<stage>` comment. A follow-up
+ * gets no label, so it starts nothing. Returns the stage comment's line.
+ */
+export async function fileFollowups(
+  job: Job,
+  card: Issue,
+  stage: string,
+  followups: Followup[],
+): Promise<string> {
+  if (!followups.length) return '';
+  const mark = followupMarker(card.number, stage);
+  const earlier = await filedBefore(job, card, mark);
+  const from = `From #${card.number}'s \`${stage}\` stage ([run](${runUrl()})).`;
+  const lines: string[] = [];
+  for (const followup of followups.slice(0, FOLLOWUP_CAP)) {
+    let issue = earlier.find((i) => i.title === followup.title);
+    if (!issue) {
+      issue = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
+        title: followup.title,
+        body: [followup.body, from, mark].join('\n\n'),
+      });
+      await setStatus(job.repo, issue.node_id, 'Ask');
+    }
+    lines.push(`- #${issue.number} ${issue.title}`);
+  }
+  const role = `followups:${stage}`;
+  await upsertStageComment(
+    job.repo,
+    card.number,
+    role,
+    [marker(role), `**Follow-ups from the \`${stage}\` stage**`, lines.join('\n')].join('\n\n'),
+  );
+  return followupLine(followups.length);
+}
+
 /** The stage's name in the run summary: its role, and its round when it repeats. */
 export function stageName(role: string, round = 0): string {
   return round > 0 ? `${role}.r${round}` : role;
@@ -590,7 +727,8 @@ function summarizeUsage(stage: string, out: string): void {
 
 export async function publish(options: PublishOptions): Promise<void> {
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
-  summarizeUsage(stageName(job.role, options.round), options.out);
+  const stage = stageName(job.role, options.round);
+  summarizeUsage(stage, options.out);
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   // An approved retro triage has no build to check: render wrote it from the plan the gate approved.
@@ -608,15 +746,19 @@ export async function publish(options: PublishOptions): Promise<void> {
     await publishRetro(job, issue, v.result);
     return;
   }
-  // A ready plan a dashboard Continue started goes straight to its build (devkit#99).
+  const ready = job.role === 'plan' && 'result' in v && readyToBuild(v.result);
+  // A ready plan's subtasks make the card a story; a retro issue's plan triages instead.
+  const subtasks = ready && !job.artifacts.includes(ISSUES_FILE) ? (v.result.subtasks ?? []) : [];
+  // A ready plan a dashboard Continue started goes straight to its build (devkit#99), unless it is a story.
   const handoff =
-    job.role === 'plan' && 'result' in v && readyToBuild(v.result)
-      ? armedContinue(await readSteps(job.repo, job.issue.number))
-      : null;
-  const { body, status, stopped } =
+    ready && !subtasks.length ? armedContinue(await readSteps(job.repo, job.issue.number)) : null;
+  const outcome =
     job.role === 'review'
       ? await publishReview(job, v, options)
-      : await publishBuildOrPlan(job, v, options.out, options.checkout, handoff);
+      : await publishBuildOrPlan(job, issue, v, options.out, options.checkout, handoff, subtasks);
+  const { status, stopped } = outcome;
+  const followups = 'result' in v ? (v.result.followups ?? []) : [];
+  const body = [outcome.body, followupLine(followups.length)].filter(Boolean).join('\n\n');
 
   // A build's Ready is brief: its own review follows in the same run and has the last word.
   const waiting = status === 'Needs you' || (status === 'Ready' && job.role !== 'build');
@@ -633,6 +775,8 @@ export async function publish(options: PublishOptions): Promise<void> {
   await setStatus(job.repo, issue.node_id, status);
   if ('result' in v && v.result.priority)
     await proposePriority(job.repo, issue.node_id, v.result.priority);
+  // Last, so a failed filing never hides the stage's own result; a retry files only what is missing.
+  await fileFollowups(job, issue, stage, followups);
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
   // A plan that asks questions is the normal flow, not trouble.

@@ -124,6 +124,40 @@ lands instead of sitting in a comment (devkit#115):
 - A stub proof run that reaches a retro files a real retro issue, which starts
   a real plan. Close it if you don't want that.
 
+## Stories and follow-ups
+
+Agents propose new issues in their result, and publish files them
+(devkit#12).
+
+- **Subtasks make a story.** A ready plan's `subtasks` become native
+  sub-issues of the card, in **Ask**. Each one says `Part of #<card>.` The
+  card is now a story: its plan comment lists the subtasks and does not hand
+  off to a build, even after a **Continue**. Plan, approve and build each
+  subtask on its own. A subtask's `issue.md` starts with the story's title and
+  body, so its plan stays inside the story.
+- **A story never builds.** `agent:build` or `agent:elevated` on an issue with
+  sub-issues is refused. The card goes to **Needs you** with "Build each
+  subtask instead", and the label is removed. This includes stories made by
+  hand.
+- **Elevated subtasks.** A subtask the plan marks `elevated` gets
+  `needs:elevated` and the note "Needs the WSL desk: add `agent:elevated` after
+  the plan." The pipeline never adds `agent:elevated` itself.
+- **Follow-ups.** Any stage except a retro may return `followups`. Each becomes
+  a new issue in **Ask** with no label, so it starts nothing. Its body links
+  back to the card, the stage and the run. A comment on the card lists them,
+  and the stage comment says how many were filed.
+- **The cap is 5 per stage.** A stage that proposes more files its first 5,
+  and its comment says how many were dropped. Each review round counts as its
+  own stage.
+- **Retries never duplicate.** Each filed issue ends with a hidden marker
+  (`<!-- devkit:subtask #<card> -->` or
+  `<!-- devkit:followup #<card> <stage> -->`). A retry finds the earlier issue
+  by its marker and exact title, links a subtask that never got linked, and
+  files only what is missing. A subtask a re-plan renames is filed again under
+  the new title; close the old one by hand.
+- A retro's `followups` are its findings, which it files as one `retro` issue
+  ([Retros](#retros)).
+
 ## Elevated runs (the WSL desk)
 
 For a plan that needs Troy's own admin access (a new provider, an org setting,
@@ -196,10 +230,13 @@ on a scratch issue.
 
    ```bash
    gh workflow run agents.yml -R gingur-root/pipeline --ref <pipeline-branch> \
-     -f stage=plan -f repo=scratch -f issue=<n> -f executor=stub
+     -f stage=plan -f repo=scratch -f issue=<n> -f executor=stub -f fixture=<name>
    ```
 
    `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
+   `fixture` picks the stub's result (`bin/agent/constants.ts`
+   `STUB_FIXTURES`): `ready` by default, `story` for a plan with two subtasks,
+   `followups` for a build that proposes seven follow-ups.
 
 3. Delete the pipeline branch when you are done.
 

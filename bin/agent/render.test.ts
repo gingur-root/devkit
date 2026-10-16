@@ -1,5 +1,5 @@
 // The build runs whatever plan this gate returns, so it must accept only the
-// App's ready plan, unedited, for the issue as it is now.
+// App's ready plan, unedited, for the issue as it is now, and never a story.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { test, vi } from 'vite-plus/test';
 import renderCommand from '../commands/agent/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import { CONTRACT_PREFIX, marker, PLAN_END, PLAN_START, revision } from './job.ts';
-import { approvedPlan, openIssues, render } from './render.ts';
+import { approvedPlan, issueSnapshot, openIssues, render } from './render.ts';
 
 const APP = 7;
 const ISSUE = revision('Title', 'Body');
@@ -187,6 +187,148 @@ test('the render CLI defaults the dispatcher from GitHub and accepts an explicit
     assert.equal(parse().dispatcher, undefined);
     assert.equal(parse(['--actor', String(OPERATOR_ID)]).dispatcher, undefined);
   } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("a subtask's snapshot starts with its parent story, if the operator or the App wrote it", () => {
+  const issue = {
+    number: 3,
+    title: 'Sub',
+    body: 'Do it.',
+    labels: [],
+    created_at: '',
+    user: { id: OPERATOR_ID },
+  };
+  const notes = [
+    { body: 'Mine', created_at: 't1', user: { id: OPERATOR_ID } },
+    { body: 'Theirs', created_at: 't2', user: { id: 1 } },
+  ];
+  const today = '# Sub\n\nDo it.\n\n## Comment, t1\n\nMine';
+  assert.equal(issueSnapshot(issue, notes, APP), today);
+  assert.equal(issueSnapshot(issue, notes, APP, null), today, 'no parent: unchanged');
+  const story = { ...issue, number: 1, title: 'Story', body: 'The whole story.' };
+  assert.equal(
+    issueSnapshot(issue, notes, APP, story),
+    `# Parent story #1: Story\n\nThe whole story.\n\n---\n\n${today}`,
+  );
+  assert.equal(
+    issueSnapshot(issue, notes, APP, { ...story, user: { id: 1 } }),
+    `# Parent story #1\n\n(Written by someone else, so left out.)\n\n---\n\n${today}`,
+  );
+});
+
+test("render puts the parent story in a subtask's issue.md, and nothing when it has none", async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-parent-'));
+  let parent: Response | null = null;
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const path = new URL(url).pathname;
+    if (path === '/repos/o/r/issues/3/parent' && parent) return parent;
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/3': {
+        number: 3,
+        title: 'Sub',
+        body: 'Do it.',
+        labels: [],
+        user: { id: OPERATOR_ID },
+      },
+    };
+    return new Response(JSON.stringify(routes[path] ?? []));
+  });
+  try {
+    const options = {
+      repo: 'o/r',
+      issue: 3,
+      role: 'plan',
+      source: 'abc',
+      appId: APP,
+      out,
+    } as const;
+    parent = new Response(
+      JSON.stringify({ number: 1, title: 'Story', body: 'S', user: { id: OPERATOR_ID } }),
+    );
+    await render(options);
+    assert.ok(
+      readFileSync(join(out, 'issue.md'), 'utf8').startsWith(
+        '# Parent story #1: Story\n\nS\n\n---\n\n# Sub',
+      ),
+    );
+    parent = new Response('{"message":"Not Found"}', { status: 404 });
+    await render(options);
+    assert.equal(readFileSync(join(out, 'issue.md'), 'utf8'), '# Sub\n\nDo it.\n');
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+test('a story never builds: it goes to Needs you and says to build each subtask', async () => {
+  const writes: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        node_id: 'I_1',
+        title: 'Title',
+        body: 'Body',
+        labels: [],
+        user: { id: OPERATOR_ID },
+        sub_issues_summary: { total: 2 },
+      },
+      '/repos/o/r/issues/1/comments': [comment()],
+    };
+    if (path === '/graphql') {
+      const { query, variables } = JSON.parse(String(init.body));
+      const board = {
+        id: 'P',
+        title: 'Pipeline',
+        field: { id: 'F', options: [{ id: 'NY', name: 'Needs you' }] },
+      };
+      if (query.includes('organization(')) {
+        return new Response(
+          JSON.stringify({ data: { organization: { projectsV2: { nodes: [board] } } } }),
+        );
+      }
+      if (query.includes('addProjectV2ItemById')) {
+        return new Response(
+          JSON.stringify({
+            data: { addProjectV2ItemById: { item: { id: 'item', current: null } } },
+          }),
+        );
+      }
+      writes.push(`status ${variables.option}`);
+      return new Response(JSON.stringify({ data: {} }));
+    }
+    if (init.method !== 'GET') writes.push(`${init.method} ${path} ${String(init.body ?? '')}`);
+    return new Response(JSON.stringify(init.method === 'GET' ? (routes[path] ?? []) : {}));
+  });
+  try {
+    for (const role of ['build', 'elevated'] as const) {
+      writes.length = 0;
+      await assert.rejects(
+        render({
+          repo: 'o/r',
+          issue: 1,
+          role,
+          source: 'abc',
+          appId: APP,
+          actor: OPERATOR_ID,
+          dispatcher: OPERATOR_ID,
+          out: '/nonexistent',
+        }),
+        /This card is a story with 2 subtasks\. Build each subtask instead\./,
+      );
+      assert.equal(writes.length, 3, role);
+      assert.match(writes[0]!, /^POST \/repos\/o\/r\/issues\/1\/comments .*story with 2 subtasks/);
+      assert.equal(writes[1], `DELETE /repos/o/r/issues/1/labels/agent%3A${role} `);
+      assert.equal(writes[2], 'status NY');
+    }
+  } finally {
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   }
 });

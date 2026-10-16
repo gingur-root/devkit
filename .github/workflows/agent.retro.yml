@@ -26,7 +26,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you` or `rate-limit`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `story` or `followups`.'
         type: string
         required: false
         default: 'ready'
