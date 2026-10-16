@@ -41,11 +41,18 @@ export default {
     const { pipelineHandler } = await import('../../webhooks/pipeline.ts');
     const { homedir } = await import('node:os');
     const { join } = await import('node:path');
+    const { createInbox, githubInboxHandler, inboxRoutes } =
+      await import('../../webhooks/inbox.ts');
     const board = webhookBoard();
+    const state = join(homedir(), '.local/state/devkit-dashboard');
+    const inbox = createInbox(join(state, 'events.jsonl'));
+    // Without EVENTS_TOKEN the inbox still records, but nobody can read or post to it.
+    const token = process.env.EVENTS_TOKEN;
     createReceiver(
       secret,
-      [board.handle, pipelineHandler()],
-      createDedupe(join(homedir(), '.local/state/devkit-dashboard/deliveries.json')),
+      [board.handle, pipelineHandler(), githubInboxHandler(inbox)],
+      createDedupe(join(state, 'deliveries.json')),
+      token ? inboxRoutes(inbox, token) : undefined,
     ).listen(hooksPort, '127.0.0.1');
     console.log(`Webhook receiver on http://127.0.0.1:${hooksPort}`);
     // Only cloudflared reaches them from outside, so both listen on loopback only.
