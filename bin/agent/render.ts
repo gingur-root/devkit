@@ -58,8 +58,10 @@ export interface RenderOptions {
   /** A review's base: the commit the candidate was built from. */
   base?: string;
   appId: number;
-  /** Who started the run (`github.actor_id`). A build or elevated run the App started needs a Continue (devkit#99). */
+  /** Who requested the stage; may come from a dispatch input. Verified against issue history. */
   actor?: number;
+  /** Who GitHub says triggered the workflow (`github.actor_id`). */
+  dispatcher?: number;
   out: string;
 }
 
@@ -162,7 +164,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   let approved: ReturnType<typeof approvedPlan> | null = null;
   if (options.role !== 'plan' && options.role !== 'retro') {
     try {
-      if (HANDOFF_ROLES.includes(options.role)) {
+      if (HANDOFF_ROLES.includes(options.role) && options.dispatcher !== OPERATOR_ID) {
         // No actor fails closed: it is neither the operator nor the App.
         const why = refuseStart(
           options.actor ?? Number.NaN,

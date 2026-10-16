@@ -36,7 +36,17 @@ export async function refreshGhToken(env: NodeJS.ProcessEnv = process.env): Prom
       headers: {
         authorization: `Bearer ${appJwt(PIPELINE_APP_CLIENT_ID, PIPELINE_APP_KEY)}`,
         accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
       },
+      body: JSON.stringify({
+        permissions: {
+          issues: 'write',
+          organization_projects: 'write',
+          actions: 'write',
+          pull_requests: 'read',
+          checks: 'read',
+        },
+      }),
     },
   );
   if (!response.ok) throw new Error(`App token: HTTP ${response.status} ${await response.text()}`);

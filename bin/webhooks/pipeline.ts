@@ -1,9 +1,16 @@
 // Starts pipeline stages for any gingur-root repo (devkit#118), so a repo needs
 // no `agents.yml`. The receiver applies the admission rule
 // (.github/admission.txt) to the event's sender, then dispatches the one
-// central caller in gingur-root/pipeline. Admission there admits only the
-// App's dispatch, so this file is the gate for every webhook-started run.
-import { OPERATOR_ID, PIPELINE_BOT, READY_LABEL, STAGE_LABELS } from '../agent/constants.ts';
+// central caller in gingur-root/pipeline. Admission in devkit's reusable
+// workflows admits the App's dispatch and Troy's own dispatch. This file is
+// the gate for every webhook-started run.
+import {
+  OPERATOR_ID,
+  PIPELINE_BOT,
+  READY_LABEL,
+  STAGE_COMMANDS,
+  STAGE_LABELS,
+} from '../agent/constants.ts';
 import { rest } from '../agent/github.ts';
 import { refreshGhToken } from '../dashboard/app-token.ts';
 import { ORG } from '../dashboard/constants.ts';
@@ -32,7 +39,9 @@ const APP_LABELS: Record<string, DispatchStage> = {
   [STAGE_LABELS.elevated]: 'elevated',
 };
 // /revise is admitted too, but no stage handles it yet.
-const COMMANDS: Record<string, DispatchStage> = { '/plan': 'plan', '/approve': 'build' };
+const COMMANDS = Object.fromEntries(
+  Object.entries(STAGE_COMMANDS).map(([command, label]) => [command, OPERATOR_LABELS[label]]),
+);
 
 export interface Dispatch {
   stage: DispatchStage;
