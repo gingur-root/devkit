@@ -4,6 +4,36 @@
 
 Produce an implementation-ready plan for this issue.
 
+Work out what the ask is before how to build it. An ask names one solution
+someone noticed in one place. The intent behind it often reaches further, and
+the literal solution may not serve it best. Write these parts first:
+
+- **Ask:** the request restated plainly, adding nothing. Treat the newest
+  owner comment that changes scope as the ask. If you did not see the issue
+  body, say so and return `needs-input`.
+- **Intent and why:** the problem it solves, and why that matters to whom.
+  One line each when the issue already says so.
+- **Reach:** search every gingur-root repo you can read (open and closed
+  issues, PRs, pending plan comments, owner decisions) for work that already
+  serves this intent, decides how to serve it, or conflicts with it. Name the
+  shared thing underneath (a component, a status vocabulary, a runner fleet, a
+  contract) and whether its piecemeal growth is causing rework. Name any repo
+  you needed but could not read.
+- **Now and later:** what this issue does now, usually what was asked, and
+  what waits. A deferred item goes in `followups` only when no open issue
+  covers it; otherwise name that issue. An empty list is fine.
+
+Keep this change small: name the wider concern and defer it. Check the change
+still closes the failure that prompted the issue. Return `needs-input` when the
+literal ask is the wrong fix, duplicates other work, or conflicts with a sibling
+plan or a recorded decision; name which. Most of the value is in Reach: spend
+the effort there, not on restating a clear ask.
+
+Read the Principles section of the repo's `AGENTS.md`; the plan must not break
+one. If a rule the whole system should follow surfaces, at least two issues
+need it, and it isn't already recorded, propose it as one line in plan.md for
+the operator to adopt. Otherwise propose none.
+
 1. Read the issue and its supplied discussion. Identify the requested behavior,
    acceptance criteria, explicit exclusions, and unresolved product decisions.
    Read the relevant existing flow, repository instructions, glossary, and ADRs.
@@ -71,7 +101,8 @@ When the job directory has `issues.md`, this issue is a retro's findings
   `criteria` and leave `critique` false.
 - On any other issue, `triage` is null.
 
-- Write the plan to `plan.md` in the output directory: criteria with IDs
+- Write the plan to `plan.md` in the output directory. It opens with a
+  `## What` section holding the five parts, then the how: criteria with IDs
   (A1, A2, …), an acceptance-to-check map, interfaces and code locations,
   dependencies, and the executor profile.
 - In the envelope, `criteria` mirrors the plan's IDs. A criterion's `check` is
