@@ -2,10 +2,10 @@
 // gingur-root/pipeline admits any dispatch from the App. A loosened rule here
 // would let anyone's label start an agent with the pipeline's credentials.
 import assert from 'node:assert/strict';
-import { test } from 'vite-plus/test';
+import { test, vi } from 'vite-plus/test';
 
 import { OPERATOR_ID, PIPELINE_BOT } from '../agent/constants.ts';
-import { dispatchFor } from './pipeline.ts';
+import { dispatchFor, pipelineHandler } from './pipeline.ts';
 
 const STRANGER = 1;
 const repository = { name: 'scratch', owner: { login: 'gingur-root' } };
@@ -24,7 +24,13 @@ const labeled = (label: string, sender = OPERATOR_ID, extra = {}) => ({
 const commented = (body: string, sender = OPERATOR_ID, issue: object = { number: 5 }) => ({
   id: 'd',
   event: 'issue_comment',
-  payload: { action: 'created', sender: { id: sender }, repository, issue, comment: { body } },
+  payload: {
+    action: 'created',
+    sender: { id: sender },
+    repository,
+    issue,
+    comment: { id: 77, body },
+  },
 });
 const stage = (delivery: Parameters<typeof dispatchFor>[0]) => dispatchFor(delivery)?.stage ?? null;
 
@@ -76,5 +82,46 @@ test('nothing starts from other events, other actions, PRs, other orgs or skippe
       null,
       `${repo.owner.login}/${repo.name}`,
     );
+  }
+});
+
+test("a run's 👀 goes on the comment that started it, else on the issue, and a loop tick gets none", async () => {
+  assert.equal(dispatchFor(commented('/plan'))?.comment, 77);
+  assert.ok(!('comment' in dispatchFor(labeled('agent:plan'))!));
+  const calls: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('PIPELINE_APP_KEY', '');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    calls.push(`${init.method} ${new URL(url).pathname} ${String(init.body)}`);
+    return new Response(null, { status: 204 });
+  });
+  const handle = pipelineHandler();
+  try {
+    await handle(commented('/plan'));
+    assert.equal(calls.length, 2);
+    assert.match(
+      calls[0]!,
+      /^POST \/repos\/gingur-root\/pipeline\/actions\/workflows\/agents\.yml\/dispatches /,
+    );
+    assert.ok(!calls[0]!.includes('77'), 'the dispatch carries no comment input');
+    assert.equal(
+      calls[1],
+      'POST /repos/gingur-root/scratch/issues/comments/77/reactions {"content":"eyes"}',
+    );
+    for (const sender of [OPERATOR_ID, PIPELINE_BOT.id]) {
+      calls.length = 0;
+      await handle(labeled('agent:plan', sender));
+      assert.equal(
+        calls[1],
+        'POST /repos/gingur-root/scratch/issues/5/reactions {"content":"eyes"}',
+      );
+    }
+    calls.length = 0;
+    await handle(labeled('ready-for-agent'));
+    assert.equal(calls.length, 1, 'only the loop dispatch');
+    assert.match(calls[0]!, /\/dispatches /);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   }
 });

@@ -1,0 +1,63 @@
+{
+  "job": "",
+  "role": "review",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "changes-requested",
+  "summary": "Stub review: requests a repair.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": null,
+  "hypotheses": null,
+  "axes": {
+    "correctness": "changes-requested",
+    "spec": "pass",
+    "standards": "pass"
+  },
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Repair F1, then verify and review again.",
+  "findings": [
+    {
+      "id": "F1",
+      "axis": "correctness",
+      "blocking": true,
+      "criterion": "A1",
+      "path": "STUB.md",
+      "line": 1,
+      "evidence": "Stub fixture requests a repair.",
+      "scenario": "STUB.md needs a repair.",
+      "impact": "The fixture cannot pass until repaired.",
+      "fix": "Rewrite STUB.md with the repair fixture."
+    }
+  ],
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null
+}

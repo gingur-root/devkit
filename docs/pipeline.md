@@ -45,6 +45,35 @@ overrides a priority you or a groom set. Change it on the board to override.
 The dashboard sorts each column by Priority, then by most recently updated;
 cards with no priority come last.
 
+## Receipts
+
+Each run reacts on the event that started it (devkit#148), so the issue shows
+that an agent picked it up and how the run ended. A `/plan` or `/approve`
+run reacts on that comment. A label or a manual dispatch reacts on the issue.
+
+| Reaction      | Meaning                                                 |
+| ------------- | ------------------------------------------------------- |
+| 👀 `eyes`     | Picked up, working                                      |
+| 🚀 `rocket`   | Done: the plan or the PR is ready, or a triage filed    |
+| 😕 `confused` | The run ended with a question for you, in **Needs you** |
+| 👎 `-1`       | A job failed                                            |
+
+Who writes them (`bin/agent/reactions.ts`):
+
+- **👀:** the webhook receiver, right after it dispatches a plan, build or
+  elevated run. It has the comment ID, which the dispatch can't carry. For an
+  event the receiver didn't dispatch (infra's caller, a manual dispatch), the
+  start job adds it. A board-loop tick gets none.
+- **The end state:** publish, once the run's last stage is done. When a run
+  dies before it publishes, the start job's failure step or the board loop's
+  stalled path sets `-1`.
+- The writer is the App. On the WSL desk with no App token, it's Troy's own
+  `gh`, so the reactions show as his there.
+- The end step swaps only the writer's own 👀 for one end reaction, and
+  removes its older ones on that target. Your reactions stay.
+- Reactions are best effort: a failed one logs a warning and never fails the
+  run.
+
 ## The board loop
 
 `pnpm agent loop` (`bin/agent/loop.ts`, devkit#47) keeps cards moving with no
@@ -75,6 +104,11 @@ same time `toolchain.verify` runs the repo's own checks (format, lint,
 typecheck, test, build) on that same commit, so an enrolled repo needs every
 script it runs.
 
+The controller posts one `COMMENT` review. Findings on added or context lines
+in `candidate.patch` appear inline, prefixed with their ID, blocking or
+advisory flag, and axis. Findings outside the diff stay in the review body.
+Advisory findings allow an otherwise clean review to pass.
+
 - **Pass** (every axis passes, no blocking finding, no question, and CI green
   on the reviewed commit): the PR is marked ready for review and the card
   stays in **Ready**. Red CI adds a blocking `CI` finding to the review, which
@@ -84,10 +118,27 @@ script it runs.
   pushes a new commit to the same PR, then Claude reviews the whole change
   again. The card stays in **Building** meanwhile, and the issue gets a
   **Repair** comment with what Codex changed. This repeats up to 2 rounds
-  (`REPAIR_ROUNDS` in `bin/agent/constants.ts`).
+  (`REPAIR_ROUNDS` in `bin/agent/constants.ts`). A repair must map every
+  supplied finding ID in `changes[].ref`. A dispute needs non-empty
+  `evidence`; an incomplete map stops at `validate` before a push.
 - **Anything else** (a question for you, an inconclusive review, findings left
   after 2 rounds, or a repair that changed nothing): the review comment says
-  the PR needs your call, and the card moves to **Needs you**.
+  the PR needs your call, lists open blocking IDs, and links the PR's loop
+  log. The card moves to **Needs you**. A stale candidate also stops here,
+  without posting a PR review or marking the PR ready.
+
+The PR has one loop-log comment, updated after each repair and review. It
+shows the round and cap, failure count, candidate short SHA, CI result,
+review outcome, open blocking IDs, and the repair's hypotheses. Its hidden
+`<!-- devkit:loop-state {json} -->` line keeps state between jobs. Round 0
+reviews the build; rounds 1 and 2 review repairs.
+
+For a direct controller call, set the repair cap with
+`pnpm agent publish --in <job-dir> --out <output-dir> --round <r> --rounds <n>`.
+Pass the same cap to each publish in the run. Without `--rounds`, the cap is
+`REPAIR_ROUNDS` (2). The current workflow schedules only two repair jobs;
+a larger CLI cap does not add jobs. Ten rounds and stale reruns need the
+separate workflow change.
 
 The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR

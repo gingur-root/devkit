@@ -74,6 +74,9 @@ export const STUB_FIXTURES = [
   'crash',
   'timeout',
   'missing',
+  'changes',
+  'never',
+  'advisory',
 ] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
