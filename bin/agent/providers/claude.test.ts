@@ -10,6 +10,28 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { assertClaudeInit, claudeFailure, claudeOptions } from './claude.ts';
 import { codexFailure } from './codex.ts';
 
+test('every role passes its configured turn cap to Claude', () => {
+  const defaults = {
+    hello: 10,
+    plan: 100,
+    build: 200,
+    repair: 200,
+    review: 100,
+    retro: 50,
+    elevated: 200,
+  };
+  for (const [name, role] of Object.entries(ROLES)) {
+    const options = claudeOptions(role, {
+      cwd: '/w',
+      executable: '/bin/claude',
+      env: {},
+      instructions: '',
+    });
+    assert.equal(options.maxTurns, defaults[name as keyof typeof defaults], name);
+    assert.equal(options.maxTurns, role.maxTurns, name);
+  }
+});
+
 test('Claude init outside the role stops the run', () => {
   const options = claudeOptions(ROLES.hello, {
     cwd: '/w',

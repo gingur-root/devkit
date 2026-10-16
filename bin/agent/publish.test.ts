@@ -2,7 +2,7 @@
 // clean pass may say so.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, vi } from 'vite-plus/test';
@@ -36,6 +36,66 @@ const finding = {
   impact: '',
   fix: '',
 } as const;
+
+function check(job: Job, result: Result) {
+  const out = mkdtempSync(join(tmpdir(), 'verdict-'));
+  try {
+    writeFileSync(join(out, PLAN_FILE), 'plan');
+    writeFileSync(
+      join(out, RESULT_FILE),
+      JSON.stringify({
+        ...result,
+        job: job.job,
+        role: job.role,
+        inputs: { ...result.inputs, issue: 'rev' },
+      }),
+    );
+    return verdict(job, 'rev', out);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+}
+
+for (const status of ['blocked', 'failed', 'stale'] as const) {
+  test(`a ${status} result stops before normal publishing in every stage`, () => {
+    for (const role of ['plan', 'build', 'review', 'repair', 'elevated', 'retro']) {
+      const job: Job = {
+        job: `${role}-1`,
+        role,
+        objective: '',
+        repo: 'o/r',
+        issue: { number: 1, title: 'T', revision: 'rev' },
+        plan: null,
+        source: 'abc',
+        base: null,
+        candidate: null,
+        artifacts: [],
+        operations: [],
+        attemptLimit: null,
+      };
+      const result = { ...pass, status, outcome: null, summary: 'No fixture.', failure: null };
+      assert.deepEqual(
+        check(job, result),
+        {
+          stage: status === 'stale' ? 'contract' : role,
+          reason:
+            status === 'stale'
+              ? `the ${role} found its input superseded: No fixture`
+              : `\`${status}\`: No fixture`,
+        },
+        role,
+      );
+      assert.deepEqual(
+        check(job, { ...result, outcome: 'ready' }),
+        {
+          stage: 'validate',
+          reason: `a ${status} run set outcome \`ready\``,
+        },
+        'an invalid outcome still fails validation first',
+      );
+    }
+  });
+}
 
 test('only a clean pass passes', () => {
   assert.ok(passes(pass));
@@ -121,15 +181,6 @@ test("only a retro issue's plan triages, and every other plan sets a priority", 
   const triage = [
     { title: 'Fix', body: 'b', link: null, start: 'plan', elevated: false, priority: 'P2' },
   ] as const;
-  const check = (j: Job, r: Result) => {
-    const out = mkdtempSync(join(tmpdir(), 'verdict-'));
-    writeFileSync(join(out, PLAN_FILE), 'plan');
-    writeFileSync(
-      join(out, RESULT_FILE),
-      JSON.stringify({ ...r, job: j.job, role: j.role, inputs: { ...r.inputs, issue: 'rev' } }),
-    );
-    return verdict(j, 'rev', out);
-  };
   assert.ok('result' in check(job, plan), 'an ordinary plan');
   assert.ok('result' in check(retro, { ...plan, triage: [...triage] }), 'a retro plan');
   assert.ok(

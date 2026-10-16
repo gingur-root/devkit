@@ -65,7 +65,16 @@ export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
 
 /** The stub's fixtures, in bin/agent/fixtures/. */
 /** `red` builds a change CI rejects, which the stub repair then fixes. */
-export const STUB_FIXTURES = ['ready', 'invalid', 'needs-you', 'rate-limit', 'red'] as const;
+export const STUB_FIXTURES = [
+  'ready',
+  'invalid',
+  'needs-you',
+  'rate-limit',
+  'red',
+  'crash',
+  'timeout',
+  'missing',
+] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
 /** The operator's GitHub user ID, as in the admission expression. */

@@ -146,6 +146,14 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
       reason: `a ${result.status} run set outcome \`${result.outcome}\``,
     };
   }
+  const summary = result.summary.replace(/\.$/, '');
+  if (result.status === 'stale')
+    return {
+      stage: 'contract',
+      reason: `the ${job.role} found its input superseded: ${summary}`,
+    };
+  if (result.status === 'blocked' || result.status === 'failed')
+    return { stage: job.role, reason: `\`${result.status}\`: ${summary}` };
   const candidate = join(out, CANDIDATE_FILE);
   if (
     result.outcome === 'implemented' &&
@@ -196,9 +204,7 @@ function planComment(job: Job, result: Result, out: string, handoff: Handoff | n
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
   const head = handoff
     ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
-    : result.status === 'complete'
-      ? `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`
-      : `**Plan ${result.status}**`;
+    : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
@@ -226,7 +232,7 @@ function buildComment(job: Job, result: Result, pull: Pull | null): string {
     job.role === 'elevated' ? 'Elevated run' : job.role === 'repair' ? 'Repair' : 'Build';
   const link = pull && `[#${pull.number}](${pull.html_url})`;
   const head = !link
-    ? `**${stage} ${result.status}**`
+    ? `**${stage}: ${result.outcome === 'needs-input' ? 'needs your input' : result.outcome}**`
     : job.role === 'repair'
       ? `**Repair: pushed a fix to ${link}; reviewing it again**`
       : `**${stage}: ${link} is ready for review**`;
