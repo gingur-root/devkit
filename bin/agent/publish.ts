@@ -45,6 +45,7 @@ import {
   RESULT_FILE,
   REVIEW_FILE,
   revision,
+  STEPS_FILE,
   subtaskMarker,
   TRANSCRIPT_FILE,
   TRIAGE_FILE,
@@ -117,7 +118,21 @@ export function nextStep(gate: Gate): Step {
 
 export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const file = join(out, RESULT_FILE);
-  if (!existsSync(file)) return { stage: job.role, reason: 'the agent ended without a result' };
+  if (!existsSync(file)) {
+    const stepsFile = join(out, STEPS_FILE);
+    if (existsSync(stepsFile)) {
+      const steps = JSON.parse(readFileSync(stepsFile, 'utf8')) as Record<string, string>;
+      const failed = Object.entries(steps).find(
+        ([step, outcome]) => step !== 'run' && outcome === 'failure',
+      );
+      if (failed)
+        return {
+          stage: job.role,
+          reason: `the ${job.role} job failed at ${failed[0]} before the agent started; see the job log`,
+        };
+    }
+    return { stage: job.role, reason: 'the agent ended without a result' };
+  }
   let json: unknown;
   try {
     json = JSON.parse(readFileSync(file, 'utf8'));

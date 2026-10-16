@@ -24,6 +24,8 @@ export const TRANSCRIPT_FILE = 'transcript.jsonl';
 export const REVIEW_FILE = 'review.json';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
+/** Each agent.run step's outcome, written even when setup fails. */
+export const STEPS_FILE = 'steps.json';
 
 /** Each stage's comment starts with its marker; the plan's text sits between these. */
 export const PLAN_START = '<!-- devkit:plan:start -->';
