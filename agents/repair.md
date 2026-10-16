@@ -24,6 +24,7 @@ alone does not resolve the finding.
   the job's `source`.
 - `changes` holds one entry per finding, with its ID in `ref`: `change` for
   what you changed, or `response` with `evidence` when you changed nothing.
+- Put each suspected cause of a failure, whether tested or not, in `hypotheses`.
 - `outcome` is `implemented` only when the tree has a change. A review then
   runs again on the new commit. With no change to make, return `blocked` and
   say why in `summary`; the operator decides.

@@ -24,7 +24,7 @@ import {
   STAGE_LABELS,
   type Status,
 } from './constants.ts';
-import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
+import { graphql, removeLabel, rest, stageComment, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
@@ -52,6 +52,8 @@ export interface PublishOptions {
   checkout?: string;
   /** A review's repair round: 0 reviews the build, n the nth repair. */
   round?: number;
+  /** The repair-round cap; defaults to REPAIR_ROUNDS. */
+  rounds?: number;
   /** A review's round: the commit toolchain.verify passed on, or empty when it did not pass. */
   verified?: string;
 }
@@ -80,7 +82,27 @@ interface Outcome {
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
-type Verdict = { result: Result } | { stage: string; reason: string };
+export type Verdict = { result: Result } | { stage: string; reason: string };
+
+export type Step = 'ready' | 'repair' | 'rerun' | 'stop';
+export interface Gate {
+  candidate: string;
+  head: string;
+  review: Verdict;
+  verified: string;
+  round: number;
+  rounds: number;
+}
+
+/** The only decision point for a review round, bound to its exact candidate. */
+export function nextStep(gate: Gate): Step {
+  if (gate.head !== gate.candidate || ('stage' in gate.review && gate.review.stage === 'stale'))
+    return gate.round < gate.rounds ? 'rerun' : 'stop';
+  if ('stage' in gate.review) return 'stop';
+  const result = gated(gate.review.result, gate.candidate || null, gate.verified);
+  if (passes(result)) return 'ready';
+  return repairable(result) && gate.round < gate.rounds ? 'repair' : 'stop';
+}
 
 export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const file = join(out, RESULT_FILE);
@@ -111,18 +133,23 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     result.job !== job.job ||
     result.role !== job.role ||
     result.inputs.issue !== job.issue.revision ||
-    (job.plan !== null && result.inputs.plan !== job.plan.revision) ||
-    (job.candidate !== null && result.inputs.candidate !== job.candidate)
+    (job.plan !== null && result.inputs.plan !== job.plan.revision)
   ) {
     return {
       stage: 'contract',
-      reason: 'the result is for a different job, issue revision, plan or candidate',
+      reason: 'the result is for a different job, issue revision or plan',
     };
   }
   if (liveRevision !== job.issue.revision) {
     return {
       stage: 'contract',
       reason: `the issue changed while the ${job.role} ran, so the result is stale`,
+    };
+  }
+  if (job.candidate !== null && result.inputs.candidate !== job.candidate) {
+    return {
+      stage: 'stale',
+      reason: `the result is for commit ${result.inputs.candidate}, not the current candidate ${job.candidate}`,
     };
   }
   if (result.status === 'complete' && job.role === 'plan' && !existsSync(join(out, PLAN_FILE))) {
@@ -344,20 +371,204 @@ function reviewText(result: Result): string {
     .join('\n\n');
 }
 
-async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
-  if ('result' in v) {
-    const pull = await openPull(job, branchOf(job));
-    if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
-    else if (pull.head.sha !== job.candidate)
-      v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
-    else {
-      const result = gated(v.result, job.candidate, options.verified ?? '');
-      // The next round's repair answers this, CI's finding included; result.json stays the reviewer's own.
-      writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
-      return postReview(job, result, pull, options.round ?? 0);
+type Finding = NonNullable<Result['findings']>[number];
+
+/** Git quotes control characters and encodes non-ASCII bytes as octal escapes. */
+function patchPath(name: string): string {
+  if (!name.startsWith('"')) return name;
+  const escapes: Record<string, string> = {
+    a: '\x07',
+    b: '\b',
+    f: '\f',
+    n: '\n',
+    r: '\r',
+    t: '\t',
+    v: '\v',
+  };
+  return Buffer.concat(
+    [...name.slice(1, -1).matchAll(/\\([0-7]{3}|.)|([^\\]+)/g)].map(([, escaped, plain]) => {
+      if (plain !== undefined) return Buffer.from(plain);
+      return /^[0-7]{3}$/.test(escaped!)
+        ? Buffer.from([Number.parseInt(escaped!, 8)])
+        : Buffer.from(escapes[escaped!] ?? escaped!);
+    }),
+  ).toString('utf8');
+}
+
+/** Only added and context lines on the new side can receive GitHub comments. */
+export function reviewComments(
+  patch: string,
+  findings: Finding[],
+): {
+  inline: { path: string; line: number; side: 'RIGHT'; body: string }[];
+  body: Finding[];
+} {
+  const lines = new Set<string>();
+  let path = '';
+  let right = 0;
+  let remaining = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      path = '';
+      remaining = 0;
+    } else if (remaining > 0) {
+      if (line.startsWith('+') || line.startsWith(' ')) {
+        lines.add(`${path}:${right++}`);
+        remaining--;
+      }
+    } else if (line.startsWith('+++ ')) {
+      const name = line.slice(4).split('\t')[0]!;
+      path = patchPath(name).replace(/^b\//, '');
+    } else {
+      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (hunk) {
+        right = Number(hunk[1]);
+        remaining = Number(hunk[2] ?? 1);
+      }
     }
   }
-  return { body: stopped(job.role, v), status: 'Needs you', stopped: true };
+  const inline: ReturnType<typeof reviewComments>['inline'] = [];
+  const body: Finding[] = [];
+  for (const f of findings) {
+    if (f.path && f.line !== null && lines.has(`${f.path}:${f.line}`))
+      inline.push({
+        path: f.path,
+        line: f.line,
+        side: 'RIGHT',
+        body: `**${f.id}** ${f.blocking ? 'blocking' : 'advisory'} · ${f.axis}\n\n${f.scenario} ${f.impact}\n\nEvidence: ${f.evidence}\n\nFix: ${f.fix}`,
+      });
+    else body.push(f);
+  }
+  return { inline, body };
+}
+
+export function repairMap(review: Result, repair: Result): string | null {
+  const refs = new Set((repair.changes ?? []).map((change) => change.ref));
+  const missing = (review.findings ?? []).filter((f) => !refs.has(f.id)).map((f) => f.id);
+  const unsupported = (repair.changes ?? [])
+    .filter((c) => c.response !== null && !c.evidence?.trim())
+    .map((c) => c.ref);
+  const errors = [
+    missing.length && `repair map is missing refs: ${missing.join(', ')}`,
+    unsupported.length && `disputed refs ${unsupported.join(', ')} need non-empty evidence`,
+  ].filter(Boolean);
+  return errors.length ? errors.join('; ') : null;
+}
+
+export interface LoopEntry {
+  round: number;
+  candidate: string;
+  ci: 'green' | 'red' | null;
+  review: string | null;
+  open: string[];
+  hypotheses: string[];
+  step: Step | null;
+}
+export interface LoopState {
+  rounds: number;
+  failures: number;
+  entries: LoopEntry[];
+}
+
+export function loopComment(state: LoopState): string {
+  const round = state.entries.at(-1)?.round ?? 0;
+  return [
+    marker('loop'),
+    `**Round ${round} of ${state.rounds} · ${state.failures} failures**`,
+    ...state.entries.map(
+      (e) =>
+        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
+    ),
+    `<!-- devkit:loop-state ${JSON.stringify(state).replace(/-->/g, '--\\u003e')} -->`,
+  ].join('\n\n');
+}
+
+export function readLoopState(body: string | null): LoopState {
+  const json = /^<!-- devkit:loop-state (.*) -->$/m.exec(body ?? '')?.[1];
+  return json
+    ? (JSON.parse(json) as LoopState)
+    : { rounds: REPAIR_ROUNDS, failures: 0, entries: [] };
+}
+
+async function updateLoop(
+  job: Job,
+  pull: Pull,
+  options: PublishOptions,
+  entry: Partial<LoopEntry>,
+) {
+  const round = options.round ?? 0;
+  const existing = await stageComment(job.repo, pull.number, 'loop');
+  // Round zero starts a new build on a PR that may already have a log.
+  const state = readLoopState(round === 0 ? null : (existing?.body ?? null));
+  state.rounds = options.rounds ?? REPAIR_ROUNDS;
+  const previous = state.entries.find((e) => e.round === round);
+  const current: LoopEntry = {
+    round,
+    candidate: job.candidate ?? '',
+    ci: null,
+    review: null,
+    open: state.entries.at(-1)?.open ?? [],
+    hypotheses: [],
+    step: null,
+    ...previous,
+    ...entry,
+  };
+  state.entries = [...state.entries.filter((e) => e.round !== round), current].sort(
+    (a, b) => a.round - b.round,
+  );
+  state.failures = state.entries.filter((e) => e.step !== 'ready').length;
+  return upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
+}
+
+export function needsYouText(result: Result, logUrl: string): string {
+  const ids = (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id);
+  return needsYouLinks(ids, logUrl);
+}
+
+function needsYouLinks(ids: string[], logUrl: string): string {
+  return `Open blocking findings: ${ids.join(', ') || 'none'}.\n\n[Loop log](${logUrl})`;
+}
+
+async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
+  const pull = await openPull(job, branchOf(job));
+  if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
+  else if (pull.head.sha !== job.candidate)
+    v = { stage: 'stale', reason: 'the PR has a newer commit than the one reviewed' };
+  const step = nextStep({
+    candidate: job.candidate ?? '',
+    head: pull?.head.sha ?? job.candidate ?? '',
+    review: v,
+    verified: options.verified ?? '',
+    round: options.round ?? 0,
+    rounds: options.rounds ?? REPAIR_ROUNDS,
+  });
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `next=${step}\n`);
+    if (step === 'repair') appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
+  }
+  const result = 'result' in v ? gated(v.result, job.candidate, options.verified ?? '') : null;
+  const log =
+    pull &&
+    (await updateLoop(job, pull, options, {
+      ci: options.verified === job.candidate ? 'green' : 'red',
+      review: result?.outcome ?? ('stage' in v ? v.stage : null),
+      ...(result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
+      step,
+    }));
+  if ('stage' in v)
+    return {
+      body: [
+        stopped(job.role, v),
+        log && needsYouLinks(readLoopState(log.body).entries.at(-1)?.open ?? [], log.html_url),
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      status: 'Needs you',
+      stopped: true,
+    };
+  // The repair answers the gated review; result.json stays the reviewer's own.
+  writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
+  return postReview(job, result!, pull!, options, step, log!.html_url);
 }
 
 /** The finding a review gets when CI did not pass on the commit it reviewed. */
@@ -402,16 +613,28 @@ export function repairable(result: Result): boolean {
  * Posts the review on the PR. A pass marks it ready for the operator to merge;
  * a repairable review with rounds left sets the `repair` output for the next round.
  */
-async function postReview(job: Job, result: Result, pull: Pull, round: number): Promise<Outcome> {
+async function postReview(
+  job: Job,
+  result: Result,
+  pull: Pull,
+  options: PublishOptions,
+  step: Step,
+  logUrl: string,
+): Promise<Outcome> {
+  const round = options.round ?? 0;
+  const rounds = options.rounds ?? REPAIR_ROUNDS;
+  const comments = reviewComments(
+    readFileSync(join(options.in, CANDIDATE_FILE), 'utf8'),
+    result.findings ?? [],
+  );
   await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/reviews`, {
     commit_id: pull.head.sha,
-    body: reviewText(result),
+    body: reviewText({ ...result, findings: comments.body }),
     event: 'COMMENT',
+    comments: comments.inline,
   });
-  const ok = passes(result);
-  const repair = !ok && round < REPAIR_ROUNDS && repairable(result);
-  if (repair && process.env.GITHUB_OUTPUT)
-    appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
+  const ok = step === 'ready';
+  const repair = step === 'repair';
   if (ok)
     await graphql(
       `
@@ -427,10 +650,16 @@ async function postReview(job: Job, result: Result, pull: Pull, round: number): 
   const head = ok
     ? `**Review: passed. ${link} is ready to merge**`
     : repair
-      ? `**Review: ${link} needs changes. Codex is fixing them (round ${round + 1} of ${REPAIR_ROUNDS})**`
+      ? `**Review: ${link} needs changes. Codex is fixing them (round ${round + 1} of ${rounds})**`
       : `**Review: ${link} needs your call${round > 0 ? ` after ${round} repair round${round > 1 ? 's' : ''}` : ''}**`;
   return {
-    body: [marker('review'), head, result.summary, numbered(result.questions)]
+    body: [
+      marker('review'),
+      head,
+      result.summary,
+      numbered(result.questions),
+      step === 'stop' && needsYouText(result, logUrl),
+    ]
       .filter(Boolean)
       .join('\n\n'),
     status: ok ? 'Ready' : repair ? 'Building' : 'Needs you',
@@ -451,12 +680,15 @@ async function publishBuildOrPlan(
   out: string,
   checkout: string | undefined,
   handoff: Handoff | null,
+  options: PublishOptions,
 ): Promise<Outcome> {
   let pull: Pull | null = null;
+  let candidate = '';
   if ('result' in v && v.result.outcome === 'implemented') {
     try {
       if (!checkout) throw new Error('publish needs --checkout for a build.');
       const { branch, commit } = pushCandidate(job, checkout, join(out, CANDIDATE_FILE));
+      candidate = commit;
       // A repair keeps the build's PR text; its summary goes on the issue comment.
       pull =
         job.role === 'repair'
@@ -473,9 +705,25 @@ async function publishBuildOrPlan(
       };
     }
   }
+  if (job.role === 'repair') {
+    pull ??= (await openPull(job, branchOf(job))) ?? null;
+    if (pull)
+      await updateLoop(job, pull, options, {
+        candidate: candidate || job.source,
+        ...('result' in v
+          ? { hypotheses: v.result.hypotheses ?? [] }
+          : { step: 'stop' as const, review: v.stage }),
+      });
+  }
   // A repair's card stays in Building until its review lands, as does a plan handing off.
   const status =
-    handoff || (pull && job.role === 'repair') ? 'Building' : pull ? 'Ready' : 'Needs you';
+    'stage' in v
+      ? 'Needs you'
+      : handoff || (pull && job.role === 'repair' && candidate)
+        ? 'Building'
+        : pull && job.role !== 'repair'
+          ? 'Ready'
+          : 'Needs you';
   if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
     job.role === 'plan'
@@ -602,7 +850,12 @@ export async function publish(options: PublishOptions): Promise<void> {
     await setStatus(job.repo, issue.node_id, 'Done');
     return;
   }
-  const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  let v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  const reviewFile = join(options.in, REVIEW_FILE);
+  if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {
+    const reason = repairMap(Result.parse(JSON.parse(readFileSync(reviewFile, 'utf8'))), v.result);
+    if (reason) v = { stage: 'validate', reason };
+  }
   if (job.role === 'retro') {
     if ('stage' in v) throw new Error(`Retro stopped at ${v.stage}: ${v.reason}.`);
     await publishRetro(job, issue, v.result);
@@ -616,7 +869,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   const { body, status, stopped } =
     job.role === 'review'
       ? await publishReview(job, v, options)
-      : await publishBuildOrPlan(job, v, options.out, options.checkout, handoff);
+      : await publishBuildOrPlan(job, v, options.out, options.checkout, handoff, options);
 
   // A build's Ready is brief: its own review follows in the same run and has the last word.
   const waiting = status === 'Needs you' || (status === 'Ready' && job.role !== 'build');

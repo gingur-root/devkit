@@ -82,8 +82,9 @@ export async function graphql<T>(query: string, variables: Record<string, unknow
   return data;
 }
 
-interface Comment {
+export interface Comment {
   id: number;
+  html_url: string;
   body: string | null;
   user: { type: string; id: number } | null;
 }
@@ -94,13 +95,21 @@ export async function upsertStageComment(
   issue: number,
   role: string,
   body: string,
-): Promise<void> {
+): Promise<Comment> {
   const path = `/repos/${repo}/issues/${issue}`;
-  const existing = (await restAll<Comment>(`${path}/comments`)).find((c) =>
+  const existing = await stageComment(repo, issue, role);
+  if (existing) return rest('PATCH', `/repos/${repo}/issues/comments/${existing.id}`, { body });
+  return rest('POST', `${path}/comments`, { body });
+}
+
+export async function stageComment(
+  repo: string,
+  issue: number,
+  role: string,
+): Promise<Comment | undefined> {
+  return (await restAll<Comment>(`/repos/${repo}/issues/${issue}/comments`)).find((c) =>
     isStageComment(c, role),
   );
-  if (existing) await rest('PATCH', `/repos/${repo}/issues/comments/${existing.id}`, { body });
-  else await rest('POST', `${path}/comments`, { body });
 }
 
 /** Removes the trigger label; a `/plan` or `/approve` comment run has none. */

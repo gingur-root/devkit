@@ -14,8 +14,18 @@ import { Command } from 'commander';
 
 import type { CommandModule } from './command.ts';
 import { discover, register } from './router.ts';
+import publishCommand from './commands/agent/publish.ts';
 
 const COMMANDS = fileURLToPath(new URL('./commands', import.meta.url));
+
+test('agent publish accepts the numeric repair-round cap', () => {
+  const command = new Command();
+  publishCommand.configure(command);
+  command.parse(['--in', 'input', '--out', 'output', '--round', '1', '--rounds', '3'], {
+    from: 'user',
+  });
+  assert.deepEqual(command.opts(), { in: 'input', out: 'output', round: 1, rounds: 3 });
+});
 
 /** Every command path Commander actually ended up with, as dotted strings. */
 function registered(command: Command, prefix: string[] = []): string[] {
