@@ -108,6 +108,10 @@ runs:
         git add -A
         git diff --cached --binary "$SOURCE" >"$out/candidate.patch"
         [ -s "$out/candidate.patch" ] || rm "$out/candidate.patch"
+        # upload-artifact refuses the whole upload over one name with " : < > | * ?
+        # (an agent's `fmt:check.log` lost review-0-out, devkit#150).
+        find "$out" -depth -name '*[":<>|*?]*' -exec sh -c \
+          'for f; do mv "$f" "$(dirname "$f")/$(basename "$f" | tr "\":<>|*?" _______)"; done' sh {} +
 
     - if: ${{ always() }}
       uses: actions/upload-artifact@v7
