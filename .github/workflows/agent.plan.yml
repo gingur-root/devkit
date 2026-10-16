@@ -12,8 +12,7 @@ on:
       runner:
         description: 'Runner label: callers pass vars.RUNNER.'
         type: string
-        required: false
-        default: 'ubuntu-latest'
+        required: true
       appId:
         description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
         type: string
@@ -59,7 +58,7 @@ jobs:
     permissions:
       contents: read
     if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
     steps:
@@ -140,7 +139,7 @@ jobs:
   plan:
     name: Plan
     needs: start
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     steps:
@@ -157,7 +156,7 @@ jobs:
     name: Publish
     needs: [start, plan]
     if: always() && needs.start.result == 'success'
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v6
         with:
