@@ -12,6 +12,7 @@ import {
   STAGE_LABELS,
 } from '../agent/constants.ts';
 import { rest } from '../agent/github.ts';
+import { react } from '../agent/reactions.ts';
 import { refreshGhToken } from '../dashboard/app-token.ts';
 import { ORG } from '../dashboard/constants.ts';
 import { GITHUB_EVENT } from './constants.ts';
@@ -49,6 +50,8 @@ export interface Dispatch {
   issue: number;
   /** The event's sender, which render's Continue check reads as the run's actor. */
   actor: number;
+  /** The comment that started it, which gets the run's 👀. Unset for a label: the issue gets it. */
+  comment?: number;
 }
 
 interface Payload {
@@ -57,7 +60,7 @@ interface Payload {
   repository?: { name?: string; owner?: { login?: string } };
   issue?: { number?: number; pull_request?: unknown };
   label?: { name?: string };
-  comment?: { body?: string };
+  comment?: { id?: number; body?: string };
 }
 
 /** The stage a delivery starts, or null. The same rule as the Actions admission gate. */
@@ -67,6 +70,7 @@ export function dispatchFor({ event, payload }: Delivery): Dispatch | null {
   if (repository?.owner?.login !== ORG || !repo || SKIPPED_REPOS.includes(repo)) return null;
   if (!issue?.number || !sender?.id) return null;
   let stage: DispatchStage | undefined;
+  let started: number | undefined;
   if (event === GITHUB_EVENT.issues && action === 'labeled' && label?.name) {
     if (sender.id === OPERATOR_ID) stage = OPERATOR_LABELS[label.name];
     else if (sender.id === PIPELINE_BOT.id) stage = APP_LABELS[label.name];
@@ -78,8 +82,16 @@ export function dispatchFor({ event, payload }: Delivery): Dispatch | null {
   ) {
     const command = Object.keys(COMMANDS).find((c) => comment?.body?.startsWith(c));
     stage = command ? COMMANDS[command] : undefined;
+    started = comment?.id;
   }
-  return stage ? { stage, repo, issue: issue.number, actor: sender.id } : null;
+  if (!stage) return null;
+  return {
+    stage,
+    repo,
+    issue: issue.number,
+    actor: sender.id,
+    ...(started === undefined ? {} : { comment: started }),
+  };
 }
 
 /** Dispatches the central caller for one stage. */
@@ -93,10 +105,16 @@ export async function dispatch({ stage, repo, issue, actor }: Dispatch): Promise
   console.log(`Dispatched ${stage} for ${repo}#${issue} (actor ${actor}).`);
 }
 
-/** The receiver's handler: dispatch whatever stage a delivery starts. */
+/**
+ * The receiver's handler: dispatch whatever stage a delivery starts, then add
+ * its 👀 here, since the dispatch can't carry the comment. A loop tick is not a
+ * run with a receipt.
+ */
 export function pipelineHandler(): WebhookHandler {
   return async (delivery) => {
     const next = dispatchFor(delivery);
-    if (next) await dispatch(next);
+    if (!next) return;
+    await dispatch(next);
+    if (next.stage !== 'loop') await react(`${ORG}/${next.repo}`, next.issue, next.comment);
   };
 }

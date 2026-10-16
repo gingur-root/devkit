@@ -45,6 +45,35 @@ overrides a priority you or a groom set. Change it on the board to override.
 The dashboard sorts each column by Priority, then by most recently updated;
 cards with no priority come last.
 
+## Receipts
+
+Each run reacts on the event that started it (devkit#148), so the issue shows
+that an agent picked it up and how the run ended. A `/plan` or `/approve`
+run reacts on that comment. A label or a manual dispatch reacts on the issue.
+
+| Reaction      | Meaning                                                 |
+| ------------- | ------------------------------------------------------- |
+| 👀 `eyes`     | Picked up, working                                      |
+| 🚀 `rocket`   | Done: the plan or the PR is ready, or a triage filed    |
+| 😕 `confused` | The run ended with a question for you, in **Needs you** |
+| 👎 `-1`       | A job failed                                            |
+
+Who writes them (`bin/agent/reactions.ts`):
+
+- **👀:** the webhook receiver, right after it dispatches a plan, build or
+  elevated run. It has the comment ID, which the dispatch can't carry. For an
+  event the receiver didn't dispatch (infra's caller, a manual dispatch), the
+  start job adds it. A board-loop tick gets none.
+- **The end state:** publish, once the run's last stage is done. When a run
+  dies before it publishes, the start job's failure step or the board loop's
+  stalled path sets `-1`.
+- The writer is the App. On the WSL desk with no App token, it's Troy's own
+  `gh`, so the reactions show as his there.
+- The end step swaps only the writer's own 👀 for one end reaction, and
+  removes its older ones on that target. Your reactions stay.
+- Reactions are best effort: a failed one logs a warning and never fails the
+  run.
+
 ## The board loop
 
 `pnpm agent loop` (`bin/agent/loop.ts`, devkit#47) keeps cards moving with no
