@@ -21,6 +21,26 @@ These override anything below that conflicts with them.
 - **Break fast, fix fast.** A loud failure and a quick fix over defensive code.
 - **No forks.** Nothing supports or routes fork PRs; admission keeps everyone but
   the owner off every credential-holding job.
+- **Nothing stops silently.** Every run that ends without success (a refusal,
+  a setup or stage failure, a cancel, a missing result, a job left queued)
+  says where it stopped on its card, or says "unknown" rather than guessing,
+  and moves it to Needs you. A merged change that isn't running yet counts
+  too: say when a merge is not live (devkit#113, #157, #164).
+- **A gate binds to what it judged.** Plan approval, critique and review hold
+  only for the plan revision, the issue text the stage actually saw, and the
+  commits it checked. Any change makes the result stale (devkit#168).
+- **Identity comes from a verified record.** Who acted and who approved is
+  checked against GitHub's own record or a verified token, never a dispatch
+  input or localhost. A missing credential fails the job; it never falls back
+  to a hosted runner or an ambient `gh` login. Elevated runs on the WSL desk
+  act as the operator by decision (devkit#119, #128).
+- **Runners are declared, not hand-built.** Every tool, library and login a
+  runner needs is declared in infra and checked by a health check that fails
+  loudly. A plan never asks for a manual install. Interactive logins, roots of
+  trust and the WSL desk are the exceptions (devkit#170, infra#88).
+- **Nothing deferred is lost.** Every finding, deferral and dropped criterion
+  ends as a linked issue or a recorded decision to drop it. A PR closes its
+  issue only when each unmet criterion is filed and linked (devkit#9).
 - **Keep the architecture diagram current.** A PR that adds, removes or
   rewires a part of the pipeline (a workflow, a stage, a runner, a credential)
   updates infra's `docs/architecture.excalidraw.svg` in a companion infra PR.
