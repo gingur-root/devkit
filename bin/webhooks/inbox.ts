@@ -34,10 +34,11 @@ export interface InboxEvent {
 
 /**
  * The log, kept in memory and appended to `file` when given. Ids only grow,
- * so a restart continues where it left off.
+ * so a restart continues where it left off. Events past `max` move to
+ * `<file>.<YYYY-MM>` archives at start, so nothing is ever dropped.
  */
 export function createInbox(file?: string, max = MAX_EVENTS) {
-  let events: InboxEvent[] =
+  const all: InboxEvent[] =
     file && existsSync(file)
       ? readFileSync(file, 'utf8')
           .split('\n')
@@ -49,11 +50,14 @@ export function createInbox(file?: string, max = MAX_EVENTS) {
               return [];
             }
           })
-          .slice(-max)
       : [];
+  let events = all.slice(-max);
   if (file) {
     mkdirSync(dirname(file), { recursive: true });
-    // Compacted at start, so the file stays near `max` lines across restarts.
+    // Archived before the rewrite, so a crash between the two repeats lines rather than losing them.
+    for (const event of all.slice(0, Math.max(0, all.length - max))) {
+      appendFileSync(`${file}.${event.at.slice(0, 7)}`, `${JSON.stringify(event)}\n`);
+    }
     writeFileSync(file, events.map((e) => `${JSON.stringify(e)}\n`).join(''));
   }
   // shortcut: the file grows past `max` until the next restart; compact while running if restarts get rare.

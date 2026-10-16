@@ -128,7 +128,9 @@ starts runs needs a durable store first.
 ## Events inbox
 
 The receiver also keeps one ordered log of events, whatever sent them, in
-`~/.local/state/devkit-dashboard/events.jsonl` (the last 10,000). Every GitHub
+`~/.local/state/devkit-dashboard/events.jsonl` (the last 10,000). At each
+start, older events move to monthly archives beside it (`events.jsonl.2026-10`),
+so nothing is dropped. Every GitHub
 delivery lands there as a short summary: `issues.opened`, the repo, the number,
 the title and the sender. Any other source posts its own events, and readers
 page through the log by id:
