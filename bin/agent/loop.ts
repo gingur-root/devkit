@@ -18,6 +18,7 @@ import {
 } from './constants.ts';
 import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
 import { mention, stopped } from './publish.ts';
+import { settle } from './reactions.ts';
 
 export interface Card {
   number: number;
@@ -196,6 +197,8 @@ export async function apply(repo: string, cards: Card[], action: Action): Promis
   // Its trigger label would otherwise read as a plan in flight on every later tick.
   await removeLabel(repo, action.issue, STAGE_LABELS[action.role]);
   await setStatus(repo, card.nodeId, 'Needs you');
+  // The run died before its publish settled the receipt.
+  await settle(repo, action.issue, 'failed');
 }
 
 function describe(action: Action): string {

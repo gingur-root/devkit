@@ -87,6 +87,18 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
+      # The run's 👀 (devkit#148). The webhook receiver adds it for the App's
+      # dispatches, since the dispatch can't carry the comment.
+      - name: React
+        if: github.event_name != 'workflow_dispatch' || github.actor_id != '340770692'
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          COMMENT: ${{ github.event.comment.id }}
+        run: pnpm agent react --repo "$REPO" --issue "$ISSUE" ${COMMENT:+--comment "$COMMENT"}
+
       # A dispatched run plans from the head of the default branch (render's default).
       - id: render
         name: Render
@@ -114,6 +126,16 @@ jobs:
         with:
           name: agent-in
           path: ${{ runner.temp }}/agent/in
+
+      # Publish won't run, so the receipt ends here.
+      - name: Failed
+        if: failure()
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+        run: pnpm agent react --repo "$REPO" --issue "$ISSUE" --end failed
 
   plan:
     name: Plan
