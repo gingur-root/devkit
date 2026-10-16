@@ -10,7 +10,7 @@ import { test } from 'vite-plus/test';
 import type { Job } from './job.ts';
 import { Result } from './result.ts';
 import { ROLES } from './roles.ts';
-import { failedResult, instructions, skillRoles } from './run.ts';
+import { failedResult, instructions, settle, skillRoles } from './run.ts';
 
 function repoSkill(cwd: string, name: string, roles: string, body: string): void {
   mkdirSync(join(cwd, '.devkit', 'skills', name), { recursive: true });
@@ -65,6 +65,22 @@ test('the envelope written for a run with no result passes the schema publish ch
   const result = Result.parse(failedResult(job, long));
   assert.equal(result.failure?.class, 'unknown');
   assert.equal(result.inputs.plan, 'plan');
+  const missing = settle({ ok: true }, true);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error, 'the agent finished without a structured result');
+  const absent = Result.parse(failedResult(job, missing));
+  assert.equal(absent.status, 'failed');
+  assert.deepEqual(absent.failure, { class: 'unknown', resetsAt: null });
+  assert.ok(absent.summary.includes(missing.error));
+  assert.match(
+    failedResult(job, { ok: false, error: 'CLI crashed unexpectedly' }).summary,
+    /CLI crashed unexpectedly/,
+  );
+  const complete = { ok: true, result };
+  assert.equal(settle(complete, true), complete);
+  const unstructured = { ok: true };
+  assert.equal(settle(unstructured, false), unstructured);
+  assert.equal(settle(long, true), long);
   const limited = failedResult(job, {
     ok: false,
     failure: { class: 'rate_limit', resetsAt: null },

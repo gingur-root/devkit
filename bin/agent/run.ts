@@ -72,6 +72,13 @@ function stagePrompt(prompt: string, dirs: { in?: string; out?: string }): strin
   return `${prompt}\n\nJob directory ($AGENT_IN): ${dirs.in}\nOutput directory ($AGENT_OUT): ${dirs.out}`;
 }
 
+/** A run that returned no result when the role needs one has failed, whatever the CLI said. */
+export function settle(output: RunOutput, schema: boolean): RunOutput {
+  if (schema && output.ok && output.result === undefined)
+    return { ok: false, error: 'the agent finished without a structured result' };
+  return output;
+}
+
 /** The envelope for a run that returned none: `failed`, with the CLI's reason. */
 export function failedResult(job: Job, output: RunOutput): Result {
   const failure = output.failure ?? { class: 'unknown', resetsAt: null };
@@ -138,9 +145,10 @@ export async function run(options: RunOptions): Promise<void> {
     emit({ type: 'error', message });
     output = { ok: false, error: message };
   }
+  output = settle(output, role.result);
   // Written even when the run failed: publish validates it and names the stage.
   let result = output.result;
-  if (result === undefined && !output.ok && role.result && dirs.in && dirs.out)
+  if (result === undefined && role.result && dirs.in && dirs.out)
     result = failedResult(
       Job.parse(JSON.parse(readFileSync(join(dirs.in, JOB_FILE), 'utf8'))),
       output,
