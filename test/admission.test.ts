@@ -8,6 +8,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'vite-plus/test';
 import { parse } from 'yaml';
 
+import { REPAIR_ROUNDS } from '../bin/agent/constants.ts';
+
 const ADMISSION =
   "github.repository_owner_id == '340382989' && github.run_attempt == '1' && " +
   "((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || " +
@@ -25,6 +27,14 @@ const ADMISSION =
 
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);
+
+test('the build workflow has one repair job per configured repair round', () => {
+  const workflow = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')) as {
+    jobs: Record<string, unknown>;
+  };
+  const repairs = Object.keys(workflow.jobs).filter((id) => /^repair-\d+$/.test(id));
+  assert.equal(repairs.length, REPAIR_ROUNDS);
+});
 
 // Splits on an operator at paren depth 0, outside string literals.
 function topLevel(expr: string, op: '&&' | '||'): string[] {

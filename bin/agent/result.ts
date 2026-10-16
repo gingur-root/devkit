@@ -66,6 +66,7 @@ export const Result = z
     outcome: Outcome.nullable(),
     summary: z
       .string()
+      .describe(`At most ${SUMMARY_WORDS} words, leading with the result. Longer is cut off.`)
       // Clipped, not refused: the schema can't count words, so an agent never sees
       // the cap, and a refusal threw away whole plans (devkit#145).
       .overwrite((text) => {
