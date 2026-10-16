@@ -7,6 +7,7 @@ import { DefaultChatTransport } from 'ai';
 import { cn } from 'cn';
 import { ChevronDown, ChevronUp, ChevronsUp, Equal, type LucideIcon } from 'lucide-react';
 import {
+  type ComponentProps,
   lazy,
   type ReactNode,
   Suspense,
@@ -18,6 +19,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { ExtraProps } from 'streamdown';
 
 import { type Priority, READY_LABEL, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
@@ -48,6 +50,7 @@ import {
   CardTitle,
 } from './components/ui/card.tsx';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from './components/ui/sheet.tsx';
+import { cardRef } from './links.ts';
 import './style.css';
 
 interface Ref {
@@ -308,6 +311,19 @@ function Board({ version }: { version: number }) {
   );
 }
 
+function ChatLink({ href, children }: ComponentProps<'a'> & ExtraProps) {
+  const card = cardRef(href);
+  return card ? (
+    <Badge asChild variant="outline">
+      <a href={`#${card.repo}/${card.number}`}>{children}</a>
+    </Badge>
+  ) : (
+    <a href={href} target="_blank" rel="noreferrer" className="underline">
+      {children}
+    </a>
+  );
+}
+
 function ChatMessage({ message, running }: { message: DashboardMessage; running: boolean }) {
   return (
     <Message from={message.role}>
@@ -320,7 +336,7 @@ function ChatMessage({ message, running }: { message: DashboardMessage; running:
               </p>
             ) : (
               // The coordinator's links open directly.
-              <MessageResponse key={i} linkSafety={{ enabled: false }}>
+              <MessageResponse key={i} linkSafety={{ enabled: false }} components={{ a: ChatLink }}>
                 {part.text}
               </MessageResponse>
             );
