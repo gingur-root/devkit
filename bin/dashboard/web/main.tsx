@@ -297,20 +297,14 @@ function Board({ version }: { version: number }) {
   );
 }
 
-function ChatLink({ href, children, title }: ComponentProps<'a'> & ExtraProps) {
+function ChatLink({ href, children }: ComponentProps<'a'> & ExtraProps) {
   const card = cardRef(href);
   return card ? (
-    <Badge
-      asChild
-      variant="outline"
-      className="max-w-full align-baseline whitespace-normal break-words"
-    >
-      <a href={`#${card.repo}/${card.number}`} title={title}>
-        {children}
-      </a>
+    <Badge asChild variant="outline">
+      <a href={`#${card.repo}/${card.number}`}>{children}</a>
     </Badge>
   ) : (
-    <a href={href} title={title} target="_blank" rel="noreferrer" className="underline">
+    <a href={href} target="_blank" rel="noreferrer" className="underline">
       {children}
     </a>
   );
