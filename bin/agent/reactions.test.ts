@@ -43,6 +43,8 @@ test("a swap removes only the writer's own reactions, and only when its eyes is 
   ];
   assert.deepEqual(swap(reactions, own), { remove: [1, 2], add: true });
   assert.deepEqual(swap(reactions.slice(1), own), { remove: [], add: false });
+  // On the desk the writer is the operator: their heart is not a receipt.
+  assert.deepEqual(swap(reactions.slice(2), OPERATOR_ID), { remove: [3], add: true });
 });
 
 test('settle swaps the eyes on the issue and on command comments for one end reaction', async () => {

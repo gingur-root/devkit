@@ -48,7 +48,9 @@ export async function react(repo: string, issue: number, comment?: number): Prom
 
 /** Pure: the writer's reaction IDs to delete on one target, and whether to add the end reaction (only when its eyes is there). */
 export function swap(reactions: Reaction[], own: number): { remove: number[]; add: boolean } {
-  const mine = reactions.filter((r) => r.user?.id === own);
+  // On the WSL desk the writer is the operator, whose other reactions must stay.
+  const receipts: string[] = [EYES, ...Object.values(RECEIPTS)];
+  const mine = reactions.filter((r) => r.user?.id === own && receipts.includes(r.content));
   const add = mine.some((r) => r.content === EYES);
   return { remove: add ? mine.map((r) => r.id) : [], add };
 }
