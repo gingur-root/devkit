@@ -63,7 +63,7 @@ When the job directory has `issues.md`, this issue is a retro's findings
   path. `link` is the open issue's number when you add to one, else null.
   `start` is `plan` when it should be planned now, `backlog` when it can wait
   for grooming. `elevated` is true when the fix needs the operator's own
-  access (`needs:elevated`).
+  access (`needs:elevated`). `priority` is its board priority, as below.
 - Approval files these and closes this issue. It builds nothing, so set no
   `criteria` and leave `critique` false.
 - On any other issue, `triage` is null.
@@ -76,6 +76,10 @@ When the job directory has `issues.md`, this issue is a retro's findings
   `critique: true` for hard-to-reverse architecture, authorization rules, data
   migrations, or interactions that make the plan hard to validate. Set `probe`
   only for a named uncertainty that research or a prototype must answer first.
+- `priority` is the board Priority you propose: `P0` something is broken or
+  blocked now, `P1` do next, `P2` worth doing soon, `P3` someday. Weigh what
+  the issue unblocks and what it costs to leave it. It is set only when the
+  card has none yet. A retro issue's plan may leave it null.
 - `outcome` is `ready` or `needs-input`. For `needs-input`, ask one focused
   question in `questions` with two or three options, recommended first.
 - The plan comment leads with `summary`; `plan.md` follows below it.

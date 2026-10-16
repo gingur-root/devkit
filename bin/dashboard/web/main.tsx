@@ -210,6 +210,18 @@ function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => vo
           </a>
         </CardTitle>
         <CardDescription className="text-xs">
+          {card.priority && (
+            <Badge
+              variant="outline"
+              className={cn(
+                'mr-1 px-1 py-0',
+                card.priority === 'P0' && 'border-red-500 text-red-700 dark:text-red-400',
+                card.priority === 'P1' && 'border-amber-500 text-amber-700 dark:text-amber-400',
+              )}
+            >
+              {card.priority}
+            </Badge>
+          )}
           {card.repo}#{card.number}
           {running && ` · ${running} running`}
         </CardDescription>

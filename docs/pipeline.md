@@ -38,6 +38,13 @@ why it stopped, the comment names the class (`rate_limit` with its reset time,
 the label again. Every comment that leaves a card in **Needs you** or
 **Ready** mentions @gingur, so the notification arrives then.
 
+Every plan proposes a **Priority** for the card (devkit#115): `P0` broken or
+blocked now, `P1` next, `P2` soon, `P3` someday. Publishing the plan sets the
+board's Priority field only when the card has none, so a re-plan never
+overrides a priority you or a groom set. Change it on the board to override.
+The dashboard sorts each column by Priority, then by most recently updated;
+cards with no priority come last.
+
 ## The board loop
 
 `pnpm agent loop` (`bin/agent/loop.ts`, devkit#47) keeps cards moving with no

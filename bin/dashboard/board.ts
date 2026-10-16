@@ -1,6 +1,14 @@
 // The board (devkit#98, docs/board.md): every card on the org's Pipeline
 // board, in its column. A story's column comes from its subtasks.
-import { BOARD_TITLE, STATUS_FIELD, STATUSES, type Status } from '../agent/constants.ts';
+import {
+  BOARD_TITLE,
+  PRIORITIES,
+  PRIORITY_FIELD,
+  STATUS_FIELD,
+  STATUSES,
+  type Priority,
+  type Status,
+} from '../agent/constants.ts';
 import { graphql } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
 import { cardState } from './buttons.ts';
@@ -25,6 +33,15 @@ export function cardColumn(issue: BoardIssue & { subtasks: BoardIssue[] }): Stat
   return columns.reduce((a, b) => (STATUSES.indexOf(a) <= STATUSES.indexOf(b) ? a : b));
 }
 
+/** Highest priority first, unset last; ties go to the most recently updated. */
+export function byPriority(
+  a: { priority: Priority | null; updatedAt: string },
+  b: { priority: Priority | null; updatedAt: string },
+): number {
+  const rank = (p: Priority | null) => (p ? PRIORITIES.indexOf(p) : PRIORITIES.length);
+  return rank(a.priority) - rank(b.priority) || b.updatedAt.localeCompare(a.updatedAt);
+}
+
 interface RawIssue {
   number: number;
   title: string;
@@ -41,6 +58,7 @@ interface Items {
         pageInfo: { hasNextPage: boolean; endCursor: string | null };
         nodes: {
           status: { name: string } | null;
+          priority: { name: string } | null;
           // Empty for a draft issue or a pull request.
           content:
             | (RawIssue & {
@@ -57,7 +75,7 @@ interface Items {
 
 const ISSUE = 'number title url state updatedAt repository { name }';
 
-/** Every issue on the board as a card, most recently updated first. */
+/** Every issue on the board as a card, in `byPriority` order. */
 export async function board() {
   await refreshGhToken();
   const { organization } = await graphql<{
@@ -84,7 +102,7 @@ export async function board() {
   for (let after: string | null = null; ;) {
     const page: Items = await graphql<Items>(
       `
-        query ($org: String!, $number: Int!, $field: String!, $after: String) {
+        query ($org: String!, $number: Int!, $field: String!, $priority: String!, $after: String) {
           organization(login: $org) {
             projectV2(number: $number) {
               items(first: 100, after: $after) {
@@ -94,6 +112,11 @@ export async function board() {
                 }
                 nodes {
                   status: fieldValueByName(name: $field) {
+                    ... on ProjectV2ItemFieldSingleSelectValue {
+                      name
+                    }
+                  }
+                  priority: fieldValueByName(name: $priority) {
                     ... on ProjectV2ItemFieldSingleSelectValue {
                       name
                     }
@@ -120,7 +143,7 @@ export async function board() {
           }
         }
       `,
-      { org: ORG, number: project.number, field: STATUS_FIELD, after },
+      { org: ORG, number: project.number, field: STATUS_FIELD, priority: PRIORITY_FIELD, after },
     );
     const { nodes, pageInfo } = page.organization.projectV2.items;
     items.push(...nodes);
@@ -130,7 +153,13 @@ export async function board() {
 
   const issues = items.flatMap((item) =>
     item.content?.number !== undefined
-      ? [{ ...item.content, status: (item.status?.name ?? null) as Status | null }]
+      ? [
+          {
+            ...item.content,
+            status: (item.status?.name ?? null) as Status | null,
+            priority: (item.priority?.name ?? null) as Priority | null,
+          },
+        ]
       : [],
   );
   const key = (i: RawIssue) => `${i.repository.name}#${i.number}`;
@@ -152,6 +181,7 @@ export async function board() {
         title: issue.title,
         url: issue.url,
         updatedAt: issue.updatedAt,
+        priority: issue.priority,
         labels: issue.labels.nodes.map((l) => l.name),
         column: cardColumn({ ...asBoard(issue), subtasks: subtasks.map(asBoard) }),
         // A story's buttons act on the story issue alone, so they follow its own column.
@@ -164,7 +194,7 @@ export async function board() {
         })),
       };
     })
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .sort(byPriority);
 }
 
 export type BoardCard = Awaited<ReturnType<typeof board>>[number];

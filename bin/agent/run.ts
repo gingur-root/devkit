@@ -104,6 +104,7 @@ export function failedResult(job: Job, output: RunOutput): Result {
     findings: null,
     subtasks: null,
     followups: null,
+    priority: null,
     triage: null,
     failure,
   };

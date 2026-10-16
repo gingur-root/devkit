@@ -13,6 +13,10 @@ it, then _Export image_ → SVG with **Embed scene** on, and overwrite the file.
 
 ## Cards
 
+Each column lists its cards by Priority (`P0` first, unset last), then by most
+recently updated, so you can work a column top-down. Each card shows its
+priority. See docs/pipeline.md for how plans set it.
+
 - **Subtask card:** one issue. It follows the table below.
 - **Story card:** a parent issue with sub-issues. It shows its subtasks as
   chips with their columns. Its own column comes from its children:
