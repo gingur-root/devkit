@@ -156,10 +156,16 @@ test('a retro files one issue to plan, but only comments on a retro issue or wit
   const retro = Result.parse(
     JSON.parse(readFileSync(new URL('fixtures/retro.ready.json', import.meta.url), 'utf8')),
   );
-  const job = { repo: 'o/r', issue: { number: 1, title: 'T', revision: '' } } as Job;
+  const job = {
+    repo: 'gingur-root/scratch',
+    issue: { number: 1, title: 'T', revision: '' },
+  } as Job;
   const issue = { number: 1, html_url: '', node_id: '', title: 'T', body: '', labels: [] };
   const writes: string[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('GITHUB_SERVER_URL', 'https://github.com');
+  vi.stubEnv('GITHUB_REPOSITORY', 'gingur-root/pipeline');
+  vi.stubEnv('GITHUB_RUN_ID', '123');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     writes.push(`${init.method} ${new URL(url).pathname} ${String(init.body)}`);
     return new Response(JSON.stringify({ number: 9 }), { status: 200 });
@@ -167,9 +173,11 @@ test('a retro files one issue to plan, but only comments on a retro issue or wit
   try {
     await publishRetro(job, issue, retro);
     assert.equal(writes.length, 3);
-    assert.match(writes[0]!, /^POST \/repos\/o\/r\/issues .*"labels":\["retro"\]/);
-    assert.match(writes[1]!, /^POST \/repos\/o\/r\/issues\/9\/labels .*agent:plan/);
-    assert.match(writes[2]!, /^POST \/repos\/o\/r\/issues\/1\/comments .*#9/);
+    assert.match(writes[0]!, /^POST \/repos\/gingur-root\/scratch\/issues .*"labels":\["retro"\]/);
+    assert.ok(writes[0]!.includes('https://github.com/gingur-root/pipeline/actions/runs/123'));
+    assert.ok(!writes[0]!.includes('/gingur-root/scratch/actions/runs/'));
+    assert.match(writes[1]!, /^POST \/repos\/gingur-root\/scratch\/issues\/9\/labels .*agent:plan/);
+    assert.match(writes[2]!, /^POST \/repos\/gingur-root\/scratch\/issues\/1\/comments .*#9/);
     for (const [why, i, r] of [
       ['on a retro issue', { ...issue, labels: [{ name: 'retro' }] }, retro],
       ['no findings', issue, { ...retro, followups: [] }],
@@ -177,7 +185,7 @@ test('a retro files one issue to plan, but only comments on a retro issue or wit
       writes.length = 0;
       await publishRetro(job, i, r);
       assert.equal(writes.length, 1, why);
-      assert.match(writes[0]!, /^POST \/repos\/o\/r\/issues\/1\/comments /, why);
+      assert.match(writes[0]!, /^POST \/repos\/gingur-root\/scratch\/issues\/1\/comments /, why);
     }
   } finally {
     vi.unstubAllGlobals();

@@ -91,9 +91,48 @@ test('anyone but the operator and the App is refused, even with a Continue', () 
   assert.match(refuseStart(STRANGER, history, 'build') ?? '', /only the operator/);
 });
 
-test('the operator may start a build as today, with no Continue', () => {
-  assert.equal(refuseStart(OPERATOR_ID, [], 'build'), null);
-  assert.equal(refuseStart(OPERATOR_ID, [], 'elevated'), null);
+test('an operator actor input needs the latest start to be his matching stage', () => {
+  assert.equal(typeof refuseStart(OPERATOR_ID, [], 'build'), 'string');
+  assert.equal(typeof refuseStart(OPERATOR_ID, [], 'elevated'), 'string');
+  assert.equal(typeof refuseStart(OPERATOR_ID, steps([], [HANDOFF]), 'build'), 'string');
+  assert.equal(
+    typeof refuseStart(OPERATOR_ID, steps([], [label(1, 'agent:plan', OPERATOR_ID)]), 'build'),
+    'string',
+  );
+  // An older approval cannot vouch for a newer start by the App or another stage.
+  assert.equal(
+    typeof refuseStart(
+      OPERATOR_ID,
+      steps([], [label(0, 'agent:build', OPERATOR_ID), HANDOFF]),
+      'build',
+    ),
+    'string',
+  );
+  assert.equal(
+    typeof refuseStart(
+      OPERATOR_ID,
+      steps([], [label(0, 'agent:build', OPERATOR_ID), label(1, 'agent:plan', OPERATOR_ID)]),
+      'build',
+    ),
+    'string',
+  );
+  assert.equal(
+    refuseStart(OPERATOR_ID, steps([], [label(1, 'agent:build', OPERATOR_ID)]), 'build'),
+    null,
+  );
+  assert.equal(
+    refuseStart(OPERATOR_ID, steps([comment(1, '/approve', OPERATOR_ID)], []), 'build'),
+    null,
+  );
+  assert.equal(
+    refuseStart(OPERATOR_ID, steps([], [label(1, 'agent:elevated', OPERATOR_ID)]), 'elevated'),
+    null,
+  );
+  // A later Continue is not a start, so the latest start still supplies the proof.
+  assert.equal(
+    refuseStart(OPERATOR_ID, steps(CONTINUE, [label(0, 'agent:build', OPERATOR_ID)]), 'build'),
+    null,
+  );
 });
 
 test('a plan hands off only when a Continue started it and nothing came after', () => {

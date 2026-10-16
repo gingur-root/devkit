@@ -99,13 +99,19 @@ export function armedContinue(history: Step[]): Handoff | null {
 
 /**
  * Whether a build or elevated run may start: null if so, or why not. The
- * operator always may. The App may only when its label is the latest step and
- * follows a plan that a matching Continue started, so a Continue is spent by
+ * operator actor input needs his latest start to match this stage. The App
+ * may only when its label is the latest step and follows a plan that a
+ * matching Continue started, so a Continue is spent by
  * the first run after it.
  */
 export function refuseStart(actor: number, history: Step[], handoff: Handoff): string | null {
-  if (actor === OPERATOR_ID) return null;
   const label = STAGE_LABELS[handoff];
+  if (actor === OPERATOR_ID) {
+    const start = history.findLast((step) => step.kind === 'start');
+    return start?.actor === OPERATOR_ID && start.label === label
+      ? null
+      : `the operator actor input needs his latest issue start to be \`${label}\``;
+  }
   if (actor !== PIPELINE_BOT.id)
     return `only the operator or the pipeline App may add \`${label}\``;
   const [proof, plan, start] = history.slice(-3);

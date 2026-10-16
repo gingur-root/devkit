@@ -15,6 +15,7 @@ import {
 } from '../agent/constants.ts';
 import { graphql, rest } from '../agent/github.ts';
 import { marker } from '../agent/job.ts';
+import { PIPELINE_REPO } from '../webhooks/pipeline.ts';
 import { refreshGhToken } from './app-token.ts';
 import { CARD_ACTIONS, type CardState, cardState, refusal } from './buttons.ts';
 import { ORG, REPO_NAME } from './constants.ts';
@@ -135,6 +136,17 @@ export function liveRuns(runs: Run[], title: string): Run[] {
   );
 }
 
+/** Central caller runs name the issue in their final space-separated token. */
+export function dispatchedRuns(runs: Run[], repo: string, number: number): Run[] {
+  const names = [`${repo}#${number}`, `${ORG}/${repo}#${number}`];
+  return runs.filter(
+    (r) =>
+      r.status !== 'completed' &&
+      r.event === 'workflow_dispatch' &&
+      names.includes(r.display_title.split(' ').at(-1) ?? ''),
+  );
+}
+
 /** The App comment a Continue leaves: the planner reads the note, and the gate reads the marker. */
 export function continueComment(to: Handoff, heading: string, note: string): string {
   const where = to === 'elevated' ? ' Build it elevated, on the WSL desk.' : '';
@@ -170,14 +182,25 @@ export async function act(
       await setStatus(repo, card.nodeId, 'Ask');
       return;
     case 'stop': {
-      const { workflow_runs } = await rest<{ workflow_runs: Run[] }>(
-        'GET',
-        `/repos/${repo}/actions/runs?per_page=100`,
-      );
-      const live = liveRuns(workflow_runs, card.title);
+      const pipeline = `${ORG}/${PIPELINE_REPO}`;
+      const [local, central] = await Promise.all([
+        rest<{ workflow_runs: Run[] }>('GET', `/repos/${repo}/actions/runs?per_page=100`),
+        rest<{ workflow_runs: Run[] }>(
+          'GET',
+          `/repos/${pipeline}/actions/runs?event=workflow_dispatch&per_page=100`,
+        ),
+      ]);
+      const live = [
+        ...liveRuns(local.workflow_runs, card.title).map((run) => ({ repo, run })),
+        ...dispatchedRuns(central.workflow_runs, req.repo, req.number).map((run) => ({
+          repo: pipeline,
+          run,
+        })),
+      ];
       // The run ended between the read and now; the loop moves the card.
       if (!live.length) throw new ActionError(409, 'No live run to stop.');
-      for (const run of live) await rest('POST', `/repos/${repo}/actions/runs/${run.id}/cancel`);
+      for (const { repo: host, run } of live)
+        await rest('POST', `/repos/${host}/actions/runs/${run.id}/cancel`);
       return;
     }
     case 'continue':

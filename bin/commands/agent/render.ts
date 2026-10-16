@@ -22,7 +22,13 @@ export default {
       )
       .option('--base <sha>', "a review's base: the commit the candidate was built from")
       .requiredOption('--app-id <id>', "the pipeline App's ID; its text counts as trusted", Number)
-      .option('--actor <id>', 'who started the run (github.actor_id)', Number)
+      .option('--actor <id>', 'who requested the stage (may be a dispatch input)', Number)
+      .option(
+        '--dispatcher <id>',
+        'who triggered the workflow (github.actor_id)',
+        Number,
+        process.env.GITHUB_ACTOR_ID ? Number(process.env.GITHUB_ACTOR_ID) : undefined,
+      )
       .requiredOption('--out <dir>', 'directory to write ($AGENT_IN)');
   },
   async run(options) {

@@ -2,9 +2,14 @@
 // App's ready plan, unedited, for the issue as it is now.
 
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Command } from 'commander';
 import { test, vi } from 'vite-plus/test';
 
-import { OPERATOR_ID } from './constants.ts';
+import renderCommand from '../commands/agent/render.ts';
+import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import { CONTRACT_PREFIX, marker, PLAN_END, PLAN_START, revision } from './job.ts';
 import { approvedPlan, openIssues, render } from './render.ts';
 
@@ -107,4 +112,80 @@ test("a retro plan's issue list holds only the operator's and the App's issues",
     APP,
   );
   assert.equal(list, '- #1 Mine `retro`\n- #2 App `retro`');
+});
+
+test('only the operator dispatcher bypasses the history gate for build and elevated', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-dispatcher-'));
+  const reads: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (init.method !== 'GET') return new Response(JSON.stringify({}));
+    reads.push(path);
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': { number: 1, title: 'Title', body: 'Body', user: { id: OPERATOR_ID } },
+      '/repos/o/r/issues/1/comments': [comment()],
+      '/repos/o/r/issues/1/events': [],
+    };
+    return new Response(JSON.stringify(routes[path] ?? []));
+  });
+  try {
+    for (const role of ['build', 'elevated'] as const) {
+      const options = {
+        repo: 'o/r',
+        issue: 1,
+        role,
+        source: 'abc',
+        appId: APP,
+        actor: OPERATOR_ID,
+        out,
+      };
+      const job = await render({ ...options, dispatcher: OPERATOR_ID });
+      assert.equal(job.role, role);
+      assert.equal(JSON.parse(readFileSync(join(out, 'job.json'), 'utf8')).role, role);
+      assert.equal(reads.includes('/repos/o/r/issues/1/events'), false);
+      for (const dispatcher of [PIPELINE_BOT.id, undefined]) {
+        await assert.rejects(render({ ...options, dispatcher }), /Not approved/);
+      }
+      reads.length = 0;
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+test('the render CLI defaults the dispatcher from GitHub and accepts an explicit override', () => {
+  const parse = (args: string[] = []) => {
+    const command = new Command();
+    renderCommand.configure(command);
+    command.parse(
+      [
+        '--repo',
+        'o/r',
+        '--issue',
+        '1',
+        '--role',
+        'build',
+        '--app-id',
+        '7',
+        '--out',
+        'out',
+        ...args,
+      ],
+      { from: 'user' },
+    );
+    return command.opts();
+  };
+  try {
+    vi.stubEnv('GITHUB_ACTOR_ID', String(OPERATOR_ID));
+    assert.equal(parse().dispatcher, OPERATOR_ID);
+    assert.equal(parse(['--dispatcher', String(PIPELINE_BOT.id)]).dispatcher, PIPELINE_BOT.id);
+    vi.stubEnv('GITHUB_ACTOR_ID', undefined);
+    assert.equal(parse().dispatcher, undefined);
+    assert.equal(parse(['--actor', String(OPERATOR_ID)]).dispatcher, undefined);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
