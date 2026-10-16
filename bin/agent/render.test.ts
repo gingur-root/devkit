@@ -107,11 +107,12 @@ test("a retro plan's issue list holds only the operator's and the App's issues",
       { ...base, number: 1, title: 'Mine', user: { id: OPERATOR_ID } },
       { ...base, number: 2, title: 'App', user: { id: 1 }, performed_via_github_app: { id: APP } },
       { ...base, number: 3, title: 'Stranger', user: { id: 1 } },
+      { ...base, number: 5, title: 'Retro', user: { id: PIPELINE_BOT.id } },
       { ...base, number: 4, title: 'A PR', user: { id: OPERATOR_ID }, pull_request: {} },
     ],
     APP,
   );
-  assert.equal(list, '- #1 Mine `retro`\n- #2 App `retro`');
+  assert.equal(list, '- #1 Mine `retro`\n- #2 App `retro`\n- #5 Retro `retro`');
 });
 
 test('only the operator dispatcher bypasses the history gate for build and elevated', async () => {

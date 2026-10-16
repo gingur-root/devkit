@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
-import { type Handoff, OPERATOR_ID, RETRO_LABEL, STAGE_LABELS } from './constants.ts';
+import { type Handoff, OPERATOR_ID, PIPELINE_BOT, RETRO_LABEL, STAGE_LABELS } from './constants.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
@@ -68,7 +68,12 @@ export interface RenderOptions {
 const HANDOFF_ROLES: readonly string[] = ['build', 'elevated'] satisfies Handoff[];
 
 function trusted(item: Authored, appId: number): boolean {
-  return item.user?.id === OPERATOR_ID || item.performed_via_github_app?.id === appId;
+  // Issues the App files itself (retros, the coordinator's) carry its bot user, not performed_via_github_app.
+  return (
+    item.user?.id === OPERATOR_ID ||
+    item.user?.id === PIPELINE_BOT.id ||
+    item.performed_via_github_app?.id === appId
+  );
 }
 
 export function issueSnapshot(issue: Issue, comments: Authored[], appId: number): string {

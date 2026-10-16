@@ -16,5 +16,6 @@ test('only a complete, strict result envelope validates', () => {
   assert.ok(!Result.safeParse(fixture('plan.invalid')).success);
   assert.ok(!Result.safeParse({ ...ready, extra: true }).success, 'unknown fields are rejected');
   assert.ok(!Result.safeParse({ ...ready, criteria: undefined }).success, 'null, never absent');
-  assert.ok(!Result.safeParse({ ...ready, summary: 'word '.repeat(151) }).success);
+  const long = Result.parse({ ...ready, summary: 'word '.repeat(163) });
+  assert.equal(long.summary.split(' ').length, 151, 'a long summary is clipped to 150 words and …');
 });

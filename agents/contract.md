@@ -10,7 +10,10 @@ role, and `[]` for an empty list.
 - `status`: `complete` when you finished, `blocked` when a missing credential,
   fixture or tool stopped you, `failed` when you couldn't finish for any other
   reason. `outcome` is `null` unless `status` is `complete`.
-- `summary`: at most 150 words, leading with the result. It is published as is.
+- `summary`: at most 150 words, leading with the result. It is published as
+  is, and anything past 150 words is cut off, so count before you finish.
+  Detail belongs in your report file (`plan.md`, `review.md`), which is
+  published in full below the summary.
 - `assumptions`: what you assumed instead of asking. `questions`: what only
   the operator can answer. `next`: the one next action.
 - `evidence`: one entry per check you ran, with what you expected and what you
