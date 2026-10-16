@@ -3,12 +3,13 @@
 // are data parts the page draws itself.
 import type { UIMessage, UIMessageStreamWriter } from 'ai';
 
+import { KEEP_ALIVE_MS } from './constants.ts';
 import type { CoordinatorEvent } from './coordinator.ts';
 import type { Line } from './store.ts';
 
 export type DashboardMessage = UIMessage<
   never,
-  { tool: { name: string }; route: { repo: string; number: number } }
+  { tool: { name: string }; route: { repo: string; number: number }; ping: Record<string, never> }
 >;
 
 // The SDK's writer ignores writes after the page goes away, so the turn still
@@ -16,19 +17,29 @@ export type DashboardMessage = UIMessage<
 export async function writeEvents(
   events: AsyncIterable<CoordinatorEvent>,
   writer: UIMessageStreamWriter<DashboardMessage>,
+  keepAliveMs = KEEP_ALIVE_MS,
 ): Promise<void> {
   let part = 0;
-  for await (const event of events) {
-    if (event.type === 'text') {
-      const id = `t${part++}`;
-      writer.write({ type: 'text-start', id });
-      writer.write({ type: 'text-delta', id, delta: event.text });
-      writer.write({ type: 'text-end', id });
-    } else if (event.type === 'tool') {
-      writer.write({ type: 'data-tool', data: { name: event.name } });
-    } else if (event.type === 'route') {
-      writer.write({ type: 'data-route', data: { repo: event.repo, number: event.number } });
+  // Like /api/events, keep quiet turns below Cloudflare's idle cutoff.
+  const keepAlive = setInterval(
+    () => writer.write({ type: 'data-ping', data: {}, transient: true }),
+    keepAliveMs,
+  );
+  try {
+    for await (const event of events) {
+      if (event.type === 'text') {
+        const id = `t${part++}`;
+        writer.write({ type: 'text-start', id });
+        writer.write({ type: 'text-delta', id, delta: event.text });
+        writer.write({ type: 'text-end', id });
+      } else if (event.type === 'tool') {
+        writer.write({ type: 'data-tool', data: { name: event.name } });
+      } else if (event.type === 'route') {
+        writer.write({ type: 'data-route', data: { repo: event.repo, number: event.number } });
+      }
     }
+  } finally {
+    clearInterval(keepAlive);
   }
 }
 
