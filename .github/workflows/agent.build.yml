@@ -79,6 +79,7 @@ jobs:
     outputs:
       source: ${{ steps.render.outputs.source }}
       triage: ${{ steps.render.outputs.triage }}
+      readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -143,6 +144,15 @@ jobs:
           token: ${{ steps.app.outputs.token || github.token }}
           name: agent-repo
 
+      # The builder's read token, minted last so its hour starts late.
+      - id: read
+        if: steps.render.outputs.triage != 'true'
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+
       - uses: actions/upload-artifact@v7
         with:
           name: agent-in
@@ -173,6 +183,7 @@ jobs:
           fixture: ${{ inputs.fixture }}
           source: ${{ needs.start.outputs.source }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          readToken: ${{ needs.start.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
   publish:
@@ -182,6 +193,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       candidate: ${{ steps.publish.outputs.candidate }}
+      readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
@@ -264,6 +276,15 @@ jobs:
           token: ${{ steps.app.outputs.token || github.token }}
           name: review-0-repo
 
+      # The round-0 reviewer's read token.
+      - id: read
+        if: steps.publish.outputs.candidate != ''
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+
   review:
     name: Review
     needs: publish
@@ -282,6 +303,7 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 0
       candidate: ${{ needs.publish.outputs.candidate }}
+      readToken: ${{ needs.publish.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
       PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
@@ -304,6 +326,7 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 1
       candidate: ${{ needs.review.outputs.candidate }}
+      readToken: ${{ needs.review.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
       PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
@@ -326,6 +349,7 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 2
       candidate: ${{ needs.repair-1.outputs.candidate }}
+      readToken: ${{ needs.repair-1.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
       PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}

@@ -11,7 +11,11 @@ export const CLAUDE_SUBSCRIPTION_SOURCES = ['none', 'oauth'] as const;
 /** Codex's `auth.json` `auth_mode` for a ChatGPT login. */
 export const CODEX_SUBSCRIPTION_MODE = 'chatgpt';
 
-/** Variables every agent may see. Nothing else is inherited from the job. */
+/**
+ * Variables every agent may see. Nothing else is inherited from the job.
+ * GH_TOKEN is the run's read token: `contents: read` on every repo the
+ * pipeline App reaches (actions/agent.token).
+ */
 export const BASE_ENV = [
   'PATH',
   'HOME',
@@ -23,6 +27,7 @@ export const BASE_ENV = [
   'TMPDIR',
   'TERM',
   'CI',
+  'GH_TOKEN',
 ] as const;
 
 /** The one credential each executor may see, plus the fixed settings that isolate it. */

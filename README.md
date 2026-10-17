@@ -12,6 +12,7 @@ gingur-root/devkit#1.
 | `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                                                   |
 | `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).                                                |
 | `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                                        |
+| `actions/agent.token`                                        | The agents' sealed, read-only token for every repo the App reaches.                                     |
 | `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.                                              |
 | `.github/admission.txt`                                      | The admission gate every credential-holding job carries.                                                |
 | `configs/`                                                   | The Vite+ preset (lint, fmt, staged) and tsconfig, via the `exports` map.                               |

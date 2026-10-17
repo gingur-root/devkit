@@ -5,7 +5,8 @@ description: 'Run one agent role on the job file the controller rendered, and up
 # repo.pack in a job that holds the App token) into `repo/`, and checks devkit
 # out into `devkit/`, so the agent's working tree holds only the target repo. The
 # agent starts under `env -i`: with a shell it could otherwise read the job's
-# whole env from /proc.
+# whole env from /proc. Its only GitHub access is GH_TOKEN, the read token that
+# actions/agent.token sealed in the job before this one.
 
 inputs:
   role:
@@ -25,6 +26,10 @@ inputs:
   token:
     description: "AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login. Empty: Claude uses the runner user's own login (the WSL desk)."
     required: true
+  readToken:
+    description: 'The sealed read token from actions/agent.token, opened with `token` and passed to the agent as GH_TOKEN. Empty: no GH_TOKEN (the WSL desk).'
+    required: false
+    default: ''
   devkitRef:
     description: 'The devkit ref to run.'
     required: false
@@ -89,12 +94,23 @@ runs:
         ROLE: ${{ inputs.role }}
         EXECUTOR: ${{ inputs.executor }}
         FIXTURE: ${{ inputs.fixture }}
+        READ_TOKEN: ${{ inputs.readToken }}
+        KEY: ${{ inputs.token }}
       run: |
         out="$RUNNER_TEMP/agent/out"
         mkdir -p "$out"
+        # Opened here, so the plain token never reaches GITHUB_ENV, an output or an artifact.
+        # Never the runner's own GH_TOKEN.
+        opened=''
+        if [ -n "$READ_TOKEN" ]; then
+          opened=$(printf '%s' "$READ_TOKEN" | openssl enc -d -aes-256-cbc -pbkdf2 -a -A -pass env:KEY)
+          [ -n "$opened" ]
+          echo "::add-mask::$opened"
+        fi
         exec env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" \
           ${CODEX_HOME:+CODEX_HOME="$CODEX_HOME"} \
           ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+          ${opened:+GH_TOKEN="$opened"} \
           DEVKIT_STUB_FIXTURE="$FIXTURE" \
           pnpm agent run --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} \
             --cwd "$GITHUB_WORKSPACE/repo" --in "$RUNNER_TEMP/agent/in" --out "$out"
