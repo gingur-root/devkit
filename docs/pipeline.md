@@ -229,7 +229,9 @@ the one runner on his WSL desk, which runs as him and which GitHub lets only
    so a finding that needs a workflow edit ends in Needs you.
 
 A plan that edits `.github/workflows` runs elevated: the App has no
-`workflows` permission, so only the desk can push those files.
+`workflows` permission, so only the desk can push those files. Render refuses
+a build when its approved plan names a workflow file and says to add
+`agent:elevated` instead.
 
 `needs:elevated` marks an issue an agent says needs the desk. It starts
 nothing; add `agent:elevated` yourself.

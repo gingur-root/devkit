@@ -33,6 +33,7 @@ import { graphql, removeLabel, rest, restAll, stageComment, upsertStageComment }
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
+  editsWorkflows,
   followupMarker,
   ISSUES_FILE,
   JOB_FILE,
@@ -272,7 +273,7 @@ export function planComment(
     ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
     : handoff
       ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
-      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}${bodyNote}**`;
+      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : editsWorkflows(plan) ? 'ready: add `agent:elevated` to run it on the WSL desk (it edits workflow files)' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
