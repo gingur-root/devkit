@@ -1,0 +1,46 @@
+name: 'Agent read token'
+description: "Mint the agent's read token and seal it for the agent job: `contents: read` on every repo the pipeline App reaches."
+
+# Runs in the pipeline job just before an agent job, so the token's hour starts
+# as late as it can. The token is not revoked when this job ends, since the agent
+# job uses it next. It can't cross jobs in plain form: GitHub drops a job output
+# that holds a masked value. So it is sealed with AGENTS_SECRETS_TOKEN, which the
+# agent job already holds, and agent.run opens it. The agent never sees the App key.
+
+inputs:
+  appId:
+    description: 'The App ID: pass vars.PIPELINE_APP_ID.'
+    required: true
+  token:
+    description: 'PIPELINE_SECRETS_TOKEN, the pipeline-ci machine account token.'
+    required: true
+  key:
+    description: 'AGENTS_SECRETS_TOKEN: the passphrase that seals the token.'
+    required: true
+
+outputs:
+  sealed:
+    description: "The sealed read token, for agent.run's `readToken`. Expires an hour after minting."
+    value: ${{ steps.seal.outputs.sealed }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: app
+      uses: gingur-root/devkit/actions/app.token@main
+      with:
+        appId: ${{ inputs.appId }}
+        token: ${{ inputs.token }}
+        permissionContents: read
+        allRepositories: 'true'
+        revoke: 'false'
+
+    # agent.run opens it with the same cipher and passphrase.
+    - id: seal
+      shell: bash
+      env:
+        READ_TOKEN: ${{ steps.app.outputs.token }}
+        KEY: ${{ inputs.key }}
+      run: |
+        sealed=$(printf '%s' "$READ_TOKEN" | openssl enc -aes-256-cbc -pbkdf2 -a -A -pass env:KEY)
+        echo "sealed=$sealed" >>"$GITHUB_OUTPUT"

@@ -4,9 +4,10 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import type { Env } from './providers/shared.ts';
+import { TOOLS_FILE } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
 
-export const TOOLS_FILE = '.devkit/tools.json';
+export const MANIFEST_PATH = '.devkit/tools.json';
 
 const McpServer = z
   .strictObject({
@@ -16,8 +17,7 @@ const McpServer = z
     secret: z.uuid().optional(),
     env: z
       .string()
-      .regex(/^[A-Z][A-Z0-9_]*$/)
-      .refine((name) => name !== 'DEVKIT_MCP_SECRETS', 'DEVKIT_MCP_SECRETS is reserved')
+      .regex(/^MCP_[A-Z0-9_]+$/)
       .optional(),
     roles: z.array(z.enum(Object.keys(ROLES) as RoleName[])),
   })
@@ -39,9 +39,9 @@ export const DEFAULT_TOOLS: Tools = Tools.parse({
 });
 
 /** A repo replaces servers by name and adds its CLI requirements to the defaults. */
-export function loadTools(cwd: string): Tools {
-  const file = join(cwd, TOOLS_FILE);
-  const repo = Tools.parse(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {});
+export function loadTools(inDir: string | undefined): Tools {
+  const file = inDir && join(inDir, TOOLS_FILE);
+  const repo = Tools.parse(file && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {});
   return {
     mcpServers: { ...DEFAULT_TOOLS.mcpServers, ...repo.mcpServers },
     clis: [...new Set([...DEFAULT_TOOLS.clis, ...repo.clis])],

@@ -122,12 +122,12 @@ export function failedResult(job: Job, output: RunOutput): Result {
 export async function run(options: RunOptions): Promise<void> {
   const role = resolveRole(options);
   const cwd = resolve(options.cwd ?? '.');
-  const tools = loadTools(cwd);
-  for (const name of tools.clis) resolveExecutable(name, process.env.PATH);
   const dirs = {
     in: options.in && resolve(options.in),
     out: options.out && resolve(options.out),
   };
+  const tools = loadTools(dirs.in);
+  for (const name of tools.clis) resolveExecutable(name, process.env.PATH);
   // Also kept in the output directory, for a retro to read (devkit#39).
   const emit = (event: Record<string, unknown>) => {
     const line = `${JSON.stringify({ role: options.role, executor: role.executor, ...event })}\n`;

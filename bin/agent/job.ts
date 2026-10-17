@@ -12,6 +12,8 @@ export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
+/** The MCP manifest copied from the job's trusted commit by render. */
+export const TOOLS_FILE = 'tools.json';
 /** A retro issue's plan: the repo's open issues, which it may link findings to. */
 export const ISSUES_FILE = 'issues.md';
 /** A retro issue's approved triage, which the build files instead of building. */

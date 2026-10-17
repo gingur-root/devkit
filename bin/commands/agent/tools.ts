@@ -13,15 +13,15 @@ export default {
           .choices(Object.keys(ROLES))
           .makeOptionMandatory(),
       )
-      .option('--cwd <dir>', 'repo holding .devkit/tools.json', '.')
+      .option('--in <dir>', 'job directory holding tools.json')
       .option('--secrets', 'print <uuid> > <ENV_NAME> lines for secrets.fetch');
   },
   async run(options) {
     const { loadTools, renderTools } = await import('../../agent/tools.ts');
-    const rendered = renderTools(loadTools(options.cwd), options.role);
+    const rendered = renderTools(loadTools(options.in), options.role);
     if (options.secrets) {
       for (const [name, uuid] of Object.entries(rendered.secrets))
         process.stdout.write(`${uuid} > ${name}\n`);
     } else process.stdout.write(`${JSON.stringify(rendered, null, 2)}\n`);
   },
-} satisfies ParsedCommand<{ role: RoleName; cwd: string; secrets?: boolean }>;
+} satisfies ParsedCommand<{ role: RoleName; in?: string; secrets?: boolean }>;

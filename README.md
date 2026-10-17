@@ -12,6 +12,7 @@ gingur-root/devkit#1.
 | `.github/workflows/toolchain.verify.yml`                     | Format, lint, typecheck, test, build.                                                                   |
 | `actions/secrets.fetch`                                      | Fetch Bitwarden secrets by UUID (`bitwarden/sm-action`).                                                |
 | `actions/app.token`                                          | A short-lived, narrowed token from the gingur-root pipeline App.                                        |
+| `actions/agent.token`                                        | The agents' sealed, read-only token for every repo the App reaches.                                     |
 | `actions/secrets.scan`, `.github/workflows/secrets.scan.yml` | Secret scanning with a pinned, checksum-verified gitleaks.                                              |
 | `.github/admission.txt`                                      | The admission gate every credential-holding job carries.                                                |
 | `configs/`                                                   | The Vite+ preset (lint, fmt, staged) and tsconfig, via the `exports` map.                               |
@@ -73,8 +74,14 @@ Output is one JSON object per line (`init`, `message`, `tool`, `result`,
 ## Agent tools
 
 Add `.devkit/tools.json` to the target repo to declare MCP servers and required
-CLIs. Without the file, devkit uses its defaults: keyless Context7 at
-`https://mcp.context7.com/mcp` for plan, build, repair, review and elevated,
+CLIs. `agent render` reads it from the trusted commit (`job.base ?? job.source`)
+and copies it to the job directory as `tools.json`. Plan and build use the
+default branch; review and repair use the build's base. A manifest change in
+a PR takes effect after it merges. `agent tools` and `agent run` read only the
+job directory's copy, never the candidate checkout.
+
+Without `tools.json` in the job directory, devkit uses its defaults: keyless
+Context7 at `https://mcp.context7.com/mcp` for plan, build, repair, review and elevated,
 and no required CLIs. Web search stays on for those roles through their
 `web` setting, independently of MCP servers. There is no research role.
 
@@ -90,7 +97,7 @@ and no required CLIs. Web search stays on for those roles through their
       "command": "docs-mcp",
       "args": ["--stdio"],
       "secret": "22222222-2222-4222-8222-222222222222",
-      "env": "DOCS_API_KEY",
+      "env": "MCP_DOCS_API_KEY",
       "roles": ["build", "repair"]
     },
     "context7": {
@@ -105,15 +112,15 @@ and no required CLIs. Web search stays on for those roles through their
 The zod schema rejects unknown fields, invalid URLs or UUIDs, and unknown roles.
 An invalid manifest stops the run with its validation error.
 
-| Field              | Meaning                                                                                                                                                                            |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcpServers`       | Map of server names to configs; defaults to `{}`. Names start with a lowercase letter and contain only letters and digits.                                                         |
-| `url` or `command` | Exactly one is required: a streamable HTTP URL or a nonempty stdio command.                                                                                                        |
-| `args`             | String array of stdio arguments; defaults to `[]`.                                                                                                                                 |
-| `secret`           | Optional Bitwarden `agents` secret UUID. Omit it for a keyless server.                                                                                                             |
-| `env`              | Optional credential env name matching `[A-Z][A-Z0-9_]*`; `DEVKIT_MCP_SECRETS` is reserved. Defaults to `MCP_<SCREAMING_SNAKE_NAME>_TOKEN`; `docsApi` becomes `MCP_DOCS_API_TOKEN`. |
-| `roles`            | Required array of allowed roles: `hello`, `plan`, `build`, `repair`, `review`, `retro`, `elevated`. `[]` turns the server off.                                                     |
-| `clis`             | Required CLI names on PATH for every role; defaults to `[]`. A missing executable stops the run with `<name> is not on PATH.`                                                      |
+| Field              | Meaning                                                                                                                                                                                                        |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcpServers`       | Map of server names to configs; defaults to `{}`. Names start with a lowercase letter and contain only letters and digits.                                                                                     |
+| `url` or `command` | Exactly one is required: a streamable HTTP URL or a nonempty stdio command.                                                                                                                                    |
+| `args`             | String array of stdio arguments; defaults to `[]`.                                                                                                                                                             |
+| `secret`           | Optional Bitwarden `agents` secret UUID. Omit it for a keyless server.                                                                                                                                         |
+| `env`              | Optional credential env name matching `^MCP_[A-Z0-9_]+$`. The `MCP_` prefix prevents it from replacing agent env vars. Defaults to `MCP_<SCREAMING_SNAKE_NAME>_TOKEN`; `docsApi` becomes `MCP_DOCS_API_TOKEN`. |
+| `roles`            | Required array of allowed roles: `hello`, `plan`, `build`, `repair`, `review`, `retro`, `elevated`. `[]` turns the server off.                                                                                 |
+| `clis`             | Required CLI names on PATH for every role; defaults to `[]`. A missing executable stops the run with `<name> is not on PATH.`                                                                                  |
 
 Repo entries add new servers or replace a default's whole config by name.
 To turn a default off, replace it with its URL or command and `"roles": []`.
@@ -123,8 +130,8 @@ removed.
 Inspect the selected role's Claude and Codex configs before running it:
 
 ```sh
-devkit agent tools --role plan --cwd /path/to/repo
-devkit agent tools --role plan --cwd /path/to/repo --secrets
+devkit agent tools --role plan --in /path/to/job
+devkit agent tools --role plan --in /path/to/job --secrets
 ```
 
 The first command prints `{claude, codex, secrets}` as JSON. The second prints
@@ -135,7 +142,9 @@ The stub executor's `init` event also prints both configs and agent env names.
 with `setEnv: false`. It passes the resulting JSON in `DEVKIT_MCP_SECRETS` to
 the run process. Providers select only that role's credential env vars and
 drop the JSON bag before starting the agent. A missing credential stops the
-run. For a local run, supply the same JSON object keyed by credential env name.
+Claude or Codex run. For a local run, put the manifest in the job directory as
+`tools.json` and supply the same JSON object keyed by credential env name.
+Stub runs list credential names without requiring values or fetching secrets.
 
 Claude gets a temporary mode-600 `--mcp-config` file containing `${VAR}`
 references, removed after success or failure. HTTP servers receive
@@ -145,7 +154,7 @@ config overrides, plus a shell-env exclusion for those names. Credential
 values stay out of the provider config arguments. A role with a shell can
 still read credentials held by its process; this is role scoping.
 
-GitHub reads use #125's per-run App installation token (`GH_TOKEN`,
+GitHub reads use #182's per-run App installation token (`GH_TOKEN`,
 `contents: read`), rather than a PAT or a second App. That token is minted
 per run outside this manifest and is not stored in Bitwarden `agents`.
 The defaults have no `github` MCP server. #125 owns the write-fails proof.

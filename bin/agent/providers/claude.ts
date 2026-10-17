@@ -58,7 +58,7 @@ export function claudeOptions(
 export function assertClaudeInit(
   init: { apiKeySource: string; tools: string[] },
   options: Options,
-  servers: readonly string[] = Object.keys(options.mcpServers ?? {}),
+  servers: readonly string[],
 ): void {
   if (!(CLAUDE_SUBSCRIPTION_SOURCES as readonly string[]).includes(init.apiKeySource)) {
     throw new Error(`Claude authenticated with ${init.apiKeySource}, not the subscription token.`);

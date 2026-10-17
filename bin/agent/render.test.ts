@@ -2,11 +2,11 @@
 // App's ready plan, unedited, for the issue as it is now, and never a story.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { test, vi } from 'vite-plus/test';
+import { onTestFinished, test, vi } from 'vite-plus/test';
 
 import renderCommand from '../commands/agent/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
@@ -34,6 +34,92 @@ function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP
   ].join('\n\n');
   return { body, user: { id: 1 }, performed_via_github_app: { id: app }, created_at: '' };
 }
+
+for (const role of ['plan', 'build', 'review', 'repair'] as const) {
+  test(`render snapshots the ${role} manifest at job.base ?? job.source`, async () => {
+    const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
+    onTestFinished(() => {
+      rmSync(out, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    });
+    const requests: string[] = [];
+    const manifest = '{"mcpServers":{"trusted":{"command":"docs","roles":["review"]}}}\n';
+    vi.stubEnv('GH_TOKEN', 'test');
+    vi.stubGlobal('fetch', async (url: string) => {
+      const parsed = new URL(url);
+      requests.push(parsed.pathname + parsed.search);
+      const routes: Record<string, unknown> = {
+        '/repos/o/r/issues/1': {
+          number: 1,
+          title: 'Title',
+          body: 'Body',
+          user: { id: OPERATOR_ID },
+          labels: [],
+        },
+        '/repos/o/r/issues/1/comments': [comment()],
+        '/repos/o/r/contents/.devkit/tools.json': {
+          content: Buffer.from(manifest).toString('base64'),
+        },
+      };
+      return new Response(JSON.stringify(routes[parsed.pathname] ?? []));
+    });
+    const job = await render({
+      repo: 'o/r',
+      issue: 1,
+      role,
+      source: 'cand',
+      ...(role === 'review' || role === 'repair' ? { base: 'base' } : {}),
+      appId: APP,
+      dispatcher: OPERATOR_ID,
+      out,
+    });
+    const expected = role === 'review' || role === 'repair' ? 'base' : 'cand';
+    assert.equal(job.base ?? job.source, expected);
+    assert.deepEqual(
+      requests.filter((path) => path.includes('/contents/')),
+      [`/repos/o/r/contents/.devkit/tools.json?ref=${expected}`],
+    );
+    assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), manifest);
+  });
+}
+
+test('render tolerates a missing manifest but propagates other fetch failures', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-no-tools-'));
+  onTestFinished(() => {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+  let status = 404;
+  const requests: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.includes('/contents/')) {
+      requests.push(parsed.pathname + parsed.search);
+      return new Response('{"message":"manifest fetch failed"}', { status });
+    }
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/commits/HEAD': { sha: 'resolved-source' },
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      },
+    };
+    return new Response(JSON.stringify(routes[parsed.pathname] ?? []));
+  });
+  const options = { repo: 'o/r', issue: 1, role: 'plan', appId: APP, out } as const;
+  const job = await render(options);
+  assert.equal(job.source, 'resolved-source');
+  assert.deepEqual(requests, ['/repos/o/r/contents/.devkit/tools.json?ref=resolved-source']);
+  assert.equal(existsSync(join(out, 'tools.json')), false);
+  status = 403;
+  await assert.rejects(render(options), /403.*manifest fetch failed/);
+});
 
 test('only the App’s ready, unedited plan for the live issue is approved', () => {
   assert.equal(approvedPlan([comment()], APP, ISSUE, true).plan, PLAN);
@@ -82,6 +168,7 @@ test('render records whether the planner can see the body, and Job.parse keeps i
   let author = OPERATOR_ID;
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
+    if (new URL(url).pathname.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -118,6 +205,7 @@ test('refusing a plan written without the body comments and drops the stage labe
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -191,6 +279,7 @@ test('a build the App started without a Continue never renders, even with a read
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (init.method !== 'GET') writes.push(`${init.method} ${path}`);
     const body = init.method === 'GET' ? (routes[path] ?? []) : {};
     return new Response(JSON.stringify(body), { status: 200 });
@@ -240,6 +329,7 @@ test('only the operator dispatcher bypasses the history gate for build and eleva
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (init.method !== 'GET') return new Response(JSON.stringify({}));
     reads.push(path);
     const routes: Record<string, unknown> = {
@@ -343,6 +433,7 @@ test("render puts the parent story in a subtask's issue.md, and nothing when it 
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (path === '/repos/o/r/issues/3/parent' && parent) return parent;
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/3': {
@@ -388,6 +479,7 @@ test('a story never builds: it goes to Needs you and says to build each subtask'
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,

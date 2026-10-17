@@ -18,7 +18,6 @@ import { join } from 'node:path';
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
 import { JOB_FILE, Job, PLAN_FILE, REVIEW_FILE } from '../job.ts';
 import { agentEnv, type RunInput, type RunOutput } from './shared.ts';
-import { toolsEnv } from '../tools.ts';
 
 const FIXTURES = new URL('../fixtures/', import.meta.url);
 
@@ -32,7 +31,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     tools: {
       claude: input.tools.claude,
       codex: input.tools.codex,
-      env: Object.keys({ ...agentEnv('stub', process.env), ...toolsEnv(input.tools, process.env) }),
+      env: [...Object.keys(agentEnv('stub', process.env)), ...Object.keys(input.tools.secrets)],
     },
   });
   if (fixture === 'crash' || fixture === 'timeout' || fixture === 'missing') {
