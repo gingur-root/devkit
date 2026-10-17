@@ -7,6 +7,8 @@ import { SUMMARY_WORDS, type Result, RESULT_JSON_SCHEMA } from './result.ts';
 import type { Executor } from './constants.ts';
 import { JOB_FILE, Job, RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
 import { ROLES, type Role, type RoleName } from './roles.ts';
+import { resolveExecutable } from './providers/shared.ts';
+import { loadTools, renderTools } from './tools.ts';
 
 export interface RunOptions {
   role: RoleName;
@@ -120,6 +122,8 @@ export function failedResult(job: Job, output: RunOutput): Result {
 export async function run(options: RunOptions): Promise<void> {
   const role = resolveRole(options);
   const cwd = resolve(options.cwd ?? '.');
+  const tools = loadTools(cwd);
+  for (const name of tools.clis) resolveExecutable(name, process.env.PATH);
   const dirs = {
     in: options.in && resolve(options.in),
     out: options.out && resolve(options.out),
@@ -134,6 +138,7 @@ export async function run(options: RunOptions): Promise<void> {
   try {
     output = await PROVIDERS[role.executor]({
       role,
+      tools: renderTools(tools, options.role),
       instructions: instructions(options.role, role, cwd),
       prompt: stagePrompt(options.prompt ?? role.objective, dirs),
       cwd,
