@@ -256,7 +256,7 @@ function numbered(questions: string[]): string {
   return questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
 }
 
-function planComment(
+export function planComment(
   job: Job,
   result: Result,
   out: string,
@@ -265,16 +265,20 @@ function planComment(
 ): string {
   const planFile = join(out, PLAN_FILE);
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
+  const bodyNote = job.issue.bodySeen
+    ? ''
+    : ' (written without the issue body, which someone else wrote)';
   const head = story.length
-    ? '**Plan: ready. This card is a story: approve and build each subtask, not this card**'
+    ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
     : handoff
-      ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
-      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`;
+      ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
+      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
     source: job.source,
     issueRevision: job.issue.revision,
+    bodySeen: job.issue.bodySeen,
     checks: Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
     critique: result.critique,
     triage: result.triage,

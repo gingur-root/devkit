@@ -307,6 +307,8 @@ proof, then pin it back.
 - **Editing the issue or the plan comment voids the plan.** `agent:build`
   refuses until you run `agent:plan` again. It says why in a comment and
   removes its label, so add it again once the plan is ready.
+- **A plan written without the issue body is refused once the body becomes visible.**
+  Run `agent:plan` again.
 - **A workflow-file change on main blocks a build retry.** If main changed
   anything under `.github/workflows/` since the branch was made, the push to
   `agent/issue-<n>` is rejected (the App has no `workflows` permission). Close

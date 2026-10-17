@@ -52,7 +52,7 @@ test('the envelope written for a run with no result passes the schema publish ch
     role: 'build',
     objective: '',
     repo: 'o/r',
-    issue: { number: 1, title: 't', revision: 'rev' },
+    issue: { number: 1, title: 't', revision: 'rev', bodySeen: true },
     plan: { revision: 'plan', criteria: [] },
     source: 'sha',
     base: 'sha',
