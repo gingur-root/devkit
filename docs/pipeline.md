@@ -16,8 +16,10 @@ central caller,
 [`gingur-root/pipeline`'s `agents.yml`](https://github.com/gingur-root/pipeline/blob/main/.github/workflows/agents.yml),
 with the repo, the issue and the sender. Its jobs read the target repo's code
 from a pack the App-token job makes (`actions/repo.pack`), since their own
-token can't read another private repo. A repo is enrolled when infra lists it
-`enrolled`, which installs the App on it. infra is the exception: the App must
+token can't read another private repo. The agents can also read every other
+enrolled repo with `GH_TOKEN`, a read-only token minted for each run
+(`actions/agent.token`); the pack still carries the target repo. A repo is
+enrolled when infra lists it `enrolled`, which installs the App on it. infra is the exception: the App must
 never reach it, so it keeps its own caller on the WSL desk.
 
 ## The flow

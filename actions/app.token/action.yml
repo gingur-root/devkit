@@ -18,6 +18,14 @@ inputs:
     description: 'Comma- or newline-separated repo names in gingur-root. Default: the current repo.'
     required: false
     default: ''
+  allRepositories:
+    description: "`true`: every repo the App's installation reaches; `repositories` is ignored."
+    required: false
+    default: 'false'
+  revoke:
+    description: '`false` keeps the token alive after the job ends, for a later job to use.'
+    required: false
+    default: 'true'
   permissionContents:
     description: 'read or write.'
     required: false
@@ -37,7 +45,7 @@ inputs:
 
 outputs:
   token:
-    description: 'The installation token. Revoked when the job ends.'
+    description: "The installation token. Revoked when the job ends unless `revoke: 'false'`; it expires after an hour either way."
     value: ${{ steps.app.outputs.token }}
 
 runs:
@@ -59,7 +67,9 @@ runs:
         client-id: ${{ inputs.appId }}
         private-key: ${{ fromJSON(steps.key.outputs.json).PIPELINE_APP_PRIVATE_KEY }}
         owner: gingur-root
-        repositories: ${{ inputs.repositories || github.event.repository.name }}
+        # Empty with `owner` set: every repo in the installation.
+        repositories: ${{ inputs.allRepositories != 'true' && (inputs.repositories || github.event.repository.name) || '' }}
+        skip-token-revoke: ${{ inputs.revoke != 'true' }}
         permission-contents: ${{ inputs.permissionContents }}
         permission-issues: ${{ inputs.permissionIssues }}
         permission-pull-requests: ${{ inputs.permissionPullRequests }}

@@ -175,7 +175,17 @@ composite, so it's bumped once.
   CI, by UUID) or `bws` (on the box). No per-repo GitHub secrets.
 - **Two tokens, two tiers.** Agent jobs hold only `AGENTS_SECRETS_TOKEN` (the
   `agents` project). Pipeline jobs hold `PIPELINE_SECRETS_TOKEN` (`pipeline`: the
-  App key). An agent job never references the pipeline token.
+  App key), and may also use the agents token to seal the agent's read token. An
+  agent job never references the pipeline token.
+- **The agent's read token** lets the plan, build, review and repair agents read
+  every repo the App reaches (devkit#125). `actions/agent.token` mints it in the
+  pipeline job just before each agent job: `contents: read` on all of the App's
+  repos, not revoked at job end. GitHub drops a job output that holds a masked
+  value, so the token crosses jobs sealed with `AGENTS_SECRETS_TOKEN` (openssl
+  AES-256). `agent.run` opens it and hands it to the agent as `GH_TOKEN`. It
+  expires an hour after minting, and the agent can leak it (worst case: a copy
+  of private code). The WSL desk mints none. `test/agent.token.test.ts` pins the
+  agent jobs' permissions and the token's scope.
 - **GitHub writes** go through `app.token`: a short-lived installation
   token for the gingur-root pipeline App, narrowed per call by its
   `permission*` inputs. The App has no `workflows` permission.
