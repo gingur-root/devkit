@@ -23,7 +23,7 @@ inputs:
     description: 'The commit the pack holds, from the job contract: the change is diffed against it.'
     required: true
   token:
-    description: "AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login. Empty: Claude uses the runner user's own login (the WSL desk)."
+    description: "AGENTS_SECRETS_TOKEN. Fetches the role's MCP credentials and Claude's OAuth token; Codex uses the runner login. Empty: no Bitwarden fetch (the WSL desk)."
     required: true
   devkitRef:
     description: 'The devkit ref to run.'
@@ -80,12 +80,34 @@ runs:
         secrets: |
           2cf223b6-0ed8-415b-a651-b4e2000da674 > CLAUDE_CODE_OAUTH_TOKEN
 
+    - id: tools
+      shell: bash
+      working-directory: devkit
+      env:
+        ROLE: ${{ inputs.role }}
+      run: |
+        requests=$(pnpm --silent agent tools --role "$ROLE" --cwd "$GITHUB_WORKSPACE/repo" --secrets)
+        {
+          echo 'secrets<<DEVKIT_MCP_REQUESTS'
+          printf '%s\n' "$requests"
+          echo 'DEVKIT_MCP_REQUESTS'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: mcp
+      if: ${{ inputs.token != '' && inputs.executor != 'stub' && steps.tools.outputs.secrets != '' }}
+      uses: gingur-root/devkit/actions/secrets.fetch@main
+      with:
+        token: ${{ inputs.token }}
+        setEnv: 'false'
+        secrets: ${{ steps.tools.outputs.secrets }}
+
     - name: Run
       id: run
       shell: bash
       working-directory: devkit
       env:
         CLAUDE_CODE_OAUTH_TOKEN: ${{ steps.secrets.outputs.json && fromJSON(steps.secrets.outputs.json).CLAUDE_CODE_OAUTH_TOKEN }}
+        DEVKIT_MCP_SECRETS: ${{ steps.mcp.outputs.json }}
         ROLE: ${{ inputs.role }}
         EXECUTOR: ${{ inputs.executor }}
         FIXTURE: ${{ inputs.fixture }}
@@ -95,6 +117,7 @@ runs:
         exec env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" \
           ${CODEX_HOME:+CODEX_HOME="$CODEX_HOME"} \
           ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+          ${DEVKIT_MCP_SECRETS:+DEVKIT_MCP_SECRETS="$DEVKIT_MCP_SECRETS"} \
           DEVKIT_STUB_FIXTURE="$FIXTURE" \
           pnpm agent run --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} \
             --cwd "$GITHUB_WORKSPACE/repo" --in "$RUNNER_TEMP/agent/in" --out "$out"
@@ -130,11 +153,13 @@ runs:
         TOOLCHAIN: ${{ steps.toolchain.outcome }}
         JOB_IN: ${{ steps.jobIn.outcome }}
         SECRETS: ${{ steps.secrets.outcome }}
+        TOOLS: ${{ steps.tools.outcome }}
+        MCP: ${{ steps.mcp.outcome }}
         RUN: ${{ steps.run.outcome }}
       run: |
         mkdir -p "$RUNNER_TEMP/agent/out"
-        printf '{"pack":"%s","unpack":"%s","checkout":"%s","toolchain":"%s","jobIn":"%s","secrets":"%s","run":"%s"}\n' \
-          "$PACK" "$UNPACK" "$CHECKOUT" "$TOOLCHAIN" "$JOB_IN" "$SECRETS" "$RUN" \
+        printf '{"pack":"%s","unpack":"%s","checkout":"%s","toolchain":"%s","jobIn":"%s","secrets":"%s","tools":"%s","mcp":"%s","run":"%s"}\n' \
+          "$PACK" "$UNPACK" "$CHECKOUT" "$TOOLCHAIN" "$JOB_IN" "$SECRETS" "$TOOLS" "$MCP" "$RUN" \
           > "$RUNNER_TEMP/agent/out/steps.json"
 
     - if: ${{ always() }}

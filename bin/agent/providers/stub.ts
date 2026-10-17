@@ -17,7 +17,8 @@ import { join } from 'node:path';
 
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
 import { JOB_FILE, Job, PLAN_FILE, REVIEW_FILE } from '../job.ts';
-import type { RunInput, RunOutput } from './shared.ts';
+import { agentEnv, type RunInput, type RunOutput } from './shared.ts';
+import { toolsEnv } from '../tools.ts';
 
 const FIXTURES = new URL('../fixtures/', import.meta.url);
 
@@ -25,8 +26,16 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   const fixture = (process.env.DEVKIT_STUB_FIXTURE ?? 'ready') as StubFixture;
   if (!STUB_FIXTURES.includes(fixture)) throw new Error(`No stub fixture "${fixture}".`);
   if (!input.in || !input.out) throw new Error('The stub needs --in and --out.');
+  input.emit({
+    type: 'init',
+    fixture,
+    tools: {
+      claude: input.tools.claude,
+      codex: input.tools.codex,
+      env: Object.keys({ ...agentEnv('stub', process.env), ...toolsEnv(input.tools, process.env) }),
+    },
+  });
   if (fixture === 'crash' || fixture === 'timeout' || fixture === 'missing') {
-    input.emit({ type: 'init', fixture });
     if (fixture === 'crash') throw new Error('stub crash');
     if (fixture === 'missing') return { ok: true };
     return {
@@ -36,7 +45,6 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     };
   }
   if (fixture === 'rate-limit') {
-    input.emit({ type: 'init', fixture });
     return {
       ok: false,
       failure: { class: 'rate_limit', resetsAt: '2026-01-01T00:00:00.000Z' },
@@ -72,7 +80,6 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     if (fixture === 'never' && job.role === 'repair')
       appendFileSync(target, `\nRepair of candidate ${job.source}.\n`);
   }
-  input.emit({ type: 'init', fixture });
   input.emit({ type: 'result', ok: true, usage: { input_tokens: 0, output_tokens: 0 } });
   return {
     ok: true,
