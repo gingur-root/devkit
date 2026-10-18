@@ -12,6 +12,7 @@ import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
+  editsWorkflows,
   ISSUE_FILE,
   ISSUES_FILE,
   JOB_FILE,
@@ -211,6 +212,10 @@ export async function render(options: RenderOptions): Promise<Job> {
         if (why) throw new Error(`Not approved: ${why}.`);
       }
       approved = approvedPlan(comments, options.appId, issueRevision, bodySeen);
+      if (options.role === 'build' && editsWorkflows(approved.plan))
+        throw new Error(
+          "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.",
+        );
       if (story)
         throw new Error(
           `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,

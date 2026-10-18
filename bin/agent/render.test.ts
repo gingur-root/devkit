@@ -2,7 +2,7 @@
 // App's ready plan, unedited, for the issue as it is now, and never a story.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -10,7 +10,15 @@ import { test, vi } from 'vite-plus/test';
 
 import renderCommand from '../commands/agent/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
-import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
+import {
+  CONTRACT_PREFIX,
+  editsWorkflows,
+  Job,
+  marker,
+  PLAN_END,
+  PLAN_START,
+  revision,
+} from './job.ts';
 import { approvedPlan, issueSnapshot, openIssues, render } from './render.ts';
 
 const APP = 7;
@@ -34,6 +42,74 @@ function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP
   ].join('\n\n');
   return { body, user: { id: 1 }, performed_via_github_app: { id: app }, created_at: '' };
 }
+
+test('workflow detection requires a named yml or yaml file', () => {
+  assert.equal(editsWorkflows('Edit `.github/workflows/agent.build.yml`.'), true);
+  assert.equal(editsWorkflows('Edit `.github/workflows/check-1.yaml`.'), true);
+  assert.equal(editsWorkflows('Read `.github/workflows/` for context.'), false);
+  assert.equal(editsWorkflows('Edit `bin/agent/render.ts`.'), false);
+});
+
+test('workflow plans refuse build with guidance but still render elevated jobs', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-workflows-'));
+  const plan = 'Edit `.github/workflows/agent.build.yml`.';
+  const writes: { method: string | undefined; path: string; body: unknown }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      },
+      '/repos/o/r/issues/1/comments': [comment(plan, { planRevision: revision(plan) })],
+    };
+    if (init.method !== 'GET')
+      writes.push({
+        method: init.method,
+        path,
+        body: init.body ? JSON.parse(String(init.body)) : null,
+      });
+    return new Response(JSON.stringify(init.method === 'GET' ? (routes[path] ?? []) : {}));
+  });
+  try {
+    const options = {
+      repo: 'o/r',
+      issue: 1,
+      source: 'abc',
+      appId: APP,
+      dispatcher: OPERATOR_ID,
+      out,
+    };
+    const reason =
+      "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.";
+    await assert.rejects(render({ ...options, role: 'build' }), { message: reason });
+    assert.equal(existsSync(join(out, 'job.json')), false);
+    assert.equal(existsSync(join(out, 'plan.md')), false);
+    assert.deepEqual(writes, [
+      {
+        method: 'POST',
+        path: '/repos/o/r/issues/1/comments',
+        body: { body: `<!-- devkit:build -->\n\n**Build refused:** ${reason}` },
+      },
+      { method: 'DELETE', path: '/repos/o/r/issues/1/labels/agent%3Abuild', body: null },
+    ]);
+
+    writes.length = 0;
+    const job = await render({ ...options, role: 'elevated' });
+    assert.equal(job.role, 'elevated');
+    assert.deepEqual(Job.parse(JSON.parse(readFileSync(join(out, 'job.json'), 'utf8'))), job);
+    assert.equal(readFileSync(join(out, 'plan.md'), 'utf8'), `${plan}\n`);
+    assert.deepEqual(writes, []);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
 
 test('only the App’s ready, unedited plan for the live issue is approved', () => {
   assert.equal(approvedPlan([comment()], APP, ISSUE, true).plan, PLAN);
