@@ -13,7 +13,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
-import { READY_LABEL, STAGE_LABELS } from '../agent/constants.ts';
+import { FILED_LABEL, READY_LABEL, STAGE_LABELS } from '../agent/constants.ts';
 import { rest } from '../agent/github.ts';
 import { assertClaudeInit } from '../agent/providers/claude.ts';
 import { agentEnv, resolveExecutable } from '../agent/providers/shared.ts';
@@ -26,8 +26,8 @@ export type AskMode = (typeof ASK_MODES)[number];
 
 /** The labels a new ask gets: queue waits in Ask for the board loop, start plans now. */
 export const ASK_LABELS = {
-  queue: [READY_LABEL],
-  start: [READY_LABEL, STAGE_LABELS.plan],
+  queue: [FILED_LABEL, READY_LABEL],
+  start: [FILED_LABEL, READY_LABEL, STAGE_LABELS.plan],
 } as const satisfies Record<AskMode, readonly string[]>;
 
 const TURN_TIMEOUT_MS = 10 * 60_000;

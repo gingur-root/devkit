@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { test, vi } from 'vite-plus/test';
 
-import { OPERATOR_ID } from '../agent/constants.ts';
-import { LEFT_OUT, readPull, statusLine } from './issue.ts';
+import { OPERATOR_ID, PIPELINE_BOT } from '../agent/constants.ts';
+import { LEFT_OUT, readPull, readThread, statusLine } from './issue.ts';
 
 test('the status line says done, waiting on you, or column and running stage', () => {
   assert.equal(
@@ -19,6 +19,58 @@ test('the status line says done, waiting on you, or column and running stage', (
     statusLine({ state: 'open', status: null, labels: ['ready-for-agent'] }),
     'Not on the board',
   );
+  assert.equal(statusLine({ state: 'open', status: 'Ask', labels: ['agent:filed'] }), 'Ask');
+  assert.equal(
+    statusLine({ state: 'open', status: 'Planning', labels: ['agent:filed', 'agent:plan'] }),
+    'Planning · agent:plan running',
+  );
+});
+
+test('readThread trusts only operator or labelled pipeline issue bodies, while bot comments stay trusted', async () => {
+  let user: { id: number } | null = null;
+  let labels: { name: string }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('PIPELINE_APP_KEY', '');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const routes: Record<string, unknown> = {
+      '/repos/gingur-root/scratch/issues/1': {
+        user,
+        labels,
+        title: 'Card',
+        body: 'Body',
+        state: 'open',
+        html_url: '',
+      },
+      '/repos/gingur-root/scratch/issues/1/comments': [
+        {
+          id: 1,
+          user: { id: PIPELINE_BOT.id, login: PIPELINE_BOT.name },
+          body: 'Bot comment',
+          created_at: '',
+        },
+      ],
+      '/graphql': { data: { repository: { issueOrPullRequest: { projectItems: { nodes: [] } } } } },
+    };
+    return new Response(JSON.stringify(routes[new URL(url).pathname]));
+  });
+  try {
+    for (const [id, names, trusted] of [
+      [OPERATOR_ID, [], true],
+      [PIPELINE_BOT.id, [], false],
+      [PIPELINE_BOT.id, ['agent:filed'], true],
+      [1, ['agent:filed'], false],
+      [null, ['agent:filed'], false],
+    ] as const) {
+      user = id === null ? null : { id };
+      labels = names.map((name) => ({ name }));
+      const thread = await readThread('scratch', 1);
+      assert.equal(thread.bodyTrusted, trusted);
+      assert.equal(thread.comments[0]!.trusted, true);
+    }
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
 });
 
 // PRs are public too: a stranger's PR or review comment must not reach the model.

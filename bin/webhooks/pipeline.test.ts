@@ -53,6 +53,8 @@ test('the App starts only its hand-offs, and nobody else starts anything', () =>
   assert.equal(stage(labeled('agent:plan', PIPELINE_BOT.id)), 'plan');
   assert.equal(stage(labeled('agent:elevated', PIPELINE_BOT.id)), 'elevated');
   assert.equal(stage(labeled('ready-for-agent', PIPELINE_BOT.id)), null);
+  assert.equal(stage(labeled('agent:filed', PIPELINE_BOT.id)), null);
+  assert.equal(stage(labeled('agent:filed')), null);
   assert.equal(stage(commented('/approve', PIPELINE_BOT.id)), null);
   for (const label of ['agent:plan', 'agent:build', 'agent:elevated', 'ready-for-agent']) {
     assert.equal(stage(labeled(label, STRANGER)), null, label);

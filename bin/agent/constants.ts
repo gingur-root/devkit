@@ -93,6 +93,17 @@ export const READY_LABEL = 'ready-for-agent';
 
 /** Marks an issue a retro filed, or one its plan filed in turn (devkit#115). */
 export const RETRO_LABEL = 'retro';
+/** The controller adds it at filing to distinguish its issues from bot authorship (devkit#200). */
+export const FILED_LABEL = 'agent:filed';
+
+/** Bot authorship alone is not proof the controller filed an issue. */
+export function filedByPipeline(issue: {
+  user?: { id: number } | null;
+  labels: { name: string }[];
+}): boolean {
+  return issue.user?.id === PIPELINE_BOT.id && issue.labels.some((l) => l.name === FILED_LABEL);
+}
+
 /** An agent says the issue needs the WSL desk. It starts nothing. */
 export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
 /** What an elevated subtask says. The pipeline never adds `agent:elevated` itself. */

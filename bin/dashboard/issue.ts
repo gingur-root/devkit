@@ -1,4 +1,10 @@
-import { OPERATOR_ID, PIPELINE_BOT, STATUS_FIELD } from '../agent/constants.ts';
+import {
+  filedByPipeline,
+  OPERATOR_ID,
+  PIPELINE_BOT,
+  STAGE_LABELS,
+  STATUS_FIELD,
+} from '../agent/constants.ts';
 import { graphql, rest } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
 import { COMMENTED_REVIEW, ORG } from './constants.ts';
@@ -49,7 +55,7 @@ export function statusLine(issue: {
 }): string {
   if (issue.state === 'closed') return 'Done';
   if (issue.status === 'Needs you') return 'Waiting on you';
-  const running = issue.labels.find((label) => label.startsWith('agent:'));
+  const running = issue.labels.find((label) => Object.values<string>(STAGE_LABELS).includes(label));
   const column = issue.status ?? 'Not on the board';
   return running ? `${column} · ${running} running` : column;
 }
@@ -60,7 +66,7 @@ export async function readThread(repo: string, number: number) {
   const path = `/repos/${ORG}/${repo}/issues/${number}`;
   const [issue, comments, board] = await Promise.all([
     rest<{
-      user: { id: number };
+      user: { id: number } | null;
       title: string;
       html_url: string;
       state: string;
@@ -124,7 +130,7 @@ export async function readThread(repo: string, number: number) {
     url: issue.html_url,
     state: issue.state,
     body: issue.body ?? '',
-    bodyTrusted: trustedAuthor(issue.user),
+    bodyTrusted: issue.user?.id === OPERATOR_ID || filedByPipeline(issue),
     labels,
     status,
     line: statusLine({ state: issue.state, status, labels }),

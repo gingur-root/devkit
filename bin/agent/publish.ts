@@ -17,6 +17,8 @@ import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
   ELEVATED_NOTE,
+  FILED_LABEL,
+  filedByPipeline,
   FOLLOWUP_CAP,
   type Handoff,
   NEEDS_ELEVATED_LABEL,
@@ -826,7 +828,7 @@ export async function publishRetro(job: Job, issue: Issue, result: Result): Prom
   const filed = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
     title: `Retro: ${issue.title}`,
     body: text,
-    labels: [RETRO_LABEL],
+    labels: [RETRO_LABEL, FILED_LABEL],
   });
   // Its own call, so the plan starts from a `labeled` event the App sent.
   await rest('POST', `/repos/${job.repo}/issues/${filed.number}/labels`, {
@@ -859,7 +861,7 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
       title: item.title,
       body: `${item.body}\n\n${from}`,
       // Not `retro`: that label makes a plan triage the issue again instead of building it.
-      labels: item.elevated ? [NEEDS_ELEVATED_LABEL] : [],
+      labels: [FILED_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
     });
     await proposePriority(job.repo, filed.node_id, item.priority);
     if (item.start === 'plan')
@@ -898,12 +900,12 @@ export interface Filed {
 /**
  * The issues an earlier try filed for the card, found by the marker that ends
  * their body. Each was filed after the card, so it was updated since then too.
- * Only the App's or the operator's count: anyone may copy a marker.
+ * Only operator issues or labelled pipeline issues count: anyone may copy a marker.
  */
 async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]> {
   const since = encodeURIComponent(card.created_at);
   return (await restAll<Issue>(`/repos/${job.repo}/issues?state=all&since=${since}`)).filter(
-    (i) => (i.user?.id === PIPELINE_BOT.id || i.user?.id === OPERATOR_ID) && i.body?.includes(mark),
+    (i) => (i.user?.id === OPERATOR_ID || filedByPipeline(i)) && i.body?.includes(mark),
   );
 }
 
@@ -927,7 +929,7 @@ export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): 
         body: [subtask.body, `Part of #${card.number}.`, subtask.elevated && ELEVATED_NOTE, mark]
           .filter(Boolean)
           .join('\n\n'),
-        labels: subtask.elevated ? [NEEDS_ELEVATED_LABEL] : [],
+        labels: [FILED_LABEL, ...(subtask.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
       }));
     if (!linked.has(issue.id)) {
       // The numeric id, not the number.
@@ -956,7 +958,7 @@ export function followupLine(count: number): string {
 /**
  * Files or finds the stage's first FOLLOWUP_CAP follow-ups, puts a new one in
  * Ask, and lists them in the card's `followups:<stage>` comment. A follow-up
- * gets no label, so it starts nothing. Returns the stage comment's line.
+ * carries only `agent:filed`, which starts nothing. Returns the stage comment's line.
  */
 export async function fileFollowups(
   job: Job,
@@ -975,6 +977,7 @@ export async function fileFollowups(
       issue = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
         title: followup.title,
         body: [followup.body, from, mark].join('\n\n'),
+        labels: [FILED_LABEL],
       });
       await setStatus(job.repo, issue.node_id, 'Ask');
     }

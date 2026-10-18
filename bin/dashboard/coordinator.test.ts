@@ -7,7 +7,12 @@ import { join } from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { test } from 'vite-plus/test';
 
-import { coordinatorOptions, routeOf, turnEvents } from './coordinator.ts';
+import { ASK_LABELS, coordinatorOptions, routeOf, turnEvents } from './coordinator.ts';
+
+test('both ask modes include filing provenance and only start adds a stage label', () => {
+  assert.deepEqual(ASK_LABELS.queue, ['agent:filed', 'ready-for-agent']);
+  assert.deepEqual(ASK_LABELS.start, ['agent:filed', 'ready-for-agent', 'agent:plan']);
+});
 
 test('SDK note, tool call, tool result and answer become ordered turn events', async () => {
   // Only fields read by turnEvents; SDK transport metadata is irrelevant here.

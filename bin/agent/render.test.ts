@@ -223,6 +223,7 @@ test('legacy plans and plans with the same body visibility are approved', () => 
 test('render records whether the planner can see the body, and Job.parse keeps it', async () => {
   const out = mkdtempSync(join(tmpdir(), 'render-body-'));
   let author = OPERATOR_ID;
+  let labels: { name: string }[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
     if (new URL(url).pathname.includes('/contents/')) return new Response('{}', { status: 404 });
@@ -232,17 +233,21 @@ test('render records whether the planner can see the body, and Job.parse keeps i
         title: 'Title',
         body: 'Body',
         user: { id: author },
-        labels: [],
+        labels,
       },
     };
     return new Response(JSON.stringify(routes[new URL(url).pathname] ?? []));
   });
   try {
-    for (const [id, bodySeen] of [
-      [OPERATOR_ID, true],
-      [1, false],
+    for (const [id, names, bodySeen] of [
+      [OPERATOR_ID, [], true],
+      [1, [], false],
+      [PIPELINE_BOT.id, [], false],
+      [PIPELINE_BOT.id, ['agent:filed'], true],
+      [1, ['agent:filed'], false],
     ] as const) {
       author = id;
+      labels = names.map((name) => ({ name }));
       await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'abc', appId: APP, out });
       const json = JSON.parse(readFileSync(join(out, 'job.json'), 'utf8'));
       assert.equal(json.issue.bodySeen, bodySeen);
@@ -365,19 +370,56 @@ test('a build the App started without a Continue never renders, even with a read
   }
 });
 
-test("a retro plan's issue list holds only the operator's and the App's issues", () => {
+test("a retro plan's issue list holds only the operator's and labelled pipeline issues", () => {
   const base = { body: '', created_at: '', labels: [{ name: 'retro' }] };
-  const list = openIssues(
-    [
-      { ...base, number: 1, title: 'Mine', user: { id: OPERATOR_ID } },
-      { ...base, number: 2, title: 'App', user: { id: 1 }, performed_via_github_app: { id: APP } },
-      { ...base, number: 3, title: 'Stranger', user: { id: 1 } },
-      { ...base, number: 5, title: 'Retro', user: { id: PIPELINE_BOT.id } },
-      { ...base, number: 4, title: 'A PR', user: { id: OPERATOR_ID }, pull_request: {} },
-    ],
-    APP,
-  );
-  assert.equal(list, '- #1 Mine `retro`\n- #2 App `retro`\n- #5 Retro `retro`');
+  const list = openIssues([
+    { ...base, number: 1, title: 'Mine', user: { id: OPERATOR_ID } },
+    { ...base, number: 2, title: 'App', user: { id: 1 }, performed_via_github_app: { id: APP } },
+    { ...base, number: 3, title: 'Stranger', user: { id: 1 } },
+    { ...base, number: 5, title: 'Retro', user: { id: PIPELINE_BOT.id } },
+    {
+      ...base,
+      number: 6,
+      title: 'Filed',
+      user: { id: PIPELINE_BOT.id },
+      labels: [{ name: 'agent:filed' }],
+    },
+    { ...base, number: 7, title: 'Label copy', user: { id: 1 }, labels: [{ name: 'agent:filed' }] },
+    { ...base, number: 4, title: 'A PR', user: { id: OPERATOR_ID }, pull_request: {} },
+  ]);
+  assert.equal(list, '- #1 Mine `retro`\n- #6 Filed `agent:filed`');
+});
+
+test('issue trust requires operator authorship or a labelled pipeline issue; comment trust stays unchanged', () => {
+  const base = { number: 3, title: 'Card', body: 'Body', created_at: '', labels: [] };
+  const notes = [
+    { body: 'Bot comment', created_at: 't1', user: { id: PIPELINE_BOT.id } },
+    {
+      body: 'App comment',
+      created_at: 't2',
+      user: { id: 1 },
+      performed_via_github_app: { id: APP },
+    },
+    { body: 'Stranger comment', created_at: 't3', user: { id: 1 } },
+  ];
+  const thread = '\n\n## Comment, t1\n\nBot comment\n\n## Comment, t2\n\nApp comment';
+  for (const [user, labels, app, trusted] of [
+    [{ id: OPERATOR_ID }, [], null, true],
+    [{ id: PIPELINE_BOT.id }, [], null, false],
+    [{ id: PIPELINE_BOT.id }, [{ name: 'agent:filed' }], null, true],
+    [{ id: 1 }, [{ name: 'agent:filed' }], { id: APP }, false],
+    [null, [{ name: 'agent:filed' }], null, false],
+  ] as const) {
+    const issue = { ...base, user, labels: [...labels], performed_via_github_app: app };
+    const head = trusted
+      ? '# Card\n\nBody'
+      : '# Issue #3\n\n(Written by someone else, so left out.)';
+    assert.equal(issueSnapshot(issue, notes, APP), head + thread);
+    const parent = trusted
+      ? '# Parent story #3: Card\n\nBody'
+      : '# Parent story #3\n\n(Written by someone else, so left out.)';
+    assert.equal(issueSnapshot(issue, notes, APP, issue), `${parent}\n\n---\n\n${head}${thread}`);
+  }
 });
 
 test('only the operator dispatcher bypasses the history gate for build and elevated', async () => {
