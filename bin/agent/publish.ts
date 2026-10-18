@@ -4,8 +4,10 @@
 // review posts on that PR and marks it ready when it passes, or hands its
 // findings to a repair, which pushes a fix to the same PR. The pipeline never
 // merges. A retro files its findings as one `retro` issue for the planner, and
-// that plan's approval files the issues it kept instead of building. Only this
-// writes GitHub, and only with the App.
+// that plan's approval files the issues it kept instead of building. A ready
+// plan with subtasks files them as sub-issues, which makes the card a story,
+// and every other stage files its follow-ups as new issues (devkit#12). Only
+// this writes GitHub, and only with the App.
 
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,9 +16,14 @@ import { git, gitAsOperator } from '../git.ts';
 import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
+  ELEVATED_NOTE,
+  FILED_LABEL,
+  filedByPipeline,
+  FOLLOWUP_CAP,
   type Handoff,
   NEEDS_ELEVATED_LABEL,
   OPERATOR_COAUTHOR,
+  OPERATOR_ID,
   OPERATOR_LOGIN,
   PIPELINE_BOT,
   REPAIR_ROUNDS,
@@ -24,10 +31,12 @@ import {
   STAGE_LABELS,
   type Status,
 } from './constants.ts';
-import { graphql, removeLabel, rest, upsertStageComment } from './github.ts';
+import { graphql, removeLabel, rest, restAll, stageComment, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
+  editsWorkflows,
+  followupMarker,
   ISSUES_FILE,
   JOB_FILE,
   Job,
@@ -39,11 +48,14 @@ import {
   RESULT_FILE,
   REVIEW_FILE,
   revision,
+  STEPS_FILE,
+  subtaskMarker,
   TRANSCRIPT_FILE,
   TRIAGE_FILE,
   usage,
 } from './job.ts';
-import { type Failure, Result, Triage } from './result.ts';
+import { receiptFor, settle } from './reactions.ts';
+import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
 
 export interface PublishOptions {
   in: string;
@@ -52,17 +64,22 @@ export interface PublishOptions {
   checkout?: string;
   /** A review's repair round: 0 reviews the build, n the nth repair. */
   round?: number;
+  /** The repair-round cap; defaults to REPAIR_ROUNDS. */
+  rounds?: number;
   /** A review's round: the commit toolchain.verify passed on, or empty when it did not pass. */
   verified?: string;
 }
 
 interface Issue {
+  id: number;
   number: number;
   html_url: string;
   node_id: string;
   title: string;
   body: string | null;
   labels: { name: string }[];
+  created_at: string;
+  user: { id: number } | null;
 }
 
 interface Pull {
@@ -80,11 +97,45 @@ interface Outcome {
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
-type Verdict = { result: Result } | { stage: string; reason: string };
+export type Verdict = { result: Result } | { stage: string; reason: string };
+
+export type Step = 'ready' | 'repair' | 'rerun' | 'stop';
+export interface Gate {
+  candidate: string;
+  head: string;
+  review: Verdict;
+  verified: string;
+  round: number;
+  rounds: number;
+}
+
+/** The only decision point for a review round, bound to its exact candidate. */
+export function nextStep(gate: Gate): Step {
+  if (gate.head !== gate.candidate || ('stage' in gate.review && gate.review.stage === 'stale'))
+    return gate.round < gate.rounds ? 'rerun' : 'stop';
+  if ('stage' in gate.review) return 'stop';
+  const result = gated(gate.review.result, gate.candidate || null, gate.verified);
+  if (passes(result)) return 'ready';
+  return repairable(result) && gate.round < gate.rounds ? 'repair' : 'stop';
+}
 
 export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const file = join(out, RESULT_FILE);
-  if (!existsSync(file)) return { stage: job.role, reason: 'the agent ended without a result' };
+  if (!existsSync(file)) {
+    const stepsFile = join(out, STEPS_FILE);
+    if (existsSync(stepsFile)) {
+      const steps = JSON.parse(readFileSync(stepsFile, 'utf8')) as Record<string, string>;
+      const failed = Object.entries(steps).find(
+        ([step, outcome]) => step !== 'run' && outcome === 'failure',
+      );
+      if (failed)
+        return {
+          stage: job.role,
+          reason: `the ${job.role} job failed at ${failed[0]} before the agent started; see the job log`,
+        };
+    }
+    return { stage: job.role, reason: 'the agent ended without a result' };
+  }
   let json: unknown;
   try {
     json = JSON.parse(readFileSync(file, 'utf8'));
@@ -111,18 +162,23 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     result.job !== job.job ||
     result.role !== job.role ||
     result.inputs.issue !== job.issue.revision ||
-    (job.plan !== null && result.inputs.plan !== job.plan.revision) ||
-    (job.candidate !== null && result.inputs.candidate !== job.candidate)
+    (job.plan !== null && result.inputs.plan !== job.plan.revision)
   ) {
     return {
       stage: 'contract',
-      reason: 'the result is for a different job, issue revision, plan or candidate',
+      reason: 'the result is for a different job, issue revision or plan',
     };
   }
   if (liveRevision !== job.issue.revision) {
     return {
       stage: 'contract',
       reason: `the issue changed while the ${job.role} ran, so the result is stale`,
+    };
+  }
+  if (job.candidate !== null && result.inputs.candidate !== job.candidate) {
+    return {
+      stage: 'stale',
+      reason: `the result is for commit ${result.inputs.candidate}, not the current candidate ${job.candidate}`,
     };
   }
   if (result.status === 'complete' && job.role === 'plan' && !existsSync(join(out, PLAN_FILE))) {
@@ -146,6 +202,18 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
       reason: `a ${result.status} run set outcome \`${result.outcome}\``,
     };
   }
+  // `stale`, not `contract`: a review round reruns on it instead of stopping (nextStep).
+  if (result.status === 'stale')
+    return {
+      stage: 'stale',
+      reason: `the ${job.role} found its input superseded: ${result.summary.replace(/\.$/, '')}`,
+    };
+  // A repair's blocked or failed result still goes through the repair-map check and the loop log (#161).
+  if ((result.status === 'blocked' || result.status === 'failed') && job.role !== 'repair')
+    return {
+      stage: job.role,
+      reason: `\`${result.status}\`: ${result.summary.replace(/\.$/, '')}`,
+    };
   const candidate = join(out, CANDIDATE_FILE);
   if (
     result.outcome === 'implemented' &&
@@ -191,19 +259,29 @@ function numbered(questions: string[]): string {
   return questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
 }
 
-function planComment(job: Job, result: Result, out: string, handoff: Handoff | null): string {
+export function planComment(
+  job: Job,
+  result: Result,
+  out: string,
+  handoff: Handoff | null,
+  story: Filed[],
+): string {
   const planFile = join(out, PLAN_FILE);
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
-  const head = handoff
-    ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now**`
-    : result.status === 'complete'
-      ? `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}**`
-      : `**Plan ${result.status}**`;
+  const bodyNote = job.issue.bodySeen
+    ? ''
+    : ' (written without the issue body, which someone else wrote)';
+  const head = story.length
+    ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
+    : handoff
+      ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
+      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : editsWorkflows(plan) ? 'ready: add `agent:elevated` to run it on the WSL desk (it edits workflow files)' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
     source: job.source,
     issueRevision: job.issue.revision,
+    bodySeen: job.issue.bodySeen,
     checks: Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
     critique: result.critique,
     triage: result.triage,
@@ -213,6 +291,8 @@ function planComment(job: Job, result: Result, out: string, handoff: Handoff | n
     head,
     result.summary,
     result.priority && `**Priority:** ${result.priority}, unless the card already has one.`,
+    story.length &&
+      `## Subtasks\n\n${story.map((s) => `- #${s.number} ${s.title}${s.elevated ? ', needs the WSL desk' : ''}`).join('\n')}`,
     numbered(result.questions),
     `${PLAN_START}\n${plan}\n${PLAN_END}`,
     `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
@@ -226,7 +306,9 @@ function buildComment(job: Job, result: Result, pull: Pull | null): string {
     job.role === 'elevated' ? 'Elevated run' : job.role === 'repair' ? 'Repair' : 'Build';
   const link = pull && `[#${pull.number}](${pull.html_url})`;
   const head = !link
-    ? `**${stage} ${result.status}**`
+    ? result.status !== 'complete'
+      ? `**${stage} ${result.status}**`
+      : `**${stage}: ${result.outcome === 'needs-input' ? 'needs your input' : result.outcome}**`
     : job.role === 'repair'
       ? `**Repair: pushed a fix to ${link}; reviewing it again**`
       : `**${stage}: ${link} is ready for review**`;
@@ -344,20 +426,204 @@ function reviewText(result: Result): string {
     .join('\n\n');
 }
 
-async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
-  if ('result' in v) {
-    const pull = await openPull(job, branchOf(job));
-    if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
-    else if (pull.head.sha !== job.candidate)
-      v = { stage: 'contract', reason: 'the PR has a newer commit than the one reviewed' };
-    else {
-      const result = gated(v.result, job.candidate, options.verified ?? '');
-      // The next round's repair answers this, CI's finding included; result.json stays the reviewer's own.
-      writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
-      return postReview(job, result, pull, options.round ?? 0);
+type Finding = NonNullable<Result['findings']>[number];
+
+/** Git quotes control characters and encodes non-ASCII bytes as octal escapes. */
+function patchPath(name: string): string {
+  if (!name.startsWith('"')) return name;
+  const escapes: Record<string, string> = {
+    a: '\x07',
+    b: '\b',
+    f: '\f',
+    n: '\n',
+    r: '\r',
+    t: '\t',
+    v: '\v',
+  };
+  return Buffer.concat(
+    [...name.slice(1, -1).matchAll(/\\([0-7]{3}|.)|([^\\]+)/g)].map(([, escaped, plain]) => {
+      if (plain !== undefined) return Buffer.from(plain);
+      return /^[0-7]{3}$/.test(escaped!)
+        ? Buffer.from([Number.parseInt(escaped!, 8)])
+        : Buffer.from(escapes[escaped!] ?? escaped!);
+    }),
+  ).toString('utf8');
+}
+
+/** Only added and context lines on the new side can receive GitHub comments. */
+export function reviewComments(
+  patch: string,
+  findings: Finding[],
+): {
+  inline: { path: string; line: number; side: 'RIGHT'; body: string }[];
+  body: Finding[];
+} {
+  const lines = new Set<string>();
+  let path = '';
+  let right = 0;
+  let remaining = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      path = '';
+      remaining = 0;
+    } else if (remaining > 0) {
+      if (line.startsWith('+') || line.startsWith(' ')) {
+        lines.add(`${path}:${right++}`);
+        remaining--;
+      }
+    } else if (line.startsWith('+++ ')) {
+      const name = line.slice(4).split('\t')[0]!;
+      path = patchPath(name).replace(/^b\//, '');
+    } else {
+      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (hunk) {
+        right = Number(hunk[1]);
+        remaining = Number(hunk[2] ?? 1);
+      }
     }
   }
-  return { body: stopped(job.role, v), status: 'Needs you', stopped: true };
+  const inline: ReturnType<typeof reviewComments>['inline'] = [];
+  const body: Finding[] = [];
+  for (const f of findings) {
+    if (f.path && f.line !== null && lines.has(`${f.path}:${f.line}`))
+      inline.push({
+        path: f.path,
+        line: f.line,
+        side: 'RIGHT',
+        body: `**${f.id}** ${f.blocking ? 'blocking' : 'advisory'} · ${f.axis}\n\n${f.scenario} ${f.impact}\n\nEvidence: ${f.evidence}\n\nFix: ${f.fix}`,
+      });
+    else body.push(f);
+  }
+  return { inline, body };
+}
+
+export function repairMap(review: Result, repair: Result): string | null {
+  const refs = new Set((repair.changes ?? []).map((change) => change.ref));
+  const missing = (review.findings ?? []).filter((f) => !refs.has(f.id)).map((f) => f.id);
+  const unsupported = (repair.changes ?? [])
+    .filter((c) => c.response !== null && !c.evidence?.trim())
+    .map((c) => c.ref);
+  const errors = [
+    missing.length && `repair map is missing refs: ${missing.join(', ')}`,
+    unsupported.length && `disputed refs ${unsupported.join(', ')} need non-empty evidence`,
+  ].filter(Boolean);
+  return errors.length ? errors.join('; ') : null;
+}
+
+export interface LoopEntry {
+  round: number;
+  candidate: string;
+  ci: 'green' | 'red' | null;
+  review: string | null;
+  open: string[];
+  hypotheses: string[];
+  step: Step | null;
+}
+export interface LoopState {
+  rounds: number;
+  failures: number;
+  entries: LoopEntry[];
+}
+
+export function loopComment(state: LoopState): string {
+  const round = state.entries.at(-1)?.round ?? 0;
+  return [
+    marker('loop'),
+    `**Round ${round} of ${state.rounds} · ${state.failures} failures**`,
+    ...state.entries.map(
+      (e) =>
+        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
+    ),
+    `<!-- devkit:loop-state ${JSON.stringify(state).replace(/-->/g, '--\\u003e')} -->`,
+  ].join('\n\n');
+}
+
+export function readLoopState(body: string | null): LoopState {
+  const json = [...(body ?? '').matchAll(/^<!-- devkit:loop-state (.*) -->$/gm)].at(-1)?.[1];
+  return json
+    ? (JSON.parse(json) as LoopState)
+    : { rounds: REPAIR_ROUNDS, failures: 0, entries: [] };
+}
+
+async function updateLoop(
+  job: Job,
+  pull: Pull,
+  options: PublishOptions,
+  entry: Partial<LoopEntry>,
+) {
+  const round = options.round ?? 0;
+  const existing = await stageComment(job.repo, pull.number, 'loop');
+  // Round zero starts a new build on a PR that may already have a log.
+  const state = readLoopState(round === 0 ? null : (existing?.body ?? null));
+  state.rounds = options.rounds ?? REPAIR_ROUNDS;
+  const previous = state.entries.find((e) => e.round === round);
+  const current: LoopEntry = {
+    round,
+    candidate: job.candidate ?? '',
+    ci: null,
+    review: null,
+    open: state.entries.at(-1)?.open ?? [],
+    hypotheses: [],
+    step: null,
+    ...previous,
+    ...entry,
+  };
+  state.entries = [...state.entries.filter((e) => e.round !== round), current].sort(
+    (a, b) => a.round - b.round,
+  );
+  state.failures = state.entries.filter((e) => e.step !== 'ready').length;
+  return upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
+}
+
+export function needsYouText(result: Result, logUrl: string): string {
+  const ids = (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id);
+  return needsYouLinks(ids, logUrl);
+}
+
+function needsYouLinks(ids: string[], logUrl: string): string {
+  return `Open blocking findings: ${ids.join(', ') || 'none'}.\n\n[Loop log](${logUrl})`;
+}
+
+async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
+  const pull = await openPull(job, branchOf(job));
+  if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
+  else if (pull.head.sha !== job.candidate)
+    v = { stage: 'stale', reason: 'the PR has a newer commit than the one reviewed' };
+  const step = nextStep({
+    candidate: job.candidate ?? '',
+    head: pull?.head.sha ?? job.candidate ?? '',
+    review: v,
+    verified: options.verified ?? '',
+    round: options.round ?? 0,
+    rounds: options.rounds ?? REPAIR_ROUNDS,
+  });
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `next=${step}\n`);
+    if (step === 'repair') appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
+  }
+  const result = 'result' in v ? gated(v.result, job.candidate, options.verified ?? '') : null;
+  const log =
+    pull &&
+    (await updateLoop(job, pull, options, {
+      ci: options.verified === job.candidate ? 'green' : 'red',
+      review: result?.outcome ?? ('stage' in v ? v.stage : null),
+      ...(result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
+      step,
+    }));
+  if ('stage' in v)
+    return {
+      body: [
+        stopped(job.role, v),
+        log && needsYouLinks(readLoopState(log.body).entries.at(-1)?.open ?? [], log.html_url),
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      status: 'Needs you',
+      stopped: true,
+    };
+  // The repair answers the gated review; result.json stays the reviewer's own.
+  writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
+  return postReview(job, result!, pull!, options, step, log!.html_url);
 }
 
 /** The finding a review gets when CI did not pass on the commit it reviewed. */
@@ -377,7 +643,7 @@ export function gated(result: Result, candidate: string | null, verified: string
     criterion: null,
     path: null,
     line: null,
-    evidence: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    evidence: runUrl(),
     scenario: `toolchain.verify did not pass on ${candidate}.`,
     impact: 'CI is red on this commit, so it is not safe to merge.',
     fix: 'Run the failing check from the run log locally and make it pass.',
@@ -402,16 +668,28 @@ export function repairable(result: Result): boolean {
  * Posts the review on the PR. A pass marks it ready for the operator to merge;
  * a repairable review with rounds left sets the `repair` output for the next round.
  */
-async function postReview(job: Job, result: Result, pull: Pull, round: number): Promise<Outcome> {
+async function postReview(
+  job: Job,
+  result: Result,
+  pull: Pull,
+  options: PublishOptions,
+  step: Step,
+  logUrl: string,
+): Promise<Outcome> {
+  const round = options.round ?? 0;
+  const rounds = options.rounds ?? REPAIR_ROUNDS;
+  const comments = reviewComments(
+    readFileSync(join(options.in, CANDIDATE_FILE), 'utf8'),
+    result.findings ?? [],
+  );
   await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/reviews`, {
     commit_id: pull.head.sha,
-    body: reviewText(result),
+    body: reviewText({ ...result, findings: comments.body }),
     event: 'COMMENT',
+    comments: comments.inline,
   });
-  const ok = passes(result);
-  const repair = !ok && round < REPAIR_ROUNDS && repairable(result);
-  if (repair && process.env.GITHUB_OUTPUT)
-    appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
+  const ok = step === 'ready';
+  const repair = step === 'repair';
   if (ok)
     await graphql(
       `
@@ -427,10 +705,16 @@ async function postReview(job: Job, result: Result, pull: Pull, round: number): 
   const head = ok
     ? `**Review: passed. ${link} is ready to merge**`
     : repair
-      ? `**Review: ${link} needs changes. Codex is fixing them (round ${round + 1} of ${REPAIR_ROUNDS})**`
+      ? `**Review: ${link} needs changes. Codex is fixing them (round ${round + 1} of ${rounds})**`
       : `**Review: ${link} needs your call${round > 0 ? ` after ${round} repair round${round > 1 ? 's' : ''}` : ''}**`;
   return {
-    body: [marker('review'), head, result.summary, numbered(result.questions)]
+    body: [
+      marker('review'),
+      head,
+      result.summary,
+      numbered(result.questions),
+      step === 'stop' && needsYouText(result, logUrl),
+    ]
       .filter(Boolean)
       .join('\n\n'),
     status: ok ? 'Ready' : repair ? 'Building' : 'Needs you',
@@ -447,16 +731,30 @@ export function readyToBuild(result: Result): boolean {
 
 async function publishBuildOrPlan(
   job: Job,
+  issue: Issue,
   v: Verdict,
   out: string,
   checkout: string | undefined,
   handoff: Handoff | null,
+  subtasks: Subtask[],
+  options: PublishOptions,
 ): Promise<Outcome> {
   let pull: Pull | null = null;
+  let candidate = '';
+  let story: Filed[] = [];
+  if ('result' in v && subtasks.length) {
+    try {
+      story = await fileSubtasks(job, issue, subtasks);
+    } catch (error) {
+      console.error(error);
+      v = { stage: 'publish', reason: 'filing the subtasks failed; see the run log' };
+    }
+  }
   if ('result' in v && v.result.outcome === 'implemented') {
     try {
       if (!checkout) throw new Error('publish needs --checkout for a build.');
       const { branch, commit } = pushCandidate(job, checkout, join(out, CANDIDATE_FILE));
+      candidate = commit;
       // A repair keeps the build's PR text; its summary goes on the issue comment.
       pull =
         job.role === 'repair'
@@ -473,13 +771,29 @@ async function publishBuildOrPlan(
       };
     }
   }
+  if (job.role === 'repair') {
+    const logPull = pull ?? (await openPull(job, branchOf(job)));
+    if (logPull)
+      await updateLoop(job, logPull, options, {
+        candidate: candidate || job.source,
+        ...('result' in v
+          ? { hypotheses: v.result.hypotheses ?? [] }
+          : { step: 'stop' as const, review: v.stage }),
+      });
+  }
   // A repair's card stays in Building until its review lands, as does a plan handing off.
   const status =
-    handoff || (pull && job.role === 'repair') ? 'Building' : pull ? 'Ready' : 'Needs you';
+    'stage' in v
+      ? 'Needs you'
+      : handoff || (pull && job.role === 'repair' && candidate)
+        ? 'Building'
+        : pull && job.role !== 'repair'
+          ? 'Ready'
+          : 'Needs you';
   if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
     job.role === 'plan'
-      ? planComment(job, v.result, out, handoff)
+      ? planComment(job, v.result, out, handoff, story)
       : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
@@ -505,8 +819,7 @@ export function retroText(result: Result, runUrl: string, source: number): strin
  * only comments, so retros can't loop. A failed retro posts nothing.
  */
 export async function publishRetro(job: Job, issue: Issue, result: Result): Promise<void> {
-  const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-  const text = retroText(result, runUrl, issue.number);
+  const text = retroText(result, runUrl(), issue.number);
   const comments = `/repos/${job.repo}/issues/${issue.number}/comments`;
   if (!result.followups?.length || issue.labels.some((l) => l.name === RETRO_LABEL)) {
     await rest('POST', comments, { body: `${marker('retro')}\n\n${text}` });
@@ -515,14 +828,14 @@ export async function publishRetro(job: Job, issue: Issue, result: Result): Prom
   const filed = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
     title: `Retro: ${issue.title}`,
     body: text,
-    labels: [RETRO_LABEL],
+    labels: [RETRO_LABEL, FILED_LABEL],
   });
   // Its own call, so the plan starts from a `labeled` event the App sent.
   await rest('POST', `/repos/${job.repo}/issues/${filed.number}/labels`, {
     labels: [STAGE_LABELS.plan],
   });
   await rest('POST', comments, {
-    body: `${marker('retro')}\n\n**Retro on [this run](${runUrl})** found ${result.followups.length} problem${result.followups.length > 1 ? 's' : ''}. They are in #${filed.number}, which is planning now.`,
+    body: `${marker('retro')}\n\n**Retro on [this run](${runUrl()})** found ${result.followups.length} problem${result.followups.length > 1 ? 's' : ''}. They are in #${filed.number}, which is planning now.`,
   });
 }
 
@@ -548,7 +861,7 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
       title: item.title,
       body: `${item.body}\n\n${from}`,
       // Not `retro`: that label makes a plan triage the issue again instead of building it.
-      labels: item.elevated ? [NEEDS_ELEVATED_LABEL] : [],
+      labels: [FILED_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
     });
     await proposePriority(job.repo, filed.node_id, item.priority);
     if (item.start === 'plan')
@@ -572,6 +885,114 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
     .join('\n\n');
 }
 
+/** This pipeline run's page. */
+function runUrl(): string {
+  return `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+}
+
+/** An issue a stage filed or found for the card. */
+export interface Filed {
+  number: number;
+  title: string;
+  elevated: boolean;
+}
+
+/**
+ * The issues an earlier try filed for the card, found by the marker that ends
+ * their body. Each was filed after the card, so it was updated since then too.
+ * Only operator issues or labelled pipeline issues count: anyone may copy a marker.
+ */
+async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]> {
+  const since = encodeURIComponent(card.created_at);
+  return (await restAll<Issue>(`/repos/${job.repo}/issues?state=all&since=${since}`)).filter(
+    (i) => (i.user?.id === OPERATOR_ID || filedByPipeline(i)) && i.body?.includes(mark),
+  );
+}
+
+/**
+ * Files or finds each subtask, links it as a native sub-issue of the card, and
+ * puts a new one in Ask. A retry only files and links what is missing, so it
+ * never moves a subtask that has started back to Ask. An elevated subtask asks
+ * for the WSL desk; the operator still adds `agent:elevated` himself.
+ */
+export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): Promise<Filed[]> {
+  const mark = subtaskMarker(card.number);
+  const earlier = await filedBefore(job, card, mark);
+  const path = `/repos/${job.repo}/issues/${card.number}/sub_issues`;
+  const linked = new Set((await restAll<{ id: number }>(path)).map((i) => i.id));
+  const filed: Filed[] = [];
+  for (const subtask of subtasks) {
+    const issue =
+      earlier.find((i) => i.title === subtask.title) ??
+      (await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
+        title: subtask.title,
+        body: [subtask.body, `Part of #${card.number}.`, subtask.elevated && ELEVATED_NOTE, mark]
+          .filter(Boolean)
+          .join('\n\n'),
+        labels: [FILED_LABEL, ...(subtask.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
+      }));
+    if (!linked.has(issue.id)) {
+      // The numeric id, not the number.
+      await rest('POST', path, { sub_issue_id: issue.id });
+      await setStatus(job.repo, issue.node_id, 'Ask');
+    }
+    filed.push({ number: issue.number, title: issue.title, elevated: subtask.elevated });
+  }
+  return filed;
+}
+
+/** What the stage comment says about its follow-ups, drops included, or '' when there are none. */
+export function followupLine(count: number): string {
+  if (count === 0) return '';
+  const filed = Math.min(count, FOLLOWUP_CAP);
+  const dropped = count - filed;
+  return [
+    `Filed ${filed} follow-up${filed > 1 ? 's' : ''}, listed below.`,
+    dropped > 0 &&
+      `${dropped} more ${dropped > 1 ? 'were' : 'was'} dropped: the cap is ${FOLLOWUP_CAP} per stage.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * Files or finds the stage's first FOLLOWUP_CAP follow-ups, puts a new one in
+ * Ask, and lists them in the card's `followups:<stage>` comment. A follow-up
+ * carries only `agent:filed`, which starts nothing. Returns the stage comment's line.
+ */
+export async function fileFollowups(
+  job: Job,
+  card: Issue,
+  stage: string,
+  followups: Followup[],
+): Promise<string> {
+  if (!followups.length) return '';
+  const mark = followupMarker(card.number, stage);
+  const earlier = await filedBefore(job, card, mark);
+  const from = `From #${card.number}'s \`${stage}\` stage ([run](${runUrl()})).`;
+  const lines: string[] = [];
+  for (const followup of followups.slice(0, FOLLOWUP_CAP)) {
+    let issue = earlier.find((i) => i.title === followup.title);
+    if (!issue) {
+      issue = await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
+        title: followup.title,
+        body: [followup.body, from, mark].join('\n\n'),
+        labels: [FILED_LABEL],
+      });
+      await setStatus(job.repo, issue.node_id, 'Ask');
+    }
+    lines.push(`- #${issue.number} ${issue.title}`);
+  }
+  const role = `followups:${stage}`;
+  await upsertStageComment(
+    job.repo,
+    card.number,
+    role,
+    [marker(role), `**Follow-ups from the \`${stage}\` stage**`, lines.join('\n')].join('\n\n'),
+  );
+  return followupLine(followups.length);
+}
+
 /** The stage's name in the run summary: its role, and its round when it repeats. */
 export function stageName(role: string, round = 0): string {
   return round > 0 ? `${role}.r${round}` : role;
@@ -590,7 +1011,8 @@ function summarizeUsage(stage: string, out: string): void {
 
 export async function publish(options: PublishOptions): Promise<void> {
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
-  summarizeUsage(stageName(job.role, options.round), options.out);
+  const stage = stageName(job.role, options.round);
+  summarizeUsage(stage, options.out);
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   // An approved retro triage has no build to check: render wrote it from the plan the gate approved.
@@ -600,23 +1022,44 @@ export async function publish(options: PublishOptions): Promise<void> {
     await upsertStageComment(job.repo, job.issue.number, job.role, body);
     await removeLabel(job.repo, job.issue.number, STAGE_LABELS.build);
     await setStatus(job.repo, issue.node_id, 'Done');
+    await settle(job.repo, job.issue.number, 'done');
     return;
   }
-  const v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  let v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  const reviewFile = join(options.in, REVIEW_FILE);
+  if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {
+    const reason = repairMap(Result.parse(JSON.parse(readFileSync(reviewFile, 'utf8'))), v.result);
+    if (reason)
+      v = { stage: 'validate', reason: `${reason}\n\n${v.result.summary.replace(/\.$/, '')}` };
+  }
   if (job.role === 'retro') {
     if ('stage' in v) throw new Error(`Retro stopped at ${v.stage}: ${v.reason}.`);
     await publishRetro(job, issue, v.result);
     return;
   }
-  // A ready plan a dashboard Continue started goes straight to its build (devkit#99).
+  const ready = job.role === 'plan' && 'result' in v && readyToBuild(v.result);
+  // A ready plan's subtasks make the card a story; a retro issue's plan triages instead.
+  const subtasks =
+    ready && 'result' in v && !job.artifacts.includes(ISSUES_FILE) ? (v.result.subtasks ?? []) : [];
+  // A ready plan a dashboard Continue started goes straight to its build (devkit#99), unless it is a story.
   const handoff =
-    job.role === 'plan' && 'result' in v && readyToBuild(v.result)
-      ? armedContinue(await readSteps(job.repo, job.issue.number))
-      : null;
-  const { body, status, stopped } =
+    ready && !subtasks.length ? armedContinue(await readSteps(job.repo, job.issue.number)) : null;
+  const outcome =
     job.role === 'review'
       ? await publishReview(job, v, options)
-      : await publishBuildOrPlan(job, v, options.out, options.checkout, handoff);
+      : await publishBuildOrPlan(
+          job,
+          issue,
+          v,
+          options.out,
+          options.checkout,
+          handoff,
+          subtasks,
+          options,
+        );
+  const { status, stopped } = outcome;
+  const followups = 'result' in v ? (v.result.followups ?? []) : [];
+  const body = [outcome.body, followupLine(followups.length)].filter(Boolean).join('\n\n');
 
   // A build's Ready is brief: its own review follows in the same run and has the last word.
   const waiting = status === 'Needs you' || (status === 'Ready' && job.role !== 'build');
@@ -633,6 +1076,16 @@ export async function publish(options: PublishOptions): Promise<void> {
   await setStatus(job.repo, issue.node_id, status);
   if ('result' in v && v.result.priority)
     await proposePriority(job.repo, issue.node_id, v.result.priority);
+  const receipt = receiptFor(job.role, status, stopped, 'result' in v && readyToBuild(v.result));
+  if (receipt) await settle(job.repo, job.issue.number, receipt);
+  // Last and best effort: a failed filing must not skip the review or the retro; a retry files only what is missing.
+  try {
+    await fileFollowups(job, issue, stage, followups);
+  } catch (error) {
+    console.log(
+      `::warning::filing follow-ups failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
   // A plan that asks questions is the normal flow, not trouble.

@@ -27,6 +27,10 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
   // Only roles that write docs or instructions get Simple English.
   assert.match(instructions('build', ROLES.build, cwd), /# Simple English/);
   assert.doesNotMatch(instructions('review', ROLES.review, cwd), /# Simple English/);
+  for (const role of ['plan', 'build', 'repair', 'review', 'elevated', 'retro'] as const)
+    assert.match(instructions(role, ROLES[role], cwd), /# Plain English/);
+  for (const role of ['build', 'repair', 'elevated'] as const)
+    assert.match(instructions(role, ROLES[role], cwd), /# Simple English/);
 
   repoSkill(cwd, 'infra', 'elevated', 'INFRA SKILL');
   assert.match(instructions('elevated', ROLES.elevated, cwd), /INFRA SKILL/);
@@ -52,7 +56,7 @@ test('the envelope written for a run with no result passes the schema publish ch
     role: 'build',
     objective: '',
     repo: 'o/r',
-    issue: { number: 1, title: 't', revision: 'rev' },
+    issue: { number: 1, title: 't', revision: 'rev', bodySeen: true },
     plan: { revision: 'plan', criteria: [] },
     source: 'sha',
     base: 'sha',

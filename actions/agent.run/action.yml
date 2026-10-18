@@ -5,7 +5,9 @@ description: 'Run one agent role on the job file the controller rendered, and up
 # repo.pack in a job that holds the App token) into `repo/`, and checks devkit
 # out into `devkit/`, so the agent's working tree holds only the target repo. The
 # agent starts under `env -i`: with a shell it could otherwise read the job's
-# whole env from /proc.
+# whole env from /proc. Its only GitHub access is GH_TOKEN, the read token that
+# actions/agent.token sealed in the job before this one.
+# MCP configs and credential requests come from tools.json in the trusted job dir.
 
 inputs:
   role:
@@ -23,8 +25,12 @@ inputs:
     description: 'The commit the pack holds, from the job contract: the change is diffed against it.'
     required: true
   token:
-    description: "AGENTS_SECRETS_TOKEN. Claude runs fetch their OAuth token with it; Codex uses the runner login. Empty: Claude uses the runner user's own login (the WSL desk)."
+    description: "AGENTS_SECRETS_TOKEN. Fetches Claude's OAuth token and the role's MCP credentials; Codex uses the runner login. Empty: no credentials are fetched, Claude uses the runner login, and credentialed MCP servers fail for Claude and Codex. Stub needs no credentials."
     required: true
+  readToken:
+    description: 'The sealed read token from actions/agent.token, opened with `token` and passed to the agent as GH_TOKEN. Empty: no GH_TOKEN (the WSL desk).'
+    required: false
+    default: ''
   devkitRef:
     description: 'The devkit ref to run.'
     required: false
@@ -37,30 +43,35 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/download-artifact@v8
+    - id: pack
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.prefix }}-repo
         path: ${{ runner.temp }}/pack
 
     # A self-hosted runner keeps the workspace between jobs.
-    - shell: bash
+    - id: unpack
+      shell: bash
       run: |
         rm -rf repo && mkdir repo
         tar -xzf "$RUNNER_TEMP/pack/repo.tgz" -C repo
         rm -rf "$RUNNER_TEMP/pack"
 
-    - uses: actions/checkout@v6
+    - id: checkout
+      uses: actions/checkout@v6
       with:
         repository: gingur-root/devkit
         ref: ${{ inputs.devkitRef }}
         path: devkit
         persist-credentials: false
 
-    - uses: gingur-root/devkit/actions/toolchain.setup@main
+    - id: toolchain
+      uses: gingur-root/devkit/actions/toolchain.setup@main
       with:
         cwd: devkit
 
-    - uses: actions/download-artifact@v8
+    - id: jobIn
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.prefix }}-in
         path: ${{ runner.temp }}/agent/in
@@ -75,20 +86,55 @@ runs:
         secrets: |
           2cf223b6-0ed8-415b-a651-b4e2000da674 > CLAUDE_CODE_OAUTH_TOKEN
 
+    - id: tools
+      shell: bash
+      working-directory: devkit
+      env:
+        ROLE: ${{ inputs.role }}
+      run: |
+        requests=$(pnpm --silent agent tools --role "$ROLE" --in "$RUNNER_TEMP/agent/in" --secrets)
+        {
+          echo 'secrets<<DEVKIT_MCP_REQUESTS'
+          printf '%s\n' "$requests"
+          echo 'DEVKIT_MCP_REQUESTS'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: mcp
+      if: ${{ inputs.token != '' && inputs.executor != 'stub' && steps.tools.outputs.secrets != '' }}
+      uses: gingur-root/devkit/actions/secrets.fetch@main
+      with:
+        token: ${{ inputs.token }}
+        setEnv: 'false'
+        secrets: ${{ steps.tools.outputs.secrets }}
+
     - name: Run
+      id: run
       shell: bash
       working-directory: devkit
       env:
         CLAUDE_CODE_OAUTH_TOKEN: ${{ steps.secrets.outputs.json && fromJSON(steps.secrets.outputs.json).CLAUDE_CODE_OAUTH_TOKEN }}
+        DEVKIT_MCP_SECRETS: ${{ steps.mcp.outputs.json }}
         ROLE: ${{ inputs.role }}
         EXECUTOR: ${{ inputs.executor }}
         FIXTURE: ${{ inputs.fixture }}
+        READ_TOKEN: ${{ inputs.readToken }}
+        KEY: ${{ inputs.token }}
       run: |
         out="$RUNNER_TEMP/agent/out"
         mkdir -p "$out"
+        # Opened here, so the plain token never reaches GITHUB_ENV, an output or an artifact.
+        # Never the runner's own GH_TOKEN.
+        opened=''
+        if [ -n "$READ_TOKEN" ]; then
+          opened=$(printf '%s' "$READ_TOKEN" | openssl enc -d -aes-256-cbc -pbkdf2 -a -A -pass env:KEY)
+          [ -n "$opened" ]
+          echo "::add-mask::$opened"
+        fi
         exec env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" \
           ${CODEX_HOME:+CODEX_HOME="$CODEX_HOME"} \
           ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+          ${opened:+GH_TOKEN="$opened"} \
+          ${DEVKIT_MCP_SECRETS:+DEVKIT_MCP_SECRETS="$DEVKIT_MCP_SECRETS"} \
           DEVKIT_STUB_FIXTURE="$FIXTURE" \
           pnpm agent run --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} \
             --cwd "$GITHUB_WORKSPACE/repo" --in "$RUNNER_TEMP/agent/in" --out "$out"
@@ -112,6 +158,26 @@ runs:
         # (an agent's `fmt:check.log` lost review-0-out, devkit#150).
         find "$out" -depth -name '*[":<>|*?]*' -exec sh -c \
           'for f; do mv "$f" "$(dirname "$f")/$(basename "$f" | tr "\":<>|*?" _______)"; done' sh {} +
+
+    # The filename matches STEPS_FILE in bin/agent/job.ts.
+    - name: Steps
+      if: ${{ always() }}
+      shell: bash
+      env:
+        PACK: ${{ steps.pack.outcome }}
+        UNPACK: ${{ steps.unpack.outcome }}
+        CHECKOUT: ${{ steps.checkout.outcome }}
+        TOOLCHAIN: ${{ steps.toolchain.outcome }}
+        JOB_IN: ${{ steps.jobIn.outcome }}
+        SECRETS: ${{ steps.secrets.outcome }}
+        TOOLS: ${{ steps.tools.outcome }}
+        MCP: ${{ steps.mcp.outcome }}
+        RUN: ${{ steps.run.outcome }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/agent/out"
+        printf '{"pack":"%s","unpack":"%s","checkout":"%s","toolchain":"%s","jobIn":"%s","secrets":"%s","tools":"%s","mcp":"%s","run":"%s"}\n' \
+          "$PACK" "$UNPACK" "$CHECKOUT" "$TOOLCHAIN" "$JOB_IN" "$SECRETS" "$TOOLS" "$MCP" "$RUN" \
+          > "$RUNNER_TEMP/agent/out/steps.json"
 
     - if: ${{ always() }}
       uses: actions/upload-artifact@v7

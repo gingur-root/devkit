@@ -25,7 +25,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit` or `red`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story` or `followups`.'
         type: string
         required: false
         default: 'ready'
@@ -47,6 +47,11 @@ on:
         description: 'Round 0: the commit to review. Later rounds: the reviewed commit to repair.'
         type: string
         required: true
+      readToken:
+        description: "Round 0: the reviewer's sealed read token (actions/agent.token). Later rounds: the repair's."
+        type: string
+        required: false
+        default: ''
       repo:
         description: 'The target repo in gingur-root, when the central caller (gingur-root/pipeline) dispatched the run. Empty: the calling repo.'
         type: string
@@ -67,6 +72,9 @@ on:
       retro:
         description: '`true` when this round left the card in Needs you.'
         value: ${{ jobs.verdict.outputs.retro }}
+      readToken:
+        description: "The next round's sealed read token for its repair, when `repair` is `true`."
+        value: ${{ jobs.verdict.outputs.readToken }}
 
 permissions: {}
 
@@ -86,6 +94,7 @@ jobs:
           fixture: ${{ inputs.fixture }}
           source: ${{ inputs.candidate }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          readToken: ${{ inputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
   push:
@@ -95,6 +104,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       candidate: ${{ steps.publish.outputs.candidate }}
+      readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
@@ -179,6 +189,15 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           name: review-${{ inputs.round }}-repo
 
+      # The reviewer's read token.
+      - id: read
+        if: steps.publish.outputs.candidate != ''
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+
   review:
     name: Review
     needs: push
@@ -196,6 +215,8 @@ jobs:
           fixture: ${{ inputs.fixture }}
           source: ${{ needs.push.outputs.candidate || inputs.candidate }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          # Round 0's comes from the caller's publish, a repair round's from push.
+          readToken: ${{ inputs.round == 0 && inputs.readToken || needs.push.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
   # CI on the same commit the review reads (devkit#9). A repo's own checks are
@@ -224,6 +245,7 @@ jobs:
       repair: ${{ steps.publish.outputs.repair }}
       retro: ${{ steps.publish.outputs.retro }}
       candidate: ${{ steps.next.outputs.candidate }}
+      readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
@@ -308,3 +330,12 @@ jobs:
           ref: ${{ steps.next.outputs.candidate }}
           token: ${{ steps.app.outputs.token }}
           name: ${{ steps.next.outputs.pack }}
+
+      # The next round's repair read token.
+      - id: read
+        if: steps.publish.outputs.repair == 'true'
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}

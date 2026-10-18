@@ -1,8 +1,12 @@
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { CLAUDE_SUBSCRIPTION_SOURCES, WEB_MCP_SERVERS } from '../constants.ts';
+import { CLAUDE_SUBSCRIPTION_SOURCES } from '../constants.ts';
 import type { Failure } from '../result.ts';
 import type { Role } from '../roles.ts';
+import { toolsEnv } from '../tools.ts';
 import {
   agentEnv,
   resolveExecutable,
@@ -21,6 +25,7 @@ export function claudeOptions(
     instructions: string;
     dirs?: string[];
     schema?: Record<string, unknown>;
+    mcpConfig?: string;
   },
 ): Options {
   return {
@@ -30,15 +35,12 @@ export function claudeOptions(
     env: ctx.env,
     model: role.model,
     effort: role.effort,
+    maxTurns: role.maxTurns,
     // No user, project or local settings, so no CLAUDE.md, hooks, plugins or
     // MCP servers from disk: only the role's own.
     settingSources: [],
     strictMcpConfig: true,
-    mcpServers: role.web
-      ? Object.fromEntries(
-          Object.entries(WEB_MCP_SERVERS).map(([name, url]) => [name, { type: 'http', url }]),
-        )
-      : {},
+    extraArgs: ctx.mcpConfig ? { 'mcp-config': ctx.mcpConfig } : undefined,
     // The allowlist is what actually removes subagents (Task), skills (Skill)
     // and the scheduling and messaging tools: an absent tool cannot be called.
     tools: [...role.tools, ...(role.web ? ['WebSearch', 'WebFetch'] : [])],
@@ -56,6 +58,7 @@ export function claudeOptions(
 export function assertClaudeInit(
   init: { apiKeySource: string; tools: string[] },
   options: Options,
+  servers: readonly string[],
 ): void {
   if (!(CLAUDE_SUBSCRIPTION_SOURCES as readonly string[]).includes(init.apiKeySource)) {
     throw new Error(`Claude authenticated with ${init.apiKeySource}, not the subscription token.`);
@@ -63,7 +66,6 @@ export function assertClaudeInit(
   const allowed = new Set(Array.isArray(options.tools) ? options.tools : []);
   // The SDK's own tool for returning the result when an output schema is set.
   if (options.outputFormat) allowed.add('StructuredOutput');
-  const servers = Object.keys(options.mcpServers ?? {});
   const extra = init.tools.filter(
     (tool) => !allowed.has(tool) && !servers.some((name) => tool.startsWith(`mcp__${name}__`)),
   );
@@ -100,70 +102,81 @@ export function claudeFailure(message: SDKMessage): Failure | undefined {
 export async function runClaude(input: RunInput): Promise<RunOutput> {
   const { role, prompt, emit } = input;
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
-  const env = agentEnv('claude', process.env);
-  const options = claudeOptions(role, {
-    cwd: input.cwd,
-    env,
-    executable: resolveExecutable('claude', env.PATH),
-    instructions: input.instructions,
-    dirs: stageDirs(input),
-    schema: input.schema,
-  });
-  const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), role.timeoutMinutes * 60_000);
-  let ok = false;
-  let result: unknown;
-  let failure: Failure | undefined;
-  let error: string | undefined;
+  const env = { ...agentEnv('claude', process.env), ...toolsEnv(input.tools, process.env) };
+  const executable = resolveExecutable('claude', env.PATH);
+  const directory = mkdtempSync(join(tmpdir(), 'devkit-mcp-'));
   try {
-    for await (const message of query({ prompt, options: { ...options, abortController } })) {
-      const found = claudeFailure(message);
-      // The rate-limit event wins, since it alone has the reset time.
-      if (found && (!failure || message.type === 'rate_limit_event')) failure = found;
-      if (message.type === 'system' && message.subtype === 'init') {
-        // Before the first model call completes, stop if anything unexpected loaded.
-        assertClaudeInit(message, options);
-        emit({
-          type: 'init',
-          model: message.model,
-          apiKeySource: message.apiKeySource,
-          tools: message.tools,
-          mcpServers: message.mcp_servers,
-        });
-      } else if (message.type === 'assistant') {
-        for (const block of message.message.content) {
-          if (block.type === 'text') emit({ type: 'message', text: block.text });
-          else if (block.type === 'tool_use') emit({ type: 'tool', name: block.name });
+    const mcpConfig = join(directory, 'mcp.json');
+    writeFileSync(mcpConfig, JSON.stringify(input.tools.claude), { mode: 0o600 });
+    const options = claudeOptions(role, {
+      cwd: input.cwd,
+      env,
+      executable,
+      mcpConfig,
+      instructions: input.instructions,
+      dirs: stageDirs(input),
+      schema: input.schema,
+    });
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), role.timeoutMinutes * 60_000);
+    let ok = false;
+    let result: unknown;
+    let failure: Failure | undefined;
+    let error: string | undefined;
+    try {
+      for await (const message of query({ prompt, options: { ...options, abortController } })) {
+        const found = claudeFailure(message);
+        // The rate-limit event wins, since it alone has the reset time.
+        if (found && (!failure || message.type === 'rate_limit_event')) failure = found;
+        if (message.type === 'system' && message.subtype === 'init') {
+          // Before the first model call completes, stop if anything unexpected loaded.
+          assertClaudeInit(message, options, Object.keys(input.tools.claude.mcpServers));
+          emit({
+            type: 'init',
+            model: message.model,
+            apiKeySource: message.apiKeySource,
+            tools: message.tools,
+            mcpServers: message.mcp_servers,
+          });
+        } else if (message.type === 'assistant') {
+          for (const block of message.message.content) {
+            if (block.type === 'text') emit({ type: 'message', text: block.text });
+            else if (block.type === 'tool_use') emit({ type: 'tool', name: block.name });
+          }
+        } else if (message.type === 'result') {
+          ok = message.subtype === 'success' && !message.is_error;
+          if (message.subtype === 'success') result = message.structured_output;
+          if (!ok)
+            error =
+              message.subtype === 'error_max_turns'
+                ? `hit the ${role.maxTurns}-turn cap`
+                : message.subtype === 'success'
+                  ? message.result
+                  : message.errors.join('; ') || message.subtype;
+          emit({
+            type: 'result',
+            subtype: message.subtype,
+            ok,
+            text: message.subtype === 'success' ? message.result : undefined,
+            usage: message.usage,
+            turns: message.num_turns,
+          });
         }
-      } else if (message.type === 'result') {
-        ok = message.subtype === 'success' && !message.is_error;
-        if (message.subtype === 'success') result = message.structured_output;
-        if (!ok)
-          error =
-            message.subtype === 'success'
-              ? message.result
-              : message.errors.join('; ') || message.subtype;
-        emit({
-          type: 'result',
-          subtype: message.subtype,
-          ok,
-          text: message.subtype === 'success' ? message.result : undefined,
-          usage: message.usage,
-          turns: message.num_turns,
-        });
       }
+    } catch (thrown) {
+      // The CLI can exit nonzero after reporting why, as on a rejected rate limit.
+      if (abortController.signal.aborted) {
+        failure = { class: 'timeout', resetsAt: null };
+        error = `no result within ${role.timeoutMinutes} minutes`;
+      } else {
+        error = thrown instanceof Error ? thrown.message : String(thrown);
+      }
+      emit({ type: 'error', message: error });
+    } finally {
+      clearTimeout(timer);
     }
-  } catch (thrown) {
-    // The CLI can exit nonzero after reporting why, as on a rejected rate limit.
-    if (abortController.signal.aborted) {
-      failure = { class: 'timeout', resetsAt: null };
-      error = `no result within ${role.timeoutMinutes} minutes`;
-    } else {
-      error = thrown instanceof Error ? thrown.message : String(thrown);
-    }
-    emit({ type: 'error', message: error });
+    return ok ? { ok, result } : { ok, result, failure, error };
   } finally {
-    clearTimeout(timer);
+    rmSync(directory, { recursive: true, force: true });
   }
-  return ok ? { ok, result } : { ok, result, failure, error };
 }

@@ -28,12 +28,14 @@ const ADMISSION =
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);
 
-test('the build workflow has one repair job per configured repair round', () => {
-  const workflow = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')) as {
-    jobs: Record<string, unknown>;
-  };
-  const repairs = Object.keys(workflow.jobs).filter((id) => /^repair-\d+$/.test(id));
-  assert.equal(repairs.length, REPAIR_ROUNDS);
+test('build and elevated runs have one repair job per configured repair round', () => {
+  for (const file of ['agent.build.yml', 'agent.elevated.yml']) {
+    const workflow = parse(readFileSync(new URL(file, workflows), 'utf8')) as {
+      jobs: Record<string, unknown>;
+    };
+    const repairs = Object.keys(workflow.jobs).filter((id) => /^repair-\d+$/.test(id));
+    assert.equal(repairs.length, REPAIR_ROUNDS, file);
+  }
 });
 
 // Splits on an operator at paren depth 0, outside string literals.

@@ -14,8 +14,7 @@ on:
       runner:
         description: 'Runner label: callers pass vars.RUNNER.'
         type: string
-        required: false
-        default: 'ubuntu-latest'
+        required: true
       appId:
         description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
         type: string
@@ -26,7 +25,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you` or `rate-limit`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `story` or `followups`.'
         type: string
         required: false
         default: 'ready'
@@ -66,8 +65,11 @@ permissions: {}
 jobs:
   start:
     name: Start
+    # github.token packs the repo on the WSL desk, which mints no App token.
+    permissions:
+      contents: read
     if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -130,7 +132,7 @@ jobs:
   retro:
     name: Retro
     needs: start
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     steps:
@@ -147,7 +149,7 @@ jobs:
   publish:
     name: Publish
     needs: retro
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v6
         with:

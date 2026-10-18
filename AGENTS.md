@@ -21,6 +21,26 @@ These override anything below that conflicts with them.
 - **Break fast, fix fast.** A loud failure and a quick fix over defensive code.
 - **No forks.** Nothing supports or routes fork PRs; admission keeps everyone but
   the owner off every credential-holding job.
+- **Nothing stops silently.** Every run that ends without success (a refusal,
+  a setup or stage failure, a cancel, a missing result, a job left queued)
+  says where it stopped on its card, or says "unknown" rather than guessing,
+  and moves it to Needs you. A merged change that isn't running yet counts
+  too: say when a merge is not live (devkit#113, #157, #164).
+- **A gate binds to what it judged.** Plan approval, critique and review hold
+  only for the plan revision, the issue text the stage actually saw, and the
+  commits it checked. Any change makes the result stale (devkit#168).
+- **Identity comes from a verified record.** Who acted and who approved is
+  checked against GitHub's own record or a verified token, never a dispatch
+  input or localhost. A missing credential fails the job; it never falls back
+  to a hosted runner or an ambient `gh` login. Elevated runs on the WSL desk
+  act as the operator by decision (devkit#119, #128).
+- **Runners are declared, not hand-built.** Every tool, library and login a
+  runner needs is declared in infra and checked by a health check that fails
+  loudly. A plan never asks for a manual install. Interactive logins, roots of
+  trust and the WSL desk are the exceptions (devkit#170, infra#88).
+- **Nothing deferred is lost.** Every finding, deferral and dropped criterion
+  ends as a linked issue or a recorded decision to drop it. A PR closes its
+  issue only when each unmet criterion is filed and linked (devkit#9).
 - **Keep the architecture diagram current.** A PR that adds, removes or
   rewires a part of the pipeline (a workflow, a stage, a runner, a credential)
   updates infra's `docs/architecture.excalidraw.svg` in a companion infra PR.
@@ -155,7 +175,27 @@ composite, so it's bumped once.
   CI, by UUID) or `bws` (on the box). No per-repo GitHub secrets.
 - **Two tokens, two tiers.** Agent jobs hold only `AGENTS_SECRETS_TOKEN` (the
   `agents` project). Pipeline jobs hold `PIPELINE_SECRETS_TOKEN` (`pipeline`: the
-  App key). An agent job never references the pipeline token.
+  App key), and may also use the agents token to seal the agent's read token. An
+  agent job never references the pipeline token.
+- **The agent's read token** lets the plan, build, review and repair agents read
+  every repo the App reaches (devkit#125). `actions/agent.token` mints it in the
+  pipeline job just before each agent job: `contents: read` on all of the App's
+  repos, not revoked at job end. GitHub drops a job output that holds a masked
+  value, so the token crosses jobs sealed with `AGENTS_SECRETS_TOKEN` (openssl
+  AES-256). `agent.run` opens it and hands it to the agent as `GH_TOKEN`. It
+  expires an hour after minting, and the agent can leak it (worst case: a copy
+  of private code). The WSL desk mints none. `test/agent.token.test.ts` pins the
+  agent jobs' permissions and the token's scope.
+- **Issue provenance needs `agent:filed`.** The agent's read token can still
+  open public issues as the pipeline bot, even when scoped to private repos:
+  S1's probe returned 201 (`issues=write`). Fork and gist POSTs returned 403
+  ([devkit#200, S1 results](https://github.com/gingur-root/devkit/issues/200#issuecomment-6244486250)).
+  The labelled issue POST returned 403 before `agent:filed` existed. Creation
+  with an existing label remains unverified
+  ([S1 detail](https://github.com/gingur-root/devkit/issues/201#issuecomment-6244408058), devkit#208).
+  Bot authorship alone proves nothing. Trust an issue from the bot only when
+  it carries `agent:filed`, which the controller adds at filing. Comments stay
+  trusted by author because agents get 403 when posting them (devkit#186).
 - **GitHub writes** go through `app.token`: a short-lived installation
   token for the gingur-root pipeline App, narrowed per call by its
   `permission*` inputs. The App has no `workflows` permission.

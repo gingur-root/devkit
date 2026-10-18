@@ -25,6 +25,7 @@ priority. See docs/pipeline.md for how plans set it.
   - Otherwise the column of its least-advanced open subtask.
 - A story with no subtasks yet is a plain card. Its plan proposes the
   subtasks, and the pipeline files them as sub-issues in Ask (devkit#12).
+  A story itself never builds; each subtask does (docs/pipeline.md).
 
 ## Allowed moves
 

@@ -1,18 +1,30 @@
 // Renders the job file and issue snapshot for one stage. The snapshot holds only
-// text by the operator or the pipeline App, so nobody else can steer an agent.
+// trusted issue text and comments, so nobody else can steer an agent.
+// A subtask's snapshot starts with its parent story, and a story never builds:
+// each of its subtasks does (devkit#12).
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
-import { type Handoff, OPERATOR_ID, PIPELINE_BOT, RETRO_LABEL, STAGE_LABELS } from './constants.ts';
+import {
+  filedByPipeline,
+  type Handoff,
+  OPERATOR_ID,
+  PIPELINE_BOT,
+  RETRO_LABEL,
+  STAGE_LABELS,
+} from './constants.ts';
+import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
+  editsWorkflows,
   ISSUE_FILE,
   ISSUES_FILE,
   JOB_FILE,
   TIMELINE_FILE,
+  TOOLS_FILE,
   type Job,
   marker,
   PLAN_END,
@@ -23,6 +35,7 @@ import {
   TRIAGE_FILE,
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
+import { MANIFEST_PATH } from './tools.ts';
 
 interface Authored {
   body: string | null;
@@ -44,9 +57,11 @@ interface Event {
 
 export interface Issue extends Authored {
   number: number;
+  node_id?: string;
   title: string;
   labels: { name: string }[];
   pull_request?: unknown;
+  sub_issues_summary?: { total: number };
 }
 
 export interface RenderOptions {
@@ -67,8 +82,8 @@ export interface RenderOptions {
 
 const HANDOFF_ROLES: readonly string[] = ['build', 'elevated'] satisfies Handoff[];
 
-function trusted(item: Authored, appId: number): boolean {
-  // Issues the App files itself (retros, the coordinator's) carry its bot user, not performed_via_github_app.
+function trustedComment(item: Authored, appId: number): boolean {
+  // Agents can't post comments, so comment authorship still proves origin.
   return (
     item.user?.id === OPERATOR_ID ||
     item.user?.id === PIPELINE_BOT.id ||
@@ -76,14 +91,37 @@ function trusted(item: Authored, appId: number): boolean {
   );
 }
 
-export function issueSnapshot(issue: Issue, comments: Authored[], appId: number): string {
-  const head = trusted(issue, appId)
+function trustedIssue(issue: Issue): boolean {
+  return issue.user?.id === OPERATOR_ID || filedByPipeline(issue);
+}
+
+export function issueSnapshot(
+  issue: Issue,
+  comments: Authored[],
+  appId: number,
+  parent: Issue | null = null,
+): string {
+  const head = trustedIssue(issue)
     ? `# ${issue.title}\n\n${issue.body ?? ''}`
     : `# Issue #${issue.number}\n\n(Written by someone else, so left out.)`;
   const thread = comments
-    .filter((comment) => trusted(comment, appId))
+    .filter((comment) => trustedComment(comment, appId))
     .map((comment) => `## Comment, ${comment.created_at}\n\n${comment.body ?? ''}`);
-  return [head, ...thread].join('\n\n');
+  const snapshot = [head, ...thread].join('\n\n');
+  if (!parent) return snapshot;
+  // Only the story's title and body, so a subtask is planned within it.
+  const story = trustedIssue(parent)
+    ? `# Parent story #${parent.number}: ${parent.title}\n\n${parent.body ?? ''}`
+    : `# Parent story #${parent.number}\n\n(Written by someone else, so left out.)`;
+  return `${story}\n\n---\n\n${snapshot}`;
+}
+
+/** The issue's parent story, or null when it has none. */
+async function parentOf(path: string): Promise<Issue | null> {
+  return rest<Issue>('GET', `${path}/parent`).catch((error: Error) => {
+    if (!error.message.includes(' 404 ')) throw error;
+    return null;
+  });
 }
 
 /** The card's history for a retro: one line per timeline event. Comments are in the snapshot. */
@@ -97,10 +135,10 @@ function timeline(events: Event[]): string {
     .join('\n');
 }
 
-/** The repo's open issues a retro plan may link a finding to: only the operator's or the App's, as the snapshot. */
-export function openIssues(issues: Issue[], appId: number): string {
+/** The repo's open issues a retro may link to: operator issues or labelled pipeline issues, as the snapshot. */
+export function openIssues(issues: Issue[]): string {
   return issues
-    .filter((i) => !i.pull_request && trusted(i, appId))
+    .filter((i) => !i.pull_request && trustedIssue(i))
     .map((i) => `- #${i.number} ${i.title}${i.labels.map((l) => ` \`${l.name}\``).join('')}`)
     .join('\n');
 }
@@ -119,6 +157,7 @@ export function approvedPlan(
   comments: Authored[],
   appId: number,
   issueRevision: string,
+  bodySeen: boolean,
 ): { plan: string; contract: PlanContract } {
   // The operator's own comment is the plan where his `gh` publishes (infra#47).
   const comment = comments.find(
@@ -137,6 +176,8 @@ export function approvedPlan(
     throw new Error('The plan text was edited after it was published. Run `agent:plan` again.');
   if (contract.issueRevision !== issueRevision)
     throw new Error('The issue changed after the plan. Run `agent:plan` again.');
+  if (contract.bodySeen === false && bodySeen)
+    throw new Error('The plan was written without the issue body. Run `agent:plan` again.');
   return { plan, contract };
 }
 
@@ -158,13 +199,18 @@ export async function render(options: RenderOptions): Promise<Job> {
     options.source ||
     (await rest<{ sha: string }>('GET', `/repos/${options.repo}/commits/HEAD`)).sha;
   const path = `/repos/${options.repo}/issues/${options.issue}`;
-  const [issue, comments] = await Promise.all([
+  const [issue, comments, parent] = await Promise.all([
     rest<Issue>('GET', path),
     restAll<Authored>(`${path}/comments`),
+    parentOf(path),
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
+  const bodySeen = trustedIssue(issue);
   const retroPlan =
     options.role === 'plan' && issue.labels.some((label) => label.name === RETRO_LABEL);
+  // One run never carries out a whole story: each subtask builds on its own.
+  const subtasks = issue.sub_issues_summary?.total ?? 0;
+  const story = HANDOFF_ROLES.includes(options.role) && subtasks > 0;
   // A retro reads whatever the run left, ready plan or not.
   let approved: ReturnType<typeof approvedPlan> | null = null;
   if (options.role !== 'plan' && options.role !== 'retro') {
@@ -178,13 +224,32 @@ export async function render(options: RenderOptions): Promise<Job> {
         );
         if (why) throw new Error(`Not approved: ${why}.`);
       }
-      approved = approvedPlan(comments, options.appId, issueRevision);
+      approved = approvedPlan(comments, options.appId, issueRevision, bodySeen);
+      if (options.role === 'build' && editsWorkflows(approved.plan))
+        throw new Error(
+          "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.",
+        );
+      if (story)
+        throw new Error(
+          `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
+        );
     } catch (error) {
       // The refusal itself still fails the job, even if saying so on the issue fails.
       await refuse(options, (error as Error).message).catch(console.error);
+      // Approved, so the story itself is why: it waits on the operator.
+      if (story && approved) await setStatus(options.repo, issue.node_id!, 'Needs you');
       throw error;
     }
   }
+  const base = approved && (options.base ?? source);
+  const ref = base ?? source;
+  const manifest = await rest<{ content: string }>(
+    'GET',
+    `/repos/${options.repo}/contents/${MANIFEST_PATH}?ref=${encodeURIComponent(ref)}`,
+  ).catch((error: Error) => {
+    if (!error.message.includes(' 404 ')) throw error;
+    return null;
+  });
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -194,6 +259,7 @@ export async function render(options: RenderOptions): Promise<Job> {
       number: issue.number,
       title: issue.title,
       revision: issueRevision,
+      bodySeen,
     },
     plan: approved && {
       revision: approved.contract.planRevision,
@@ -202,7 +268,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     // A build works from the default branch as it is now, not the plan's older
     // source: the App can't push a branch whose workflow files differ from it.
     source,
-    base: approved && (options.base ?? source),
+    base,
     // A review checks out the candidate itself.
     candidate: options.role === 'review' ? source : null,
     // Publish reads this to hold a retro issue's plan to its triage.
@@ -211,10 +277,13 @@ export async function render(options: RenderOptions): Promise<Job> {
     attemptLimit: null,
   };
   mkdirSync(options.out, { recursive: true });
+  if (manifest)
+    writeFileSync(join(options.out, TOOLS_FILE), Buffer.from(manifest.content, 'base64'));
+  else rmSync(join(options.out, TOOLS_FILE), { force: true });
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),
-    `${issueSnapshot(issue, comments, options.appId)}\n`,
+    `${issueSnapshot(issue, comments, options.appId, parent)}\n`,
   );
   if (approved) writeFileSync(join(options.out, PLAN_FILE), `${approved.plan}\n`);
   if (approved?.contract.triage)
@@ -222,7 +291,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   if (retroPlan)
     writeFileSync(
       join(options.out, ISSUES_FILE),
-      `${openIssues(await restAll<Issue>(`/repos/${options.repo}/issues?state=open`), options.appId)}\n`,
+      `${openIssues(await restAll<Issue>(`/repos/${options.repo}/issues?state=open`))}\n`,
     );
   if (options.role === 'retro')
     writeFileSync(

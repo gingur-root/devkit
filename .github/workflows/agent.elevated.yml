@@ -6,13 +6,16 @@ name: Elevated
 # gate), or the App's hand-off right after his elevated Continue on the
 # dashboard, which render checks (bin/agent/approval.ts). GitHub lets only this
 # workflow on main use the `wsl` runner group.
-# The desk is off until he runs `elevated on`; until then the job waits in
-# GitHub's queue (cancelled after 24h) and the card sits in Needs you.
+# His gingur stack keeps the desk runner up while he is logged in to Windows
+# (infra's runbook); while the desk is off the job waits in GitHub's queue
+# (cancelled after 24h) and the card sits in Needs you.
 # Like a build, the agent only returns files. Publish runs on the desk too, so
 # his git login pushes the commit: the App has no `workflows` permission, and
 # this is the path for changes under `.github/workflows`. The App still writes
 # the comments and opens the draft PR.
-# There is no review stage.
+# Then the same review and repair rounds as a build run on the VPS, so a
+# change made with admin access is reviewed before it reaches Ready. A repair
+# pushes as the App, so a finding that needs a workflow edit ends in Needs you.
 # Callers set concurrency (one group per card) at their own workflow level.
 # With `runner: wsl` (a repo the App can't reach, infra#47) Start runs on the
 # desk too, and his own `gh` also writes the comments and opens the PR.
@@ -44,8 +47,12 @@ on:
         required: false
         default: ''
     secrets:
-      # Unset on the WSL desk.
+      # Both unset on the WSL desk, which runs no review.
       PIPELINE_SECRETS_TOKEN:
+        required: false
+      # Only the review and repair rounds read it, and publish to seal the
+      # reviewer's read token; the elevated job never does.
+      AGENTS_SECRETS_TOKEN:
         required: false
 
 permissions: {}
@@ -53,6 +60,9 @@ permissions: {}
 jobs:
   start:
     name: Start
+    # github.token packs the repo on the WSL desk, which mints no App token.
+    permissions:
+      contents: read
     if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:elevated') || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner }}
     outputs:
@@ -81,6 +91,18 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
+      # The run's 👀 (devkit#148). The webhook receiver adds it for the App's
+      # dispatches, since the dispatch can't carry the comment.
+      - name: React
+        if: github.event_name != 'workflow_dispatch' || github.actor_id != '340770692'
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          COMMENT: ${{ github.event.comment.id }}
+        run: pnpm agent react --repo "$REPO" --issue "$ISSUE" ${COMMENT:+--comment "$COMMENT"}
+
       # Render first: with no ready plan it fails, leaving the card alone, after it
       # says why on the issue and removes the label.
       # The queued note is the stage's comment, so publish replaces it with the result.
@@ -95,7 +117,7 @@ jobs:
           SOURCE: ${{ inputs.issue == '' && github.sha || '' }}
           APP_ID: ${{ inputs.appId }}
           ACTOR: ${{ inputs.actor || github.actor_id }}
-          NOTE: ${{ inputs.runner == 'wsl' && '**Running on the WSL desk.**' || '**Queued for the WSL desk.** Run `elevated on` on STR4090 to start it.' }}
+          NOTE: ${{ inputs.runner == 'wsl' && '**Running on the WSL desk.**' || '**Queued for the WSL desk.** It starts as soon as STR4090 is on.' }}
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role elevated ${SOURCE:+--source "$SOURCE"} \
             --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"
@@ -114,6 +136,16 @@ jobs:
           ref: ${{ steps.render.outputs.source }}
           token: ${{ steps.app.outputs.token || github.token }}
           name: agent-repo
+
+      # Publish won't run, so the receipt ends here.
+      - name: Failed
+        if: failure()
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+        run: pnpm agent react --repo "$REPO" --issue "$ISSUE" --end failed
 
   # No secrets: the agent runs on the operator's own Claude login and access.
   elevated:
@@ -138,6 +170,9 @@ jobs:
     # For the desk's checkout of the push target, which has no App token.
     permissions:
       contents: read
+    outputs:
+      candidate: ${{ steps.publish.outputs.candidate }}
+      readToken: ${{ steps.read.outputs.sealed }}
     steps:
       # The App writes comments, the board and the PR. A repo it can't reach
       # (infra#47) gets no token, so the operator's own `gh` writes there.
@@ -185,10 +220,111 @@ jobs:
           name: agent-out
           path: ${{ runner.temp }}/agent/out
 
-      - name: Publish
+      - id: publish
+        name: Publish
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" \
             --checkout "$GITHUB_WORKSPACE/repo"
+
+      # The review's job, as a build's publish writes it: the pushed commit, and
+      # the elevated patch as its diff. A desk-only repo gets no App token, so no review.
+      - name: Render review
+        if: steps.publish.outputs.candidate != '' && inputs.runner != 'wsl'
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          SOURCE: ${{ needs.start.outputs.source }}
+          CANDIDATE: ${{ steps.publish.outputs.candidate }}
+          APP_ID: ${{ inputs.appId }}
+        run: |
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role review --source "$CANDIDATE" \
+            --base "$SOURCE" --app-id "$APP_ID" --out "$RUNNER_TEMP/review/in"
+          cp "$RUNNER_TEMP/agent/out/candidate.patch" "$RUNNER_TEMP/review/in/"
+
+      - if: steps.publish.outputs.candidate != '' && inputs.runner != 'wsl'
+        uses: actions/upload-artifact@v7
+        with:
+          name: review-0-in
+          path: ${{ runner.temp }}/review/in
+
+      - if: steps.publish.outputs.candidate != '' && inputs.runner != 'wsl'
+        uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.publish.outputs.candidate }}
+          token: ${{ steps.app.outputs.token }}
+          name: review-0-repo
+
+      # The round-0 reviewer's read token.
+      - id: read
+        if: steps.publish.outputs.candidate != '' && inputs.runner != 'wsl'
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+
+  review:
+    name: Review
+    needs: publish
+    if: needs.publish.outputs.candidate != '' && inputs.runner != 'wsl'
+    # The ceiling for the nested jobs: the agents check out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      repo: ${{ inputs.repo }}
+      issue: ${{ inputs.issue }}
+      round: 0
+      candidate: ${{ needs.publish.outputs.candidate }}
+      readToken: ${{ needs.publish.outputs.readToken }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+
+  repair-1:
+    name: Repair 1
+    needs: review
+    if: needs.review.outputs.repair == 'true'
+    # The ceiling for the nested jobs: the agents check out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      repo: ${{ inputs.repo }}
+      issue: ${{ inputs.issue }}
+      round: 1
+      candidate: ${{ needs.review.outputs.candidate }}
+      readToken: ${{ needs.review.outputs.readToken }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+
+  repair-2:
+    name: Repair 2
+    needs: repair-1
+    if: needs.repair-1.outputs.repair == 'true'
+    # The ceiling for the nested jobs: the agents check out this repo.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agent.review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      appId: ${{ inputs.appId }}
+      repo: ${{ inputs.repo }}
+      issue: ${{ inputs.issue }}
+      round: 2
+      candidate: ${{ needs.repair-1.outputs.candidate }}
+      readToken: ${{ needs.repair-1.outputs.readToken }}
+    secrets:
+      AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+      PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}

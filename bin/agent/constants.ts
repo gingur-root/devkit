@@ -11,7 +11,11 @@ export const CLAUDE_SUBSCRIPTION_SOURCES = ['none', 'oauth'] as const;
 /** Codex's `auth.json` `auth_mode` for a ChatGPT login. */
 export const CODEX_SUBSCRIPTION_MODE = 'chatgpt';
 
-/** Variables every agent may see. Nothing else is inherited from the job. */
+/**
+ * Variables every agent may see. Nothing else is inherited from the job.
+ * GH_TOKEN is the run's read token: `contents: read` on every repo the
+ * pipeline App reaches (actions/agent.token).
+ */
 export const BASE_ENV = [
   'PATH',
   'HOME',
@@ -23,6 +27,7 @@ export const BASE_ENV = [
   'TMPDIR',
   'TERM',
   'CI',
+  'GH_TOKEN',
 ] as const;
 
 /** The one credential each executor may see, plus the fixed settings that isolate it. */
@@ -54,18 +59,26 @@ export const CODEX_FEATURES_OFF = [
   'image_generation',
 ] as const;
 
-/**
- * MCP servers a role with `web` gets, the same for both executors. Context7
- * runs keyless (rate-limited) so no credential reaches the agent.
- */
-export const WEB_MCP_SERVERS = { context7: 'https://mcp.context7.com/mcp' } as const;
-
 /** Files in the Codex home the SDK cannot be told to ignore. */
 export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
 
 /** The stub's fixtures, in bin/agent/fixtures/. */
 /** `red` builds a change CI rejects, which the stub repair then fixes. */
-export const STUB_FIXTURES = ['ready', 'invalid', 'needs-you', 'rate-limit', 'red'] as const;
+export const STUB_FIXTURES = [
+  'ready',
+  'invalid',
+  'needs-you',
+  'rate-limit',
+  'red',
+  'story',
+  'followups',
+  'crash',
+  'timeout',
+  'missing',
+  'changes',
+  'never',
+  'advisory',
+] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
 /** The operator's GitHub user ID, as in the admission expression. */
@@ -80,8 +93,24 @@ export const READY_LABEL = 'ready-for-agent';
 
 /** Marks an issue a retro filed, or one its plan filed in turn (devkit#115). */
 export const RETRO_LABEL = 'retro';
+/** The controller adds it at filing to distinguish its issues from bot authorship (devkit#200). */
+export const FILED_LABEL = 'agent:filed';
+
+/** Bot authorship alone is not proof the controller filed an issue. */
+export function filedByPipeline(issue: {
+  user?: { id: number } | null;
+  labels: { name: string }[];
+}): boolean {
+  return issue.user?.id === PIPELINE_BOT.id && issue.labels.some((l) => l.name === FILED_LABEL);
+}
+
 /** An agent says the issue needs the WSL desk. It starts nothing. */
 export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
+/** What an elevated subtask says. The pipeline never adds `agent:elevated` itself. */
+export const ELEVATED_NOTE = 'Needs the WSL desk: add `agent:elevated` after the plan.';
+
+/** Follow-ups one stage may file (devkit#12); the rest are dropped and reported. */
+export const FOLLOWUP_CAP = 5;
 
 export const BOARD_TITLE = 'Pipeline';
 export const STATUS_FIELD = 'Status';

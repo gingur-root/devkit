@@ -12,6 +12,8 @@ export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
+/** The MCP manifest from the job's trusted commit. */
+export const TOOLS_FILE = 'tools.json';
 /** A retro issue's plan: the repo's open issues, which it may link findings to. */
 export const ISSUES_FILE = 'issues.md';
 /** A retro issue's approved triage, which the build files instead of building. */
@@ -24,6 +26,8 @@ export const TRANSCRIPT_FILE = 'transcript.jsonl';
 export const REVIEW_FILE = 'review.json';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
+/** Each agent.run step's outcome, written even when setup fails. */
+export const STEPS_FILE = 'steps.json';
 
 /** Each stage's comment starts with its marker; the plan's text sits between these. */
 export const PLAN_START = '<!-- devkit:plan:start -->';
@@ -32,6 +36,16 @@ export const CONTRACT_PREFIX = '<!-- devkit:contract ';
 
 export function marker(role: string): string {
   return `<!-- devkit:${role} -->`;
+}
+
+/** Ends the body of a subtask the card's plan filed, so a retry finds it (devkit#12). */
+export function subtaskMarker(card: number): string {
+  return `<!-- devkit:subtask #${card} -->`;
+}
+
+/** Ends the body of a follow-up the card's stage filed, so a retry finds it (devkit#12). */
+export function followupMarker(card: number, stage: string): string {
+  return `<!-- devkit:followup #${card} ${stage} -->`;
 }
 
 /**
@@ -54,6 +68,8 @@ export const PlanContract = z.object({
   outcome: z.string().nullable(),
   source: z.string(),
   issueRevision: z.string(),
+  // Absent on plans published before devkit#168.
+  bodySeen: z.boolean().nullable().default(null),
   checks: z.record(z.string(), z.string()),
   critique: z.boolean().nullable(),
   // Absent on plans published before devkit#115.
@@ -66,7 +82,12 @@ export const Job = z.object({
   role: z.string(),
   objective: z.string(),
   repo: z.string(),
-  issue: z.object({ number: z.number().int(), title: z.string(), revision: z.string() }),
+  issue: z.object({
+    number: z.number().int(),
+    title: z.string(),
+    revision: z.string(),
+    bodySeen: z.boolean(),
+  }),
   plan: z.object({ revision: z.string(), criteria: z.array(z.string()) }).nullable(),
   source: z.string(),
   base: z.string().nullable(),
@@ -83,6 +104,11 @@ export function revision(...parts: string[]): string {
   return createHash('sha256')
     .update(parts.map((part) => part.replace(/\r\n/g, '\n')).join('\n'))
     .digest('hex');
+}
+
+/** Named workflow files need the WSL desk because the App cannot push them. */
+export function editsWorkflows(plan: string): boolean {
+  return /\.github\/workflows\/[\w.-]+\.ya?ml/.test(plan);
 }
 
 /** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */

@@ -50,3 +50,8 @@ Delegation depth is one; helpers perform their assignment directly.
   job directory ($AGENT_IN). Write artifacts to the output directory
   ($AGENT_OUT). Your final answer is the result envelope.
 - No helper role is enabled, so don't delegate.
+- When `GH_TOKEN` is set, it can read every repo the pipeline App reaches, and
+  nothing else. Use `gh` for those reads: `gh api`, or
+  `gh repo clone gingur-root/<repo> "$(mktemp -d)/<repo>"`. Clone outside the
+  working tree, since anything in it ends up in your change. The token expires
+  about an hour after the run starts.

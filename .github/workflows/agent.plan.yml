@@ -12,8 +12,7 @@ on:
       runner:
         description: 'Runner label: callers pass vars.RUNNER.'
         type: string
-        required: false
-        default: 'ubuntu-latest'
+        required: true
       appId:
         description: 'The pipeline App ID: callers pass vars.PIPELINE_APP_ID.'
         type: string
@@ -24,7 +23,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you` or `rate-limit`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `story` or `followups`.'
         type: string
         required: false
         default: 'ready'
@@ -55,10 +54,14 @@ permissions: {}
 jobs:
   start:
     name: Start
+    # github.token packs the repo on the WSL desk, which mints no App token.
+    permissions:
+      contents: read
     if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     outputs:
       source: ${{ steps.render.outputs.source }}
+      readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -84,6 +87,18 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
+      # The run's 👀 (devkit#148). The webhook receiver adds it for the App's
+      # dispatches, since the dispatch can't carry the comment.
+      - name: React
+        if: github.event_name != 'workflow_dispatch' || github.actor_id != '340770692'
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          COMMENT: ${{ github.event.comment.id }}
+        run: pnpm agent react --repo "$REPO" --issue "$ISSUE" ${COMMENT:+--comment "$COMMENT"}
+
       # A dispatched run plans from the head of the default branch (render's default).
       - id: render
         name: Render
@@ -107,15 +122,35 @@ jobs:
           token: ${{ steps.app.outputs.token || github.token }}
           name: agent-repo
 
+      # The planner's read token, minted last so its hour starts late. The WSL
+      # desk mints none: the planner keeps the operator's own `gh` login.
+      - id: read
+        if: inputs.runner != 'wsl'
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+
       - uses: actions/upload-artifact@v7
         with:
           name: agent-in
           path: ${{ runner.temp }}/agent/in
 
+      # Publish won't run, so the receipt ends here.
+      - name: Failed
+        if: failure()
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+        run: pnpm agent react --repo "$REPO" --issue "$ISSUE" --end failed
+
   plan:
     name: Plan
     needs: start
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
     steps:
@@ -126,13 +161,14 @@ jobs:
           fixture: ${{ inputs.fixture }}
           source: ${{ needs.start.outputs.source }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          readToken: ${{ needs.start.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
   publish:
     name: Publish
     needs: [start, plan]
     if: always() && needs.start.result == 'success'
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v6
         with:

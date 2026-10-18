@@ -1,0 +1,55 @@
+{
+  "job": "",
+  "role": "plan",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": "plan.md",
+    "candidate": null,
+    "artifacts": ["plan.md"]
+  },
+  "status": "complete",
+  "outcome": "ready",
+  "summary": "Stub story plan: two subtasks, one for the WSL desk. Ready to build each subtask.",
+  "evidence": [],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": [
+    {
+      "id": "A1",
+      "text": "The stub plan is published as one comment on the issue.",
+      "check": "agent"
+    }
+  ],
+  "probe": null,
+  "critique": false,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Approve and build each subtask.",
+  "findings": null,
+  "subtasks": [
+    {
+      "title": "Stub subtask: add STUB.md",
+      "body": "Adds STUB.md, as the stub build does.",
+      "pr": true,
+      "elevated": false
+    },
+    {
+      "title": "Stub subtask: change an org setting",
+      "body": "Changes an org setting, so it needs the WSL desk.",
+      "pr": false,
+      "elevated": true
+    }
+  ],
+  "followups": null,
+  "priority": "P2",
+  "triage": null,
+  "failure": null
+}

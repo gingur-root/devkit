@@ -16,19 +16,21 @@ central caller,
 [`gingur-root/pipeline`'s `agents.yml`](https://github.com/gingur-root/pipeline/blob/main/.github/workflows/agents.yml),
 with the repo, the issue and the sender. Its jobs read the target repo's code
 from a pack the App-token job makes (`actions/repo.pack`), since their own
-token can't read another private repo. A repo is enrolled when infra lists it
-`enrolled`, which installs the App on it. infra is the exception: the App must
+token can't read another private repo. The agents can also read every other
+enrolled repo with `GH_TOKEN`, a read-only token minted for each run
+(`actions/agent.token`); the pack still carries the target repo. A repo is
+enrolled when infra lists it `enrolled`, which installs the App on it. infra is the exception: the App must
 never reach it, so it keeps its own caller on the WSL desk.
 
 ## The flow
 
-| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                      | Board card       |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------- |
-| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                               | Ask              |
-| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label.                                                            | Planning         |
-| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                        | Needs you        |
-| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                     | Building → Ready |
-| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | In the same run, Claude reviews the PR; Codex fixes findings, up to 2 rounds; then ready or Needs you. | Ready → Done     |
+| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                                                    | Board card       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
+| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                                                             | Ask              |
+| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer. | Planning         |
+| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                      | Needs you        |
+| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                   | Building → Ready |
+| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | In the same run, Claude reviews the PR; Codex fixes findings, up to 2 rounds; then ready or Needs you.                               | Ready → Done     |
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
@@ -44,6 +46,35 @@ board's Priority field only when the card has none, so a re-plan never
 overrides a priority you or a groom set. Change it on the board to override.
 The dashboard sorts each column by Priority, then by most recently updated;
 cards with no priority come last.
+
+## Receipts
+
+Each run reacts on the event that started it (devkit#148), so the issue shows
+that an agent picked it up and how the run ended. A `/plan` or `/approve`
+run reacts on that comment. A label or a manual dispatch reacts on the issue.
+
+| Reaction      | Meaning                                                 |
+| ------------- | ------------------------------------------------------- |
+| 👀 `eyes`     | Picked up, working                                      |
+| 🚀 `rocket`   | Done: the plan or the PR is ready, or a triage filed    |
+| 😕 `confused` | The run ended with a question for you, in **Needs you** |
+| 👎 `-1`       | A job failed                                            |
+
+Who writes them (`bin/agent/reactions.ts`):
+
+- **👀:** the webhook receiver, right after it dispatches a plan, build or
+  elevated run. It has the comment ID, which the dispatch can't carry. For an
+  event the receiver didn't dispatch (infra's caller, a manual dispatch), the
+  start job adds it. A board-loop tick gets none.
+- **The end state:** publish, once the run's last stage is done. When a run
+  dies before it publishes, the start job's failure step or the board loop's
+  stalled path sets `-1`.
+- The writer is the App. On the WSL desk with no App token, it's Troy's own
+  `gh`, so the reactions show as his there.
+- The end step swaps only the writer's own 👀 for one end reaction, and
+  removes its older ones on that target. Your reactions stay.
+- Reactions are best effort: a failed one logs a warning and never fails the
+  run.
 
 ## The board loop
 
@@ -75,6 +106,11 @@ same time `toolchain.verify` runs the repo's own checks (format, lint,
 typecheck, test, build) on that same commit, so an enrolled repo needs every
 script it runs.
 
+The controller posts one `COMMENT` review. Findings on added or context lines
+in `candidate.patch` appear inline, prefixed with their ID, blocking or
+advisory flag, and axis. Findings outside the diff stay in the review body.
+Advisory findings allow an otherwise clean review to pass.
+
 - **Pass** (every axis passes, no blocking finding, no question, and CI green
   on the reviewed commit): the PR is marked ready for review and the card
   stays in **Ready**. Red CI adds a blocking `CI` finding to the review, which
@@ -84,10 +120,27 @@ script it runs.
   pushes a new commit to the same PR, then Claude reviews the whole change
   again. The card stays in **Building** meanwhile, and the issue gets a
   **Repair** comment with what Codex changed. This repeats up to 2 rounds
-  (`REPAIR_ROUNDS` in `bin/agent/constants.ts`).
+  (`REPAIR_ROUNDS` in `bin/agent/constants.ts`). A repair must map every
+  supplied finding ID in `changes[].ref`. A dispute needs non-empty
+  `evidence`; an incomplete map stops at `validate` before a push.
 - **Anything else** (a question for you, an inconclusive review, findings left
   after 2 rounds, or a repair that changed nothing): the review comment says
-  the PR needs your call, and the card moves to **Needs you**.
+  the PR needs your call, lists open blocking IDs, and links the PR's loop
+  log. The card moves to **Needs you**. A stale candidate also stops here,
+  without posting a PR review or marking the PR ready.
+
+The PR has one loop-log comment, updated after each repair and review. It
+shows the round and cap, failure count, candidate short SHA, CI result,
+review outcome, open blocking IDs, and the repair's hypotheses. Its hidden
+`<!-- devkit:loop-state {json} -->` line keeps state between jobs. Round 0
+reviews the build; rounds 1 and 2 review repairs.
+
+For a direct controller call, set the repair cap with
+`pnpm agent publish --in <job-dir> --out <output-dir> --round <r> --rounds <n>`.
+Pass the same cap to each publish in the run. Without `--rounds`, the cap is
+`REPAIR_ROUNDS` (2). The current workflow schedules only two repair jobs;
+a larger CLI cap does not add jobs. Ten rounds and stale reruns need the
+separate workflow change.
 
 The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
@@ -124,6 +177,40 @@ lands instead of sitting in a comment (devkit#115):
 - A stub proof run that reaches a retro files a real retro issue, which starts
   a real plan. Close it if you don't want that.
 
+## Stories and follow-ups
+
+Agents propose new issues in their result, and publish files them
+(devkit#12).
+
+- **Subtasks make a story.** A ready plan's `subtasks` become native
+  sub-issues of the card, in **Ask**. Each one says `Part of #<card>.` The
+  card is now a story: its plan comment lists the subtasks and does not hand
+  off to a build, even after a **Continue**. Plan, approve and build each
+  subtask on its own. A subtask's `issue.md` starts with the story's title and
+  body, so its plan stays inside the story.
+- **A story never builds.** `agent:build` or `agent:elevated` on an issue with
+  sub-issues is refused. The card goes to **Needs you** with "Build each
+  subtask instead", and the label is removed. This includes stories made by
+  hand.
+- **Elevated subtasks.** A subtask the plan marks `elevated` gets
+  `needs:elevated` and the note "Needs the WSL desk: add `agent:elevated` after
+  the plan." The pipeline never adds `agent:elevated` itself.
+- **Follow-ups.** Any stage except a retro may return `followups`. Each becomes
+  a new issue in **Ask** with no label, so it starts nothing. Its body links
+  back to the card, the stage and the run. A comment on the card lists them,
+  and the stage comment says how many were filed.
+- **The cap is 5 per stage.** A stage that proposes more files its first 5,
+  and its comment says how many were dropped. Each review round counts as its
+  own stage.
+- **Retries never duplicate.** Each filed issue ends with a hidden marker
+  (`<!-- devkit:subtask #<card> -->` or
+  `<!-- devkit:followup #<card> <stage> -->`). A retry finds the earlier issue
+  by its marker and exact title, links a subtask that never got linked, and
+  files only what is missing. A subtask a re-plan renames is filed again under
+  the new title; close the old one by hand.
+- A retro's `followups` are its findings, which it files as one `retro` issue
+  ([Retros](#retros)).
+
 ## Elevated runs (the WSL desk)
 
 For a plan that needs Troy's own admin access (a new provider, an org setting,
@@ -132,15 +219,19 @@ the one runner on his WSL desk, which runs as him and which GitHub lets only
 `agent.elevated.yml` on main use.
 
 1. The card goes to **Needs you** with "Queued for the WSL desk".
-2. On WSL, run `elevated on` (setup in infra's runbook). It takes that one job
-   and exits. Until then the job waits in GitHub's queue, which cancels it
-   after 24 hours.
+2. The desk runner takes it. Troy's gingur stack keeps that runner up while he
+   is logged in to Windows (setup in infra's runbook). While the desk is off,
+   the job waits in GitHub's queue, which cancels it after 24 hours.
 3. Claude carries out the plan with his access, gating each outside write on a
    named rollback. Publish runs on the desk too: his git login pushes the
-   commit, and the App comments and opens the draft PR. There is no review stage.
+   commit, and the App comments and opens the draft PR. Then the same review and repair rounds as a
+   build run on the VPS (not for a desk-only repo). A repair pushes as the App,
+   so a finding that needs a workflow edit ends in Needs you.
 
 A plan that edits `.github/workflows` runs elevated: the App has no
-`workflows` permission, so only the desk can push those files.
+`workflows` permission, so only the desk can push those files. Render refuses
+a build when its approved plan names a workflow file and says to add
+`agent:elevated` instead.
 
 `needs:elevated` marks an issue an agent says needs the desk. It starts
 nothing; add `agent:elevated` yourself.
@@ -148,7 +239,7 @@ nothing; add `agent:elevated` yourself.
 **Desk-only repos (infra).** A repo the App must never reach passes
 `runner: wsl` to `agent.plan.yml` and `agent.elevated.yml` (see
 [infra's caller](https://github.com/gingur-root/infra/blob/main/.github/workflows/agents.yml)).
-Every job then runs on the desk, so nothing happens until `elevated on`, and
+Every job then runs on the desk, so nothing happens while the desk is off, and
 Troy's own `gh` writes the comments, moves the card and opens the draft PR.
 There is no `agent:build`: `agent:elevated` is the approval.
 
@@ -196,10 +287,14 @@ on a scratch issue.
 
    ```bash
    gh workflow run agents.yml -R gingur-root/pipeline --ref <pipeline-branch> \
-     -f stage=plan -f repo=scratch -f issue=<n> -f executor=stub
+     -f stage=plan -f repo=scratch -f issue=<n> -f executor=stub -f fixture=<name>
    ```
 
    `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
+   `fixture` picks the stub's result (`bin/agent/constants.ts`
+   `STUB_FIXTURES`): `ready` by default, `story` for a plan with two subtasks,
+   `followups` for a build that proposes seven follow-ups.
+   To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 
 3. Delete the pipeline branch when you are done.
 
@@ -210,11 +305,14 @@ proof, then pin it back.
 
 ## Known limits
 
+- **Codex has no turn cap.** Its per-role timeout is its only run limit.
 - **Re-run doesn't work.** Jobs only run on a run's first attempt, so the
   Actions "Re-run" button skips everything. Add the label again instead.
 - **Editing the issue or the plan comment voids the plan.** `agent:build`
   refuses until you run `agent:plan` again. It says why in a comment and
   removes its label, so add it again once the plan is ready.
+- **A plan written without the issue body is refused once the body becomes visible.**
+  Run `agent:plan` again.
 - **A workflow-file change on main blocks a build retry.** If main changed
   anything under `.github/workflows/` since the branch was made, the push to
   `agent/issue-<n>` is rejected (the App has no `workflows` permission). Close

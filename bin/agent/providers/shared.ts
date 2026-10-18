@@ -8,11 +8,13 @@ import { delimiter, join } from 'node:path';
 import { BASE_ENV, EXECUTOR_ENV, type Executor } from '../constants.ts';
 import type { Failure } from '../result.ts';
 import type { Role } from '../roles.ts';
+import type { RoleTools } from '../tools.ts';
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
 export interface RunInput {
   role: Role;
+  tools: RoleTools;
   /** The role's instructions, with the repo's overrides applied. */
   instructions: string;
   prompt: string;
@@ -59,7 +61,7 @@ export function agentEnv(executor: Executor, source: Env): Record<string, string
 }
 
 /** The runner's own install, so the SDKs never fetch or run a bundled binary. */
-export function resolveExecutable(name: Executor, path: string | undefined): string {
+export function resolveExecutable(name: string, path: string | undefined): string {
   for (const dir of (path ?? '').split(delimiter)) {
     // An empty entry means the current directory, which is the checked-out repo.
     if (!dir) continue;
