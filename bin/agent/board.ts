@@ -78,25 +78,33 @@ async function setOption(
   const option = board.field.options.find((o) => o.name === value);
   if (!option) throw new Error(`The ${BOARD_TITLE} board's ${fieldName} has no "${value}".`);
 
-  const { addProjectV2ItemById } = await graphql<{
-    addProjectV2ItemById: { item: { id: string; current: { name: string } | null } };
-  }>(
-    `
-      mutation ($project: ID!, $content: ID!, $field: String!) {
-        addProjectV2ItemById(input: { projectId: $project, contentId: $content }) {
-          item {
-            id
-            current: fieldValueByName(name: $field) {
-              ... on ProjectV2ItemFieldSingleSelectValue {
-                name
+  const add = () =>
+    graphql<{
+      addProjectV2ItemById: { item: { id: string; current: { name: string } | null } };
+    }>(
+      `
+        mutation ($project: ID!, $content: ID!, $field: String!) {
+          addProjectV2ItemById(input: { projectId: $project, contentId: $content }) {
+            item {
+              id
+              current: fieldValueByName(name: $field) {
+                ... on ProjectV2ItemFieldSingleSelectValue {
+                  name
+                }
               }
             }
           }
         }
-      }
-    `,
-    { project: board.id, content: contentId, field: fieldName },
-  );
+      `,
+      { project: board.id, content: contentId, field: fieldName },
+    );
+  // The board's auto-add can race a just-filed issue's add, and the loser gets
+  // "Content already exists" (infra#88); once the item exists, an add returns it.
+  const { addProjectV2ItemById } = await add().catch(async (error: Error) => {
+    if (!error.message.includes('Content already exists')) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    return add();
+  });
   if (keepExisting && addProjectV2ItemById.item.current?.name) return;
   await graphql(
     `
