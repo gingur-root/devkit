@@ -43,6 +43,7 @@ import {
   RESULT_FILE,
   revision,
   STEPS_FILE,
+  TRIAGE_FILE,
 } from './job.ts';
 import { Result } from './result.ts';
 
@@ -633,7 +634,10 @@ test('a retro files one issue to plan, but only comments on a retro issue or wit
   try {
     await publishRetro(job, issue, retro);
     assert.equal(writes.length, 3);
-    assert.match(writes[0]!, /^POST \/repos\/gingur-root\/scratch\/issues .*"labels":\["retro"\]/);
+    assert.match(
+      writes[0]!,
+      /^POST \/repos\/gingur-root\/scratch\/issues .*"labels":\["retro","agent:filed"\]/,
+    );
     assert.ok(writes[0]!.includes('https://github.com/gingur-root/pipeline/actions/runs/123'));
     assert.ok(!writes[0]!.includes('/gingur-root/scratch/actions/runs/'));
     assert.match(writes[1]!, /^POST \/repos\/gingur-root\/scratch\/issues\/9\/labels .*agent:plan/);
@@ -694,7 +698,7 @@ function fakeGitHub(card = CARD, comments: unknown[] = [], events: unknown[] = [
     title: 'Pipeline',
     field: {
       id: 'F',
-      options: ['Ask', 'Needs you', 'Building', 'P2'].map((name) => ({ id: name, name })),
+      options: ['Ask', 'Needs you', 'Building', 'Done', 'P2'].map((name) => ({ id: name, name })),
     },
   };
   vi.stubEnv('GH_TOKEN', 'test');
@@ -713,7 +717,14 @@ function fakeGitHub(card = CARD, comments: unknown[] = [], events: unknown[] = [
     const cardPath = `${issuesPath}/${card.number}`;
     if (method === 'GET' && path === issuesPath) {
       assert.ok(search.includes(`since=${encodeURIComponent(card.created_at)}`), search);
-      return json(search.includes('page=1') ? issues : []);
+      return json(
+        search.includes('page=1')
+          ? issues.map((issue) => ({
+              ...issue,
+              labels: issue.labels.map((name) => ({ name })),
+            }))
+          : [],
+      );
     }
     if (method === 'POST' && path === issuesPath) {
       const n = issues.length + 2;
@@ -728,6 +739,7 @@ function fakeGitHub(card = CARD, comments: unknown[] = [], events: unknown[] = [
     if (method === 'GET' && path === cardPath) return json(card);
     if (method === 'GET' && path === `${cardPath}/comments`) return json(comments);
     if (method === 'GET' && path === `${cardPath}/events`) return json(events);
+    if (method === 'GET' && path === `${cardPath}/reactions`) return json([]);
     if (method === 'POST' && path === '/graphql') {
       const { query, variables } = body as { query: string; variables: Record<string, string> };
       if (query.includes('organization('))
@@ -793,8 +805,8 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
 
     // An elevated subtask asks for the desk; nothing adds a stage label.
     const [plain, elevated] = github.issues;
-    assert.deepEqual(plain!.labels, []);
-    assert.deepEqual(elevated!.labels, ['needs:elevated']);
+    assert.deepEqual(plain!.labels, ['agent:filed']);
+    assert.deepEqual(elevated!.labels, ['agent:filed', 'needs:elevated']);
     assert.equal(
       elevated!.body,
       `${subtasks[1]!.body}\n\nPart of #1.\n\n${ELEVATED_NOTE}\n\n<!-- devkit:subtask #1 -->`,
@@ -825,7 +837,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
   }
 });
 
-test('follow-ups are filed unlabelled in Ask, capped at 5 per stage, and once', async () => {
+test('follow-ups are filed with provenance in Ask, capped at 5 per stage, and once', async () => {
   const github = fakeGitHub();
   const job = { ...storyJob, job: 'build-1', role: 'build' };
   const seven = fixtureResult('build.followups').followups!;
@@ -835,7 +847,7 @@ test('follow-ups are filed unlabelled in Ask, capped at 5 per stage, and once', 
     const posts = github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
     assert.equal(posts.length, 2);
     for (const [i, issue] of github.issues.entries()) {
-      assert.ok(!('labels' in JSON.parse(posts[i]!.split(' ').slice(2).join(' '))), 'no labels');
+      assert.deepEqual(JSON.parse(posts[i]!.split(' ').slice(2).join(' ')).labels, ['agent:filed']);
       assert.equal(
         issue.body,
         `${seven[i]!.body}\n\nFrom #1's \`build\` stage ([run](https://github.com/gingur-root/pipeline/actions/runs/123)).\n\n<!-- devkit:followup #1 build -->`,
@@ -959,9 +971,91 @@ test('a retro files its findings as one retro issue, never as follow-ups', async
     await publish(staged(job, fixtureResult('retro.ready')));
     const filed = github.issues;
     assert.equal(filed.length, 1);
-    assert.deepEqual(filed[0]!.labels, ['retro']);
+    assert.deepEqual(filed[0]!.labels, ['retro', 'agent:filed']);
     assert.ok(!github.calls.some((c) => c.includes('devkit:followup')));
   } finally {
+    teardown();
+  }
+});
+
+for (const kind of ['subtask', 'followup'] as const) {
+  test(`copied ${kind} markers need bot provenance or operator authorship before reuse`, async () => {
+    for (const [author, labels, reuse] of [
+      [PIPELINE_BOT.id, [], false],
+      [PIPELINE_BOT.id, ['agent:filed'], true],
+      [OPERATOR_ID, [], true],
+      [1, ['agent:filed'], false],
+    ] as const) {
+      const github = fakeGitHub();
+      const mark =
+        kind === 'subtask' ? '<!-- devkit:subtask #1 -->' : '<!-- devkit:followup #1 build -->';
+      github.issues.push({
+        id: 7,
+        number: 7,
+        node_id: 'I_7',
+        title: 'Copied',
+        body: `Copied body\n\n${mark}`,
+        labels: [...labels],
+        user: { id: author },
+      });
+      try {
+        if (kind === 'subtask') {
+          const filed = await fileSubtasks(storyJob, CARD, [
+            { title: 'Copied', body: 'Real body', pr: true, elevated: false },
+          ]);
+          assert.equal(filed[0]!.number === 7, reuse);
+          assert.equal(github.linked.has(7), reuse);
+        } else {
+          await fileFollowups(storyJob, CARD, 'build', [{ title: 'Copied', body: 'Real body' }]);
+          const listing = github.calls.find((c) =>
+            c.startsWith('POST /repos/o/r/issues/1/comments '),
+          )!;
+          assert.equal(listing.includes('- #7 Copied'), reuse);
+        }
+        const posts = github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
+        assert.equal(posts.length, reuse ? 0 : 1, `${kind}: author=${author} labels=${labels}`);
+        if (!reuse)
+          assert.equal(
+            JSON.parse(posts[0]!.split(' ').slice(2).join(' ')).body.includes('Real body'),
+            true,
+          );
+      } finally {
+        teardown();
+      }
+    }
+  });
+}
+
+test('retro triage files plain and elevated issues with provenance', async () => {
+  const github = fakeGitHub();
+  const paths = staged(
+    { ...storyJob, job: 'build-1', role: 'build' },
+    fixtureResult('build.followups'),
+  );
+  writeFileSync(
+    join(paths.in, TRIAGE_FILE),
+    JSON.stringify([
+      {
+        title: 'Plain',
+        body: 'First',
+        link: null,
+        start: 'backlog',
+        elevated: false,
+        priority: 'P2',
+      },
+      { title: 'Desk', body: 'Second', link: null, start: 'plan', elevated: true, priority: 'P2' },
+    ]),
+  );
+  try {
+    await publish(paths);
+    const posts = github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
+    assert.deepEqual(
+      posts.map((c) => JSON.parse(c.split(' ').slice(2).join(' ')).labels),
+      [['agent:filed'], ['agent:filed', 'needs:elevated']],
+    );
+    assert.ok(github.calls.includes('POST /repos/o/r/issues/3/labels {"labels":["agent:plan"]}'));
+  } finally {
+    rmSync(join(paths.in, '..'), { recursive: true, force: true });
     teardown();
   }
 });

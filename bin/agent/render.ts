@@ -7,7 +7,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
-import { type Handoff, OPERATOR_ID, PIPELINE_BOT, RETRO_LABEL, STAGE_LABELS } from './constants.ts';
+import {
+  filedByPipeline,
+  type Handoff,
+  OPERATOR_ID,
+  PIPELINE_BOT,
+  RETRO_LABEL,
+  STAGE_LABELS,
+} from './constants.ts';
 import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
@@ -73,13 +80,17 @@ export interface RenderOptions {
 
 const HANDOFF_ROLES: readonly string[] = ['build', 'elevated'] satisfies Handoff[];
 
-function trusted(item: Authored, appId: number): boolean {
-  // Issues the App files itself (retros, the coordinator's) carry its bot user, not performed_via_github_app.
+function trustedComment(item: Authored, appId: number): boolean {
+  // Agents cannot post comments, so bot authorship still proves a comment's origin.
   return (
     item.user?.id === OPERATOR_ID ||
     item.user?.id === PIPELINE_BOT.id ||
     item.performed_via_github_app?.id === appId
   );
+}
+
+function trustedIssue(issue: Issue): boolean {
+  return issue.user?.id === OPERATOR_ID || filedByPipeline(issue);
 }
 
 export function issueSnapshot(
@@ -88,16 +99,16 @@ export function issueSnapshot(
   appId: number,
   parent: Issue | null = null,
 ): string {
-  const head = trusted(issue, appId)
+  const head = trustedIssue(issue)
     ? `# ${issue.title}\n\n${issue.body ?? ''}`
     : `# Issue #${issue.number}\n\n(Written by someone else, so left out.)`;
   const thread = comments
-    .filter((comment) => trusted(comment, appId))
+    .filter((comment) => trustedComment(comment, appId))
     .map((comment) => `## Comment, ${comment.created_at}\n\n${comment.body ?? ''}`);
   const snapshot = [head, ...thread].join('\n\n');
   if (!parent) return snapshot;
   // Only the story's title and body, so a subtask is planned within it.
-  const story = trusted(parent, appId)
+  const story = trustedIssue(parent)
     ? `# Parent story #${parent.number}: ${parent.title}\n\n${parent.body ?? ''}`
     : `# Parent story #${parent.number}\n\n(Written by someone else, so left out.)`;
   return `${story}\n\n---\n\n${snapshot}`;
@@ -122,10 +133,10 @@ function timeline(events: Event[]): string {
     .join('\n');
 }
 
-/** The repo's open issues a retro plan may link a finding to: only the operator's or the App's, as the snapshot. */
-export function openIssues(issues: Issue[], appId: number): string {
+/** The repo's open issues a retro plan may link to: the operator's or labelled pipeline issues. */
+export function openIssues(issues: Issue[]): string {
   return issues
-    .filter((i) => !i.pull_request && trusted(i, appId))
+    .filter((i) => !i.pull_request && trustedIssue(i))
     .map((i) => `- #${i.number} ${i.title}${i.labels.map((l) => ` \`${l.name}\``).join('')}`)
     .join('\n');
 }
@@ -192,7 +203,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     parentOf(path),
   ]);
   const issueRevision = revision(issue.title, issue.body ?? '');
-  const bodySeen = trusted(issue, options.appId);
+  const bodySeen = trustedIssue(issue);
   const retroPlan =
     options.role === 'plan' && issue.labels.some((label) => label.name === RETRO_LABEL);
   // One run never carries out a whole story: each subtask builds on its own.
@@ -266,7 +277,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   if (retroPlan)
     writeFileSync(
       join(options.out, ISSUES_FILE),
-      `${openIssues(await restAll<Issue>(`/repos/${options.repo}/issues?state=open`), options.appId)}\n`,
+      `${openIssues(await restAll<Issue>(`/repos/${options.repo}/issues?state=open`))}\n`,
     );
   if (options.role === 'retro')
     writeFileSync(

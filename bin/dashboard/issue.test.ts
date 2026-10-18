@@ -2,8 +2,55 @@
 import assert from 'node:assert/strict';
 import { test, vi } from 'vite-plus/test';
 
-import { OPERATOR_ID } from '../agent/constants.ts';
-import { LEFT_OUT, readPull, statusLine } from './issue.ts';
+import { OPERATOR_ID, PIPELINE_BOT } from '../agent/constants.ts';
+import { LEFT_OUT, readPull, readThread, statusLine } from './issue.ts';
+
+test('readThread trusts bot issue bodies only with agent:filed and keeps trusting bot comments', async () => {
+  let user: { id: number } = { id: PIPELINE_BOT.id };
+  let labels: { name: string }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('PIPELINE_APP_KEY', '');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const routes: Record<string, unknown> = {
+      '/repos/gingur-root/scratch/issues/1': {
+        user,
+        labels,
+        title: 'Title',
+        body: 'Body',
+        state: 'open',
+        html_url: '',
+      },
+      '/repos/gingur-root/scratch/issues/1/comments': [
+        {
+          id: 1,
+          user: { id: PIPELINE_BOT.id, login: PIPELINE_BOT.name },
+          body: 'Bot comment',
+          created_at: '',
+        },
+      ],
+      '/graphql': { data: { repository: { issueOrPullRequest: { projectItems: { nodes: [] } } } } },
+    };
+    return new Response(JSON.stringify(routes[new URL(url).pathname]));
+  });
+  try {
+    for (const [id, names, trusted] of [
+      [PIPELINE_BOT.id, [], false],
+      [PIPELINE_BOT.id, ['agent:filed'], true],
+      [OPERATOR_ID, [], true],
+      [1, ['agent:filed'], false],
+    ] as const) {
+      user = { id };
+      labels = names.map((name) => ({ name }));
+      const thread = await readThread('scratch', 1);
+      assert.equal(thread.bodyTrusted, trusted);
+      assert.equal(thread.comments[0]!.trusted, true);
+      assert.equal(thread.comments[0]!.body, 'Bot comment');
+    }
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
 
 test('the status line says done, waiting on you, or column and running stage', () => {
   assert.equal(

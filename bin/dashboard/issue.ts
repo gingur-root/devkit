@@ -1,4 +1,4 @@
-import { OPERATOR_ID, PIPELINE_BOT, STATUS_FIELD } from '../agent/constants.ts';
+import { filedByPipeline, OPERATOR_ID, PIPELINE_BOT, STATUS_FIELD } from '../agent/constants.ts';
 import { graphql, rest } from '../agent/github.ts';
 import { refreshGhToken } from './app-token.ts';
 import { COMMENTED_REVIEW, ORG } from './constants.ts';
@@ -124,7 +124,7 @@ export async function readThread(repo: string, number: number) {
     url: issue.html_url,
     state: issue.state,
     body: issue.body ?? '',
-    bodyTrusted: trustedAuthor(issue.user),
+    bodyTrusted: issue.user?.id === OPERATOR_ID || filedByPipeline(issue),
     labels,
     status,
     line: statusLine({ state: issue.state, status, labels }),
