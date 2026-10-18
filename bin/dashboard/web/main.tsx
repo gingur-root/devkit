@@ -25,19 +25,19 @@ import { BOARD_EVENT } from '../constants.ts';
 import type { BoardEvent } from '../events.ts';
 import type { DashboardMessage } from '../stream.ts';
 import { CardButtons } from './card-buttons.tsx';
+import { ChatMessage } from './chat-message.tsx';
 import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
 } from './components/ai-elements/conversation.tsx';
-import { Message, MessageContent, MessageResponse } from './components/ai-elements/message.tsx';
+import { MessageResponse } from './components/ai-elements/message.tsx';
 import {
   PromptInput,
   PromptInputFooter,
   PromptInputSubmit,
   PromptInputTextarea,
 } from './components/ai-elements/prompt-input.tsx';
-import { Tool, ToolHeader } from './components/ai-elements/tool.tsx';
 import { Badge } from './components/ui/badge.tsx';
 import { Button } from './components/ui/button.tsx';
 import {
@@ -308,48 +308,6 @@ function Board({ version }: { version: number }) {
         );
       })}
     </div>
-  );
-}
-
-function ChatMessage({ message, running }: { message: DashboardMessage; running: boolean }) {
-  return (
-    <Message from={message.role}>
-      <MessageContent>
-        {message.parts.map((part, i) => {
-          if (part.type === 'text') {
-            return message.role === 'user' ? (
-              <p key={i} className="whitespace-pre-wrap">
-                {part.text}
-              </p>
-            ) : (
-              // The coordinator's links open directly.
-              <MessageResponse key={i} linkSafety={{ enabled: false }}>
-                {part.text}
-              </MessageResponse>
-            );
-          }
-          if (part.type === 'data-tool') {
-            return (
-              <Tool key={i} className="mb-0">
-                {/* Only the name is streamed, so there is nothing to expand. */}
-                <ToolHeader
-                  className="p-2 [&>svg:last-child]:hidden"
-                  type="dynamic-tool"
-                  toolName={part.data.name}
-                  title={part.data.name.replace('mcp__github__', '')}
-                  state={
-                    running && i === message.parts.length - 1
-                      ? 'input-available'
-                      : 'output-available'
-                  }
-                />
-              </Tool>
-            );
-          }
-          return null;
-        })}
-      </MessageContent>
-    </Message>
   );
 }
 
