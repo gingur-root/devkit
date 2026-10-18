@@ -7,10 +7,13 @@ import { DefaultChatTransport } from 'ai';
 import { cn } from 'cn';
 import { ChevronDown, ChevronUp, ChevronsUp, Equal, type LucideIcon } from 'lucide-react';
 import {
+  type ComponentProps,
+  createContext,
   lazy,
   type ReactNode,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -18,6 +21,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { createRoot } from 'react-dom/client';
+import { defaultComponents } from 'streamdown';
 
 import { type Priority, READY_LABEL, STAGE_LABELS, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
@@ -25,6 +29,7 @@ import { BOARD_EVENT } from '../constants.ts';
 import type { BoardEvent } from '../events.ts';
 import type { DashboardMessage } from '../stream.ts';
 import { CardButtons } from './card-buttons.tsx';
+import { linkedCard } from './links.ts';
 import {
   Conversation,
   ConversationContent,
@@ -269,12 +274,19 @@ function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => vo
   );
 }
 
-function Board({ version }: { version: number }) {
+const CardsContext = createContext<{
+  cards: BoardCard[] | null;
+  failed: boolean;
+  reload: () => void;
+}>({ cards: null, failed: false, reload: () => {} });
+
+function CardsProvider({ children }: { children: ReactNode }) {
   const [cards, setCards] = useState<BoardCard[] | null>(null);
   const [failed, setFailed] = useState(false);
-  // A button press reloads the board at once, without waiting for a live update.
-  const [pressed, setPressed] = useState(0);
-  const reload = useCallback(() => setPressed((n) => n + 1), []);
+  // A button press or coordinator turn reloads without waiting for a live update.
+  const [version, setVersion] = useState(0);
+  const reload = useCallback(() => setVersion((n) => n + 1), []);
+  useBoardEvents(reload);
   useEffect(() => {
     setFailed(false);
     fetch('/api/board')
@@ -283,7 +295,14 @@ function Board({ version }: { version: number }) {
         return r.json() as Promise<BoardCard[]>;
       })
       .then(setCards, () => setFailed(true));
-  }, [version, pressed]);
+  }, [version]);
+  return (
+    <CardsContext.Provider value={{ cards, failed, reload }}>{children}</CardsContext.Provider>
+  );
+}
+
+function Board() {
+  const { cards, failed, reload } = useContext(CardsContext);
   if (failed) return <p className="p-4">Could not load the board.</p>;
   if (!cards) return <p className="p-4 text-muted-foreground">Loading…</p>;
   return (
@@ -311,6 +330,32 @@ function Board({ version }: { version: number }) {
   );
 }
 
+function ChatLink(props: ComponentProps<typeof defaultComponents.a>) {
+  const { cards, failed } = useContext(CardsContext);
+  const card = linkedCard(props.href, failed ? [] : (cards ?? []));
+  if (!card) return <defaultComponents.a {...props} />;
+  return (
+    <Badge
+      asChild
+      variant="outline"
+      className={cn(
+        card.column === 'Needs you' && 'border-amber-500 text-amber-700 dark:text-amber-400',
+      )}
+    >
+      <a
+        href={`#${card.repo}/${card.number}`}
+        title={`Open ${card.repo}#${card.number} in the dashboard`}
+      >
+        {props.children === props.href ? `${card.repo}#${card.number}` : props.children}
+        {' · '}
+        {card.column}
+      </a>
+    </Badge>
+  );
+}
+
+const chatComponents = { a: ChatLink };
+
 function ChatMessage({ message, running }: { message: DashboardMessage; running: boolean }) {
   return (
     <Message from={message.role}>
@@ -323,7 +368,7 @@ function ChatMessage({ message, running }: { message: DashboardMessage; running:
               </p>
             ) : (
               // The coordinator's links open directly.
-              <MessageResponse key={i} linkSafety={{ enabled: false }}>
+              <MessageResponse key={i} linkSafety={{ enabled: false }} components={chatComponents}>
                 {part.text}
               </MessageResponse>
             );
@@ -511,10 +556,8 @@ function HomeChat({ onRoute, onTurnEnd }: { onRoute: Route; onTurnEnd: () => voi
 
 function Home({ onRoute }: { onRoute: Route }) {
   const wide = useWide();
-  const [version, setVersion] = useState(0);
   // A coordinator turn may have moved cards.
-  const refresh = useCallback(() => setVersion((v) => v + 1), []);
-  useBoardEvents(refresh);
+  const { reload: refresh } = useContext(CardsContext);
   const chat = <HomeChat onRoute={onRoute} onTurnEnd={refresh} />;
   return (
     <div className="flex h-dvh lg:grid lg:grid-cols-[1fr_24rem]">
@@ -540,7 +583,7 @@ function Home({ onRoute }: { onRoute: Route }) {
             </Sheet>
           )}
         </header>
-        <Board version={version} />
+        <Board />
       </main>
       {wide && (
         <aside className="flex min-h-0 flex-col overflow-hidden border-l">
@@ -679,10 +722,14 @@ function App() {
       </Suspense>
     );
   }
-  return ref ? (
-    <IssueView thread={ref} pending={pending} setPending={setPending} onRoute={onRoute} />
-  ) : (
-    <Home onRoute={onRoute} />
+  return (
+    <CardsProvider>
+      {ref ? (
+        <IssueView thread={ref} pending={pending} setPending={setPending} onRoute={onRoute} />
+      ) : (
+        <Home onRoute={onRoute} />
+      )}
+    </CardsProvider>
   );
 }
 
