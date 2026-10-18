@@ -317,6 +317,10 @@ Implement the supplied approved issue and plan in the assigned worktree.
 
 5. Run the relevant checks on the final diff. Review your own diff for mistakes,
    temporary instrumentation, unintended files, and changes outside scope.
+   When a smoke or end-to-end run exercises code called by a composite action
+   or workflow, use the env that caller builds for that executor or role.
+   Read the caller's steps, honor each `if:` that skips one, and set no variable
+   the caller wouldn't set. Extra env proves a path real runs never take.
    This local check supplements the separate independent review stage.
 
 6. Return the diff or candidate commit under the runner's transport contract,
