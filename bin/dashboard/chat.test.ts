@@ -65,6 +65,29 @@ test('a home turn with nothing new sends the prompt as typed', async () => {
   assert.equal(home.prompts[0]?.prompt, 'file a bug');
 });
 
+test('clearing home persists a fresh session and leaves issue threads untouched', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dash-')), 'state.json');
+  const store = createStore(file);
+  const first = fake([]);
+  await drain(chatTurn(store, 'old conversation', undefined, first.run, first.read));
+  const issue = fake([comment(1)]);
+  await drain(chatTurn(store, 'issue conversation', ref, issue.run, issue.read));
+  const issueBefore = await createStore(file).get('devkit#7');
+
+  await store.clear('home');
+  assert.deepEqual(await createStore(file).get('home'), { lines: [] });
+
+  const second = fake([]);
+  await drain(chatTurn(store, 'new conversation', undefined, second.run, second.read));
+  assert.equal(second.prompts[0]?.resume, undefined);
+  const saved = createStore(file);
+  assert.deepEqual(
+    (await saved.get('home')).lines.map((line) => `${line.role}:${line.text}`),
+    ['me:new conversation', 'bot:ok'],
+  );
+  assert.deepEqual(await saved.get('devkit#7'), issueBefore);
+});
+
 test("a stranger's comment reaches the coordinator only as a placeholder", async () => {
   const file = join(mkdtempSync(join(tmpdir(), 'dash-')), 'state.json');
   const turn = fake([

@@ -63,6 +63,9 @@ interface Items {
           content:
             | (RawIssue & {
                 labels: { nodes: { name: string }[] };
+                closedByPullRequestsReferences: {
+                  nodes: { number: number; repository: { name: string } }[];
+                };
                 subIssues: { nodes: RawIssue[] };
               })
             | { number?: undefined }
@@ -124,6 +127,14 @@ export async function board() {
                   content {
                     ... on Issue {
                       ${ISSUE}
+                      closedByPullRequestsReferences(first: 10, includeClosedPrs: true) {
+                        nodes {
+                          number
+                          repository {
+                            name
+                          }
+                        }
+                      }
                       labels(first: 20) {
                         nodes {
                           name
@@ -183,6 +194,10 @@ export async function board() {
         updatedAt: issue.updatedAt,
         priority: issue.priority,
         labels: issue.labels.nodes.map((l) => l.name),
+        pulls: issue.closedByPullRequestsReferences.nodes.map((p) => ({
+          repo: p.repository.name,
+          number: p.number,
+        })),
         column: cardColumn({ ...asBoard(issue), subtasks: subtasks.map(asBoard) }),
         // A story's buttons act on the story issue alone, so they follow its own column.
         state: cardState({ ...asBoard(issue), labels: issue.labels.nodes.map((l) => l.name) }),

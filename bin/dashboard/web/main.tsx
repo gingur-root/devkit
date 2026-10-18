@@ -7,10 +7,13 @@ import { DefaultChatTransport } from 'ai';
 import { cn } from 'cn';
 import { ChevronDown, ChevronUp, ChevronsUp, Equal, type LucideIcon } from 'lucide-react';
 import {
+  type ComponentProps,
+  createContext,
   lazy,
   type ReactNode,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -18,6 +21,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { createRoot } from 'react-dom/client';
+import { defaultComponents } from 'streamdown';
 
 import { type Priority, READY_LABEL, STAGE_LABELS, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
@@ -26,6 +30,7 @@ import type { BoardEvent } from '../events.ts';
 import type { DashboardMessage } from '../stream.ts';
 import { CardButtons } from './card-buttons.tsx';
 import { ChatMessage } from './chat-message.tsx';
+import { linkedCard } from './links.ts';
 import {
   Conversation,
   ConversationContent,
@@ -269,12 +274,19 @@ function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => vo
   );
 }
 
-function Board({ version }: { version: number }) {
+const CardsContext = createContext<{
+  cards: BoardCard[] | null;
+  failed: boolean;
+  reload: () => void;
+}>({ cards: null, failed: false, reload: () => {} });
+
+function CardsProvider({ children }: { children: ReactNode }) {
   const [cards, setCards] = useState<BoardCard[] | null>(null);
   const [failed, setFailed] = useState(false);
-  // A button press reloads the board at once, without waiting for a live update.
-  const [pressed, setPressed] = useState(0);
-  const reload = useCallback(() => setPressed((n) => n + 1), []);
+  // A button press or coordinator turn reloads without waiting for a live update.
+  const [version, setVersion] = useState(0);
+  const reload = useCallback(() => setVersion((n) => n + 1), []);
+  useBoardEvents(reload);
   useEffect(() => {
     setFailed(false);
     fetch('/api/board')
@@ -283,7 +295,14 @@ function Board({ version }: { version: number }) {
         return r.json() as Promise<BoardCard[]>;
       })
       .then(setCards, () => setFailed(true));
-  }, [version, pressed]);
+  }, [version]);
+  return (
+    <CardsContext.Provider value={{ cards, failed, reload }}>{children}</CardsContext.Provider>
+  );
+}
+
+function Board() {
+  const { cards, failed, reload } = useContext(CardsContext);
   if (failed) return <p className="p-4">Could not load the board.</p>;
   if (!cards) return <p className="p-4 text-muted-foreground">Loading…</p>;
   return (
@@ -311,6 +330,32 @@ function Board({ version }: { version: number }) {
   );
 }
 
+function ChatLink(props: ComponentProps<typeof defaultComponents.a>) {
+  const { cards, failed } = useContext(CardsContext);
+  const card = linkedCard(props.href, failed ? [] : (cards ?? []));
+  if (!card) return <defaultComponents.a {...props} />;
+  return (
+    <Badge
+      asChild
+      variant="outline"
+      className={cn(
+        card.column === 'Needs you' && 'border-amber-500 text-amber-700 dark:text-amber-400',
+      )}
+    >
+      <a
+        href={`#${card.repo}/${card.number}`}
+        title={`Open ${card.repo}#${card.number} in the dashboard`}
+      >
+        {props.children === props.href ? `${card.repo}#${card.number}` : props.children}
+        {' · '}
+        {card.column}
+      </a>
+    </Badge>
+  );
+}
+
+const chatComponents = { a: ChatLink };
+
 function Chat({
   thread,
   initial,
@@ -319,9 +364,13 @@ function Chat({
   onTurnEnd,
   onPendingSent,
   prelude,
+  onBusy,
+  disabled = false,
 }: {
   onPendingSent: () => void;
   prelude?: ReactNode;
+  onBusy?: (busy: boolean) => void;
+  disabled?: boolean;
   thread: Ref | null;
   initial: DashboardMessage[];
   pending: string | null;
@@ -373,13 +422,22 @@ function Chat({
   }, [pending]);
 
   const busy = status === 'submitted' || status === 'streaming';
+  useEffect(() => {
+    onBusy?.(busy);
+    return () => onBusy?.(false);
+  }, [busy, onBusy]);
   return (
     <>
       <Conversation className="min-h-0">
         <ConversationContent className="mx-auto max-w-3xl gap-4">
           {prelude}
           {messages.map((m, i) => (
-            <ChatMessage key={m.id} message={m} running={busy && i === messages.length - 1} />
+            <ChatMessage
+              key={m.id}
+              message={m}
+              running={busy && i === messages.length - 1}
+              components={chatComponents}
+            />
           ))}
           {status === 'submitted' && <p className="text-sm text-muted-foreground">Working…</p>}
           {error && <p className="text-sm text-destructive">Error: {error.message}</p>}
@@ -389,10 +447,11 @@ function Chat({
       <PromptInput
         className="mx-auto max-w-3xl p-3"
         onSubmit={({ text }) => {
-          if (text.trim()) send(text.trim());
+          if (!disabled && text.trim()) send(text.trim());
         }}
       >
         <PromptInputTextarea
+          disabled={disabled}
           className="min-h-12"
           placeholder="Message the coordinator"
           aria-label="Prompt"
@@ -402,7 +461,7 @@ function Chat({
           }}
         />
         <PromptInputFooter className="justify-end">
-          <PromptInputSubmit status={status} onStop={stop} />
+          <PromptInputSubmit status={status} onStop={stop} disabled={disabled} />
         </PromptInputFooter>
       </PromptInput>
     </>
@@ -449,7 +508,17 @@ function useThread(ref: Ref | null, version = 0) {
 
 type Route = (to: Ref, text: string) => void;
 
-function HomeChat({ onRoute, onTurnEnd }: { onRoute: Route; onTurnEnd: () => void }) {
+function HomeChat({
+  onRoute,
+  onTurnEnd,
+  onBusy,
+  disabled,
+}: {
+  onRoute: Route;
+  onTurnEnd: () => void;
+  onBusy: (busy: boolean) => void;
+  disabled: boolean;
+}) {
   // Loaded on mount, so a sheet reopened after a turn shows that turn.
   const { ready, failed } = useThread(null);
   if (failed) return <p className="p-4">Could not load the chat.</p>;
@@ -463,20 +532,73 @@ function HomeChat({ onRoute, onTurnEnd }: { onRoute: Route; onTurnEnd: () => voi
       onPendingSent={() => {}}
       onRoute={onRoute}
       onTurnEnd={onTurnEnd}
+      onBusy={onBusy}
+      disabled={disabled}
     />
   );
 }
 
 function Home({ onRoute }: { onRoute: Route }) {
   const wide = useWide();
-  const [version, setVersion] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const [chatVersion, setChatVersion] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
   // A coordinator turn may have moved cards.
-  const refresh = useCallback(() => setVersion((v) => v + 1), []);
-  useBoardEvents(refresh);
-  const chat = <HomeChat onRoute={onRoute} onTurnEnd={refresh} />;
+  const { reload: refresh } = useContext(CardsContext);
+  const clear = async () => {
+    if (!confirm('Clear the coordinator chat?')) return;
+    setClearing(true);
+    setClearError(null);
+    try {
+      const response = await fetch('/api/clear', { method: 'POST' });
+      if (response.status !== 204) {
+        throw new Error((await response.text()) || `Clear failed (${response.status}).`);
+      }
+      setChatVersion((v) => v + 1);
+    } catch (error) {
+      setClearError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClearing(false);
+    }
+  };
+  const controls = (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="xs"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded ? 'Collapse' : 'Expand'}
+      </Button>
+      <Button variant="ghost" size="xs" disabled={busy || clearing} onClick={() => void clear()}>
+        Clear
+      </Button>
+    </div>
+  );
+  const failure = clearError && (
+    <p role="alert" className="px-4 py-2 text-sm text-destructive">
+      {clearError}
+    </p>
+  );
+  const chat = (
+    <HomeChat
+      key={chatVersion}
+      onRoute={onRoute}
+      onTurnEnd={refresh}
+      onBusy={setBusy}
+      disabled={clearing}
+    />
+  );
   return (
-    <div className="flex h-dvh lg:grid lg:grid-cols-[1fr_24rem]">
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={cn('flex h-dvh lg:grid', expanded ? 'lg:grid-cols-1' : 'lg:grid-cols-[1fr_24rem]')}
+    >
+      <main
+        className={cn('flex min-w-0 flex-1 flex-col overflow-hidden', expanded && wide && 'hidden')}
+      >
         <header className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-4">
             <h1 className="font-semibold">Board</h1>
@@ -491,18 +613,29 @@ function Home({ onRoute }: { onRoute: Route }) {
                   Chat
                 </Button>
               </SheetTrigger>
-              <SheetContent className="w-full gap-0 sm:max-w-md" aria-describedby={undefined}>
-                <SheetTitle className="border-b px-4 py-3">Coordinator</SheetTitle>
+              <SheetContent
+                className={cn('w-full gap-0', expanded ? 'sm:max-w-none' : 'sm:max-w-md')}
+                aria-describedby={undefined}
+              >
+                <div className="flex items-center justify-between gap-2 border-b py-3 pr-12 pl-4">
+                  <SheetTitle>Coordinator</SheetTitle>
+                  {controls}
+                </div>
+                {failure}
                 {chat}
               </SheetContent>
             </Sheet>
           )}
         </header>
-        <Board version={version} />
+        <Board />
       </main>
       {wide && (
         <aside className="flex min-h-0 flex-col overflow-hidden border-l">
-          <h2 className="border-b px-4 py-3 font-semibold">Coordinator</h2>
+          <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+            <h2 className="font-semibold">Coordinator</h2>
+            {controls}
+          </div>
+          {failure}
           {chat}
         </aside>
       )}
@@ -637,10 +770,14 @@ function App() {
       </Suspense>
     );
   }
-  return ref ? (
-    <IssueView thread={ref} pending={pending} setPending={setPending} onRoute={onRoute} />
-  ) : (
-    <Home onRoute={onRoute} />
+  return (
+    <CardsProvider>
+      {ref ? (
+        <IssueView thread={ref} pending={pending} setPending={setPending} onRoute={onRoute} />
+      ) : (
+        <Home onRoute={onRoute} />
+      )}
+    </CardsProvider>
   );
 }
 

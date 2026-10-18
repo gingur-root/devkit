@@ -1,3 +1,5 @@
+import type { ComponentProps } from 'react';
+
 import type { DashboardMessage } from '../stream.ts';
 import {
   ChainOfThought,
@@ -7,7 +9,15 @@ import {
 } from './components/ai-elements/chain-of-thought.tsx';
 import { Message, MessageContent, MessageResponse } from './components/ai-elements/message.tsx';
 
-export function ChatMessage({ message, running }: { message: DashboardMessage; running: boolean }) {
+export function ChatMessage({
+  message,
+  running,
+  components,
+}: {
+  message: DashboardMessage;
+  running: boolean;
+  components?: ComponentProps<typeof MessageResponse>['components'];
+}) {
   return (
     <Message from={message.role}>
       <MessageContent>
@@ -19,7 +29,7 @@ export function ChatMessage({ message, running }: { message: DashboardMessage; r
               </p>
             ) : (
               // The coordinator's links open directly.
-              <MessageResponse key={i} linkSafety={{ enabled: false }}>
+              <MessageResponse key={i} linkSafety={{ enabled: false }} components={components}>
                 {part.text}
               </MessageResponse>
             );

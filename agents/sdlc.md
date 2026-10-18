@@ -198,6 +198,11 @@ the operator to adopt. Otherwise propose none.
    design, architecture, migration, or infrastructure/security. Recommend the
    executor, effort, and conditional tools. Request research or a disposable
    prototype only for a named uncertainty that could change the plan.
+   When a step decides which credentials, permissions or fetches a job gets,
+   name the commit whose files control that decision. It must be the trusted
+   source/base commit, never a candidate or other commit an agent wrote. An
+   infrastructure/security plan includes an acceptance criterion that checks
+   the controlling commit is the trusted source/base.
 
 5. Keep one issue as one implementation job when it fits. Split oversized work
    into independently verifiable vertical slices with real blocking edges.
@@ -266,8 +271,10 @@ Resolve questions already answered by the contract or repo. Flag decisions
 that materially change behavior; allow routine implementation choices.
 Check requirement coverage, interface compatibility, dependency edges,
 failure recovery, data integrity, testability, and the feasibility of the
-proposed checks. Test concrete scenarios, especially partial failure and
-mixed old/new versions where those apply.
+proposed checks. For each step that decides credentials, permissions or fetches,
+find the commit whose files control it. A missing commit, or one an agent
+wrote, is a blocking finding. Test concrete scenarios, especially partial
+failure and mixed old/new versions where those apply.
 
 Report only material plan defects or unanswered decisions as findings. State
 the scenario, supporting requirement or code location, consequence, and
@@ -276,8 +283,10 @@ optional alternatives. A different design preference alone is advisory.
 
 Return pass only when each mandatory criterion and consequential risk has
 adequate support for the proposed approach and checks, with no blocking plan
-defect or unresolved material decision. Return changes-requested for confirmed
-defects; return inconclusive when missing evidence prevents a verdict.
+defect or unresolved material decision, and every credential, permission and
+fetch decision is controlled by the trusted source/base commit.
+Return changes-requested for confirmed defects; return inconclusive when
+missing evidence prevents a verdict.
 Include a brief criterion and risk assessment record supporting the verdict.
 Keep the original plan intact; the planner handles revisions. Stop when the
 required assessment is complete or its specific evidence gap is identified.
@@ -317,6 +326,10 @@ Implement the supplied approved issue and plan in the assigned worktree.
 
 5. Run the relevant checks on the final diff. Review your own diff for mistakes,
    temporary instrumentation, unintended files, and changes outside scope.
+   When a smoke or end-to-end run exercises code called by a composite action
+   or workflow, use the env that caller builds for that executor or role.
+   Read the caller's steps, honor each `if:` that skips one, and set no variable
+   the caller wouldn't set. Extra env proves a path real runs never take.
    This local check supplements the separate independent review stage.
 
 6. Return the diff or candidate commit under the runner's transport contract,

@@ -34,6 +34,9 @@ These override anything below that conflicts with them.
   input or localhost. A missing credential fails the job; it never falls back
   to a hosted runner or an ambient `gh` login. Elevated runs on the WSL desk
   act as the operator by decision (devkit#119, #128).
+- **Trust comes from the base.** Credential, permission and fetch decisions use
+  the trusted base/source commit, never the PR's own code or any commit an
+  agent wrote (devkit#5, #188).
 - **Runners are declared, not hand-built.** Every tool, library and login a
   runner needs is declared in infra and checked by a health check that fails
   loudly. A plan never asks for a manual install. Interactive logins, roots of
