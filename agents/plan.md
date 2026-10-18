@@ -55,6 +55,11 @@ the operator to adopt. Otherwise propose none.
    design, architecture, migration, or infrastructure/security. Recommend the
    executor, effort, and conditional tools. Request research or a disposable
    prototype only for a named uncertainty that could change the plan.
+   When a step decides which credentials, permissions or fetches a job gets,
+   name the commit whose files control that decision. It must be the trusted
+   source/base commit, never a candidate or other commit an agent wrote. An
+   infrastructure/security plan includes an acceptance criterion that checks
+   the controlling commit is the trusted source/base.
 
 5. Keep one issue as one implementation job when it fits. Split oversized work
    into independently verifiable vertical slices with real blocking edges.
