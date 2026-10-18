@@ -3,14 +3,10 @@ import { join } from 'node:path';
 
 import type { CodexOptions, SandboxMode } from '@openai/codex-sdk';
 
-import {
-  CODEX_FEATURES_OFF,
-  CODEX_HOME_FORBIDDEN,
-  CODEX_SUBSCRIPTION_MODE,
-  WEB_MCP_SERVERS,
-} from '../constants.ts';
+import { CODEX_FEATURES_OFF, CODEX_HOME_FORBIDDEN, CODEX_SUBSCRIPTION_MODE } from '../constants.ts';
 import type { Failure } from '../result.ts';
 import type { Role } from '../roles.ts';
+import { type RoleTools, toolsEnv } from '../tools.ts';
 import {
   agentEnv,
   type Env,
@@ -75,7 +71,7 @@ export function codexSandbox(tools: Role['tools']): SandboxMode {
 export function codexOptions(ctx: {
   executable: string;
   env: Record<string, string>;
-  web: boolean;
+  tools: RoleTools;
 }): CodexOptions {
   return {
     codexPathOverride: ctx.executable,
@@ -88,10 +84,9 @@ export function codexOptions(ctx: {
       skills: { bundled: { enabled: false } },
       // No AGENTS.md from the repo, matching Claude's `settingSources: []`.
       project_doc_max_bytes: 0,
-      ...(ctx.web && {
-        mcp_servers: Object.fromEntries(
-          Object.entries(WEB_MCP_SERVERS).map(([name, url]) => [name, { url }]),
-        ),
+      mcp_servers: ctx.tools.codex,
+      ...(Object.keys(ctx.tools.secrets).length && {
+        shell_environment_policy: { exclude: Object.keys(ctx.tools.secrets) },
       }),
     },
   };
@@ -115,12 +110,12 @@ export function codexFailure(message: string): Failure {
 export async function runCodex(input: RunInput): Promise<RunOutput> {
   const { role, prompt, emit } = input;
   const { Codex } = await import('@openai/codex-sdk');
-  const env = agentEnv('codex', process.env);
+  const env = { ...agentEnv('codex', process.env), ...toolsEnv(input.tools, process.env) };
   assertCodexHome(codexHome(env));
   const options = codexOptions({
     env,
     executable: resolveExecutable('codex', env.PATH),
-    web: role.web,
+    tools: input.tools,
   });
   const codex = new Codex(options);
   const thread = codex.startThread({

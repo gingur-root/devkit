@@ -3,7 +3,7 @@
 // A subtask's snapshot starts with its parent story, and a story never builds:
 // each of its subtasks does (devkit#12).
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
@@ -17,6 +17,7 @@ import {
   ISSUES_FILE,
   JOB_FILE,
   TIMELINE_FILE,
+  TOOLS_FILE,
   type Job,
   marker,
   PLAN_END,
@@ -27,6 +28,7 @@ import {
   TRIAGE_FILE,
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
+import { MANIFEST_PATH } from './tools.ts';
 
 interface Authored {
   body: string | null;
@@ -228,6 +230,15 @@ export async function render(options: RenderOptions): Promise<Job> {
       throw error;
     }
   }
+  const base = approved && (options.base ?? source);
+  const ref = base ?? source;
+  const manifest = await rest<{ content: string }>(
+    'GET',
+    `/repos/${options.repo}/contents/${MANIFEST_PATH}?ref=${encodeURIComponent(ref)}`,
+  ).catch((error: Error) => {
+    if (!error.message.includes(' 404 ')) throw error;
+    return null;
+  });
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -246,7 +257,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     // A build works from the default branch as it is now, not the plan's older
     // source: the App can't push a branch whose workflow files differ from it.
     source,
-    base: approved && (options.base ?? source),
+    base,
     // A review checks out the candidate itself.
     candidate: options.role === 'review' ? source : null,
     // Publish reads this to hold a retro issue's plan to its triage.
@@ -255,6 +266,9 @@ export async function render(options: RenderOptions): Promise<Job> {
     attemptLimit: null,
   };
   mkdirSync(options.out, { recursive: true });
+  if (manifest)
+    writeFileSync(join(options.out, TOOLS_FILE), Buffer.from(manifest.content, 'base64'));
+  else rmSync(join(options.out, TOOLS_FILE), { force: true });
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),

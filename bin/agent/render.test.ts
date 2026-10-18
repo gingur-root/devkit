@@ -25,6 +25,72 @@ const APP = 7;
 const ISSUE = revision('Title', 'Body');
 const PLAN = '## Criteria\n\n- **A1:** it works.';
 
+test('render snapshots only the trusted manifest and propagates non-404 failures', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
+  const requests: string[] = [];
+  // Deliberately invalid JSON: validation belongs to agent tools, after render.
+  const text = '{invalid-manifest';
+  let status = 200;
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const request = new URL(url);
+    if (request.pathname === '/repos/o/r/contents/.devkit/tools.json') {
+      requests.push(`${request.pathname}${request.search}`);
+      return new Response(
+        JSON.stringify(
+          status === 200
+            ? { content: Buffer.from(text).toString('base64') }
+            : { message: 'fixture API failure' },
+        ),
+        { status },
+      );
+    }
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      },
+      '/repos/o/r/issues/1/comments': [comment()],
+    };
+    return new Response(JSON.stringify(routes[request.pathname] ?? []));
+  });
+  try {
+    for (const role of ['plan', 'build', 'review', 'repair'] as const) {
+      const source = role === 'review' || role === 'repair' ? 'cand' : 'source';
+      const base = role === 'review' || role === 'repair' ? 'base' : undefined;
+      const job = await render({
+        repo: 'o/r',
+        issue: 1,
+        role,
+        source,
+        base,
+        appId: APP,
+        dispatcher: OPERATOR_ID,
+        out,
+      });
+      assert.equal(requests.at(-1), `/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`);
+      assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
+      assert.equal(job.base ?? job.source, base ?? source);
+    }
+    assert.ok(!requests.some((request) => request.endsWith('ref=cand')));
+    status = 404;
+    await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out });
+    assert.equal(existsSync(join(out, 'tools.json')), false);
+    status = 403;
+    await assert.rejects(
+      render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out }),
+      /403.*fixture API failure/,
+    );
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
 function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP) {
   const contract = {
     planRevision: revision(PLAN),
@@ -57,6 +123,7 @@ test('workflow plans refuse build with guidance but still render elevated jobs',
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -158,6 +225,7 @@ test('render records whether the planner can see the body, and Job.parse keeps i
   let author = OPERATOR_ID;
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
+    if (new URL(url).pathname.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -194,6 +262,7 @@ test('refusing a plan written without the body comments and drops the stage labe
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -267,6 +336,7 @@ test('a build the App started without a Continue never renders, even with a read
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (init.method !== 'GET') writes.push(`${init.method} ${path}`);
     const body = init.method === 'GET' ? (routes[path] ?? []) : {};
     return new Response(JSON.stringify(body), { status: 200 });
@@ -316,6 +386,7 @@ test('only the operator dispatcher bypasses the history gate for build and eleva
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (init.method !== 'GET') return new Response(JSON.stringify({}));
     reads.push(path);
     const routes: Record<string, unknown> = {
@@ -419,6 +490,7 @@ test("render puts the parent story in a subtask's issue.md, and nothing when it 
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (path === '/repos/o/r/issues/3/parent' && parent) return parent;
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/3': {
@@ -464,6 +536,7 @@ test('a story never builds: it goes to Needs you and says to build each subtask'
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
