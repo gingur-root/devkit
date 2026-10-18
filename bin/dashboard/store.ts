@@ -69,6 +69,10 @@ export function createStore(
     async get(key: string): Promise<Thread> {
       return (await load())[key] ?? { lines: [] };
     },
+    async clear(key: string): Promise<void> {
+      delete (await load())[key];
+      await save();
+    },
     async update(key: string, change: (thread: Thread) => void): Promise<Thread> {
       const all = await load();
       const thread = (all[key] ??= { lines: [] });

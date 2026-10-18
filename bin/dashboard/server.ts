@@ -98,6 +98,9 @@ export function createDashboard(
         // The Access cookie rides along on cross-site requests too, so a write
         // must come from the dashboard's own page.
         res.writeHead(403, { 'content-type': 'text/plain' }).end('Forbidden\n');
+      } else if (req.method === 'POST' && req.url === '/api/clear') {
+        await store.clear(HOME_THREAD);
+        res.writeHead(204).end();
       } else if (req.method === 'POST' && req.url === '/api/start') {
         const { repo, number } = await readJson(req);
         const { startPlan } = await import('./coordinator.ts');
