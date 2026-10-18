@@ -9,7 +9,13 @@ import { pathToFileURL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { test } from 'vite-plus/test';
 
-import { ACCESS_JWT_HEADER, ACCESS_TEAM_URL, BOARD_EVENT, OPERATOR_EMAIL } from './constants.ts';
+import {
+  ACCESS_JWT_HEADER,
+  ACCESS_TEAM_URL,
+  BOARD_EVENT,
+  DASHBOARD_ORIGIN,
+  OPERATOR_EMAIL,
+} from './constants.ts';
 import { createHub } from './events.ts';
 import { createDashboard } from './server.ts';
 import { createStore } from './store.ts';
@@ -88,6 +94,61 @@ test('streams board events to a connected page, and lets go when it leaves', asy
     assert.equal(hub.size, 0);
   } finally {
     leave.abort();
+    server.close();
+  }
+});
+
+test('clears only home and only for an authenticated dashboard-origin POST', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'dash-')), 'state.json');
+  const store = createStore(file);
+  await store.update('home', (thread) => {
+    thread.session = 'old-session';
+    thread.lines.push({ role: 'me', text: 'keep until confirmed' });
+  });
+  await store.update('devkit#7', (thread) => {
+    thread.lines.push({ role: 'me', text: 'keep this issue' });
+  });
+  const server = createDashboard('aud', keys, store, pathToFileURL(`${web}/`), createHub()).listen(
+    0,
+    '127.0.0.1',
+  );
+  await new Promise((resolve) => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const headers = { [ACCESS_JWT_HEADER]: jwt };
+  const readHome = async () => {
+    const response = await fetch(`${url}/api/thread`, { headers });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  try {
+    const before = await readHome();
+    assert.equal(before.messages.length, 1);
+    const unauthenticated = await fetch(`${url}/api/clear`, {
+      method: 'POST',
+      headers: { origin: DASHBOARD_ORIGIN },
+    });
+    assert.equal(unauthenticated.status, 403);
+    for (const origin of ['https://evil.example', undefined]) {
+      const denied = await fetch(`${url}/api/clear`, {
+        method: 'POST',
+        headers: { ...headers, ...(origin ? { origin } : {}) },
+      });
+      assert.equal(denied.status, 403);
+      assert.deepEqual(await readHome(), before);
+    }
+    const cleared = await fetch(`${url}/api/clear`, {
+      method: 'POST',
+      headers: { ...headers, origin: DASHBOARD_ORIGIN },
+    });
+    assert.equal(cleared.status, 204);
+    assert.equal(await cleared.text(), '');
+    assert.deepEqual(await readHome(), { issue: null, messages: [] });
+    const saved = createStore(file);
+    assert.deepEqual(await saved.get('home'), { lines: [] });
+    assert.deepEqual((await saved.get('devkit#7')).lines, [
+      { role: 'me', text: 'keep this issue' },
+    ]);
+  } finally {
     server.close();
   }
 });
