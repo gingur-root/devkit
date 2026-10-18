@@ -9,7 +9,7 @@ import { test } from 'vite-plus/test';
 
 import { ASK_LABELS, coordinatorOptions, routeOf, turnEvents } from './coordinator.ts';
 
-test('both filing modes include controller provenance', () => {
+test('both ask modes include filing provenance and only start adds a stage label', () => {
   assert.deepEqual(ASK_LABELS.queue, ['agent:filed', 'ready-for-agent']);
   assert.deepEqual(ASK_LABELS.start, ['agent:filed', 'ready-for-agent', 'agent:plan']);
 });
@@ -74,4 +74,24 @@ test('only home turns can route (devkit#104)', () => {
   assert.ok(toolNames(true).includes('open_thread'));
   assert.ok(!toolNames(false).includes('open_thread'));
   assert.ok(toolNames(false).includes('read_issue'));
+});
+
+test('coordinator init allows only its configured GitHub server', async () => {
+  const options = coordinatorOptions({ PATH: bin }, undefined, true);
+  async function* init(tool: string) {
+    yield {
+      type: 'system',
+      subtype: 'init',
+      apiKeySource: 'none',
+      session_id: 'session',
+      tools: [tool],
+    } as SDKMessage;
+  }
+  assert.deepEqual(await Array.fromAsync(turnEvents(init('mcp__github__read_issue'), options)), [
+    { type: 'session', id: 'session' },
+  ]);
+  await assert.rejects(
+    Array.fromAsync(turnEvents(init('mcp__unexpected__tool'), options)),
+    /tools the role does not allow/,
+  );
 });

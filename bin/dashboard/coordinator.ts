@@ -243,7 +243,7 @@ export async function* turnEvents(
 ): AsyncGenerator<CoordinatorEvent> {
   for await (const message of messages) {
     if (message.type === 'system' && message.subtype === 'init') {
-      assertClaudeInit(message, options);
+      assertClaudeInit(message, options, Object.keys(options.mcpServers ?? {}));
       yield { type: 'session', id: message.session_id };
     } else if (message.type === 'assistant') {
       for (const block of message.message.content) {

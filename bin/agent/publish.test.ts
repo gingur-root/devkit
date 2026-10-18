@@ -837,7 +837,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
   }
 });
 
-test('follow-ups are filed with provenance in Ask, capped at 5 per stage, and once', async () => {
+test('follow-ups carry only provenance in Ask, capped at 5 per stage, and once', async () => {
   const github = fakeGitHub();
   const job = { ...storyJob, job: 'build-1', role: 'build' };
   const seven = fixtureResult('build.followups').followups!;
@@ -887,6 +887,52 @@ test('follow-ups are filed with provenance in Ask, capped at 5 per stage, and on
     followupLine(6),
     'Filed 5 follow-ups, listed below. 1 more was dropped: the cap is 5 per stage.',
   );
+});
+
+test('subtasks and follow-ups ignore copied markers unless the issue is from the operator or labelled pipeline', async () => {
+  for (const kind of ['subtask', 'followup'] as const) {
+    for (const [id, labels, reuse] of [
+      [PIPELINE_BOT.id, [], false],
+      [PIPELINE_BOT.id, ['agent:filed'], true],
+      [OPERATOR_ID, [], true],
+      [1, ['agent:filed'], false],
+    ] as const) {
+      const github = fakeGitHub();
+      const mark =
+        kind === 'subtask' ? '<!-- devkit:subtask #1 -->' : '<!-- devkit:followup #1 build -->';
+      github.issues.push({
+        id: 7,
+        number: 7,
+        node_id: 'I_7',
+        title: 'Same title',
+        body: `Copied body\n\n${mark}`,
+        labels: [...labels],
+        user: { id },
+      });
+      try {
+        if (kind === 'subtask') {
+          const filed = await fileSubtasks(storyJob, CARD, [
+            { title: 'Same title', body: 'Approved body', pr: true, elevated: false },
+          ]);
+          assert.equal(filed[0]!.number, reuse ? 7 : 3);
+          assert.equal(github.linked.has(7), reuse);
+        } else {
+          await fileFollowups(storyJob, CARD, 'build', [
+            { title: 'Same title', body: 'Approved body' },
+          ]);
+          const comment = github.calls.find((c) =>
+            c.startsWith('POST /repos/o/r/issues/1/comments '),
+          )!;
+          assert.ok(comment.includes(`- #${reuse ? 7 : 3} Same title`));
+        }
+        const posts = github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
+        assert.equal(posts.length, reuse ? 0 : 1, `${kind}, author ${id}, labels ${labels}`);
+        if (!reuse) assert.ok(posts[0]!.includes('Approved body'));
+      } finally {
+        teardown();
+      }
+    }
+  }
 });
 
 /** Writes the job and the agent's result as the run left them, and returns publish's options. */
@@ -978,72 +1024,21 @@ test('a retro files its findings as one retro issue, never as follow-ups', async
   }
 });
 
-for (const kind of ['subtask', 'followup'] as const) {
-  test(`copied ${kind} markers need bot provenance or operator authorship before reuse`, async () => {
-    for (const [author, labels, reuse] of [
-      [PIPELINE_BOT.id, [], false],
-      [PIPELINE_BOT.id, ['agent:filed'], true],
-      [OPERATOR_ID, [], true],
-      [1, ['agent:filed'], false],
-    ] as const) {
-      const github = fakeGitHub();
-      const mark =
-        kind === 'subtask' ? '<!-- devkit:subtask #1 -->' : '<!-- devkit:followup #1 build -->';
-      github.issues.push({
-        id: 7,
-        number: 7,
-        node_id: 'I_7',
-        title: 'Copied',
-        body: `Copied body\n\n${mark}`,
-        labels: [...labels],
-        user: { id: author },
-      });
-      try {
-        if (kind === 'subtask') {
-          const filed = await fileSubtasks(storyJob, CARD, [
-            { title: 'Copied', body: 'Real body', pr: true, elevated: false },
-          ]);
-          assert.equal(filed[0]!.number === 7, reuse);
-          assert.equal(github.linked.has(7), reuse);
-        } else {
-          await fileFollowups(storyJob, CARD, 'build', [{ title: 'Copied', body: 'Real body' }]);
-          const listing = github.calls.find((c) =>
-            c.startsWith('POST /repos/o/r/issues/1/comments '),
-          )!;
-          assert.equal(listing.includes('- #7 Copied'), reuse);
-        }
-        const posts = github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
-        assert.equal(posts.length, reuse ? 0 : 1, `${kind}: author=${author} labels=${labels}`);
-        if (!reuse)
-          assert.equal(
-            JSON.parse(posts[0]!.split(' ').slice(2).join(' ')).body.includes('Real body'),
-            true,
-          );
-      } finally {
-        teardown();
-      }
-    }
-  });
-}
-
-test('retro triage files plain and elevated issues with provenance', async () => {
+test('retro triage labels plain and elevated issues with filing provenance', async () => {
   const github = fakeGitHub();
-  const paths = staged(
-    { ...storyJob, job: 'build-1', role: 'build' },
-    fixtureResult('build.followups'),
-  );
+  const paths = staged({ ...storyJob, role: 'build' }, fixtureResult('build.ready'));
   writeFileSync(
     join(paths.in, TRIAGE_FILE),
     JSON.stringify([
       {
         title: 'Plain',
-        body: 'First',
+        body: 'One',
         link: null,
         start: 'backlog',
         elevated: false,
         priority: 'P2',
       },
-      { title: 'Desk', body: 'Second', link: null, start: 'plan', elevated: true, priority: 'P2' },
+      { title: 'Elevated', body: 'Two', link: null, start: 'plan', elevated: true, priority: 'P2' },
     ]),
   );
   try {
@@ -1055,7 +1050,7 @@ test('retro triage files plain and elevated issues with provenance', async () =>
     );
     assert.ok(github.calls.includes('POST /repos/o/r/issues/3/labels {"labels":["agent:plan"]}'));
   } finally {
-    rmSync(join(paths.in, '..'), { recursive: true, force: true });
     teardown();
+    rmSync(join(paths.in, '..'), { recursive: true, force: true });
   }
 });

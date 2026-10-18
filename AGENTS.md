@@ -186,13 +186,16 @@ composite, so it's bumped once.
   expires an hour after minting, and the agent can leak it (worst case: a copy
   of private code). The WSL desk mints none. `test/agent.token.test.ts` pins the
   agent jobs' permissions and the token's scope.
-- **Issue provenance requires `agent:filed`.** The agent's read token can
-  still open issues on public repos as `gingur-root-pipeline[bot]`
-  (devkit#186, #200). Bot authorship alone does not prove the pipeline filed
-  an issue. Require bot authorship and `agent:filed`, which the controller adds
-  when filing. Agents get 403 on adding labels or comments, so comment trust
-  still uses authorship. S1 (devkit#201) must record its remaining write probes
-  on #200 and backfill this label on real open bot issues before S2 (#202) merges.
+- **Issue provenance needs `agent:filed`.** The agent's read token can still
+  open public issues as the pipeline bot, even when scoped to private repos:
+  S1's probe returned 201 (`issues=write`). Fork and gist POSTs returned 403
+  ([devkit#200, S1 results](https://github.com/gingur-root/devkit/issues/200#issuecomment-6244486250)).
+  The labelled issue POST returned 403 before `agent:filed` existed. Creation
+  with an existing label remains unverified
+  ([S1 detail](https://github.com/gingur-root/devkit/issues/201#issuecomment-6244408058), devkit#208).
+  Bot authorship alone proves nothing. Trust an issue from the bot only when
+  it carries `agent:filed`, which the controller adds at filing. Comments stay
+  trusted by author because agents get 403 when posting them (devkit#186).
 - **GitHub writes** go through `app.token`: a short-lived installation
   token for the gingur-root pipeline App, narrowed per call by its
   `permission*` inputs. The App has no `workflows` permission.

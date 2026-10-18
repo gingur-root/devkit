@@ -59,12 +59,6 @@ export const CODEX_FEATURES_OFF = [
   'image_generation',
 ] as const;
 
-/**
- * MCP servers a role with `web` gets, the same for both executors. Context7
- * runs keyless (rate-limited) so no credential reaches the agent.
- */
-export const WEB_MCP_SERVERS = { context7: 'https://mcp.context7.com/mcp' } as const;
-
 /** Files in the Codex home the SDK cannot be told to ignore. */
 export const CODEX_HOME_FORBIDDEN = ['config.toml', 'AGENTS.md'] as const;
 
@@ -97,20 +91,19 @@ export const OPERATOR_COAUTHOR = `Co-authored-by: Troy Rhinehart <${OPERATOR_ID}
 /** The operator's "put it on the board" label, and his consent for the loop to plan the card (devkit#47). */
 export const READY_LABEL = 'ready-for-agent';
 
-/** The controller adds this when filing an issue. Agents cannot add it, so it proves origin (devkit#200). */
+/** Marks an issue a retro filed, or one its plan filed in turn (devkit#115). */
+export const RETRO_LABEL = 'retro';
+/** The controller adds it at filing to distinguish its issues from bot authorship (devkit#200). */
 export const FILED_LABEL = 'agent:filed';
 
+/** Bot authorship alone is not proof the controller filed an issue. */
 export function filedByPipeline(issue: {
   user?: { id: number } | null;
   labels: { name: string }[];
 }): boolean {
-  return (
-    issue.user?.id === PIPELINE_BOT.id && issue.labels.some((label) => label.name === FILED_LABEL)
-  );
+  return issue.user?.id === PIPELINE_BOT.id && issue.labels.some((l) => l.name === FILED_LABEL);
 }
 
-/** Marks an issue a retro filed, or one its plan filed in turn (devkit#115). */
-export const RETRO_LABEL = 'retro';
 /** An agent says the issue needs the WSL desk. It starts nothing. */
 export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
 /** What an elevated subtask says. The pipeline never adds `agent:elevated` itself. */

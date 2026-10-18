@@ -25,6 +25,72 @@ const APP = 7;
 const ISSUE = revision('Title', 'Body');
 const PLAN = '## Criteria\n\n- **A1:** it works.';
 
+test('render snapshots only the trusted manifest and propagates non-404 failures', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
+  const requests: string[] = [];
+  // Deliberately invalid JSON: validation belongs to agent tools, after render.
+  const text = '{invalid-manifest';
+  let status = 200;
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const request = new URL(url);
+    if (request.pathname === '/repos/o/r/contents/.devkit/tools.json') {
+      requests.push(`${request.pathname}${request.search}`);
+      return new Response(
+        JSON.stringify(
+          status === 200
+            ? { content: Buffer.from(text).toString('base64') }
+            : { message: 'fixture API failure' },
+        ),
+        { status },
+      );
+    }
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      },
+      '/repos/o/r/issues/1/comments': [comment()],
+    };
+    return new Response(JSON.stringify(routes[request.pathname] ?? []));
+  });
+  try {
+    for (const role of ['plan', 'build', 'review', 'repair'] as const) {
+      const source = role === 'review' || role === 'repair' ? 'cand' : 'source';
+      const base = role === 'review' || role === 'repair' ? 'base' : undefined;
+      const job = await render({
+        repo: 'o/r',
+        issue: 1,
+        role,
+        source,
+        base,
+        appId: APP,
+        dispatcher: OPERATOR_ID,
+        out,
+      });
+      assert.equal(requests.at(-1), `/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`);
+      assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
+      assert.equal(job.base ?? job.source, base ?? source);
+    }
+    assert.ok(!requests.some((request) => request.endsWith('ref=cand')));
+    status = 404;
+    await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out });
+    assert.equal(existsSync(join(out, 'tools.json')), false);
+    status = 403;
+    await assert.rejects(
+      render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out }),
+      /403.*fixture API failure/,
+    );
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
 function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP) {
   const contract = {
     planRevision: revision(PLAN),
@@ -57,6 +123,7 @@ test('workflow plans refuse build with guidance but still render elevated jobs',
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -159,6 +226,7 @@ test('render records whether the planner can see the body, and Job.parse keeps i
   let labels: { name: string }[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
+    if (new URL(url).pathname.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -174,9 +242,9 @@ test('render records whether the planner can see the body, and Job.parse keeps i
     for (const [id, names, bodySeen] of [
       [OPERATOR_ID, [], true],
       [1, [], false],
-      [1, ['agent:filed'], false],
       [PIPELINE_BOT.id, [], false],
       [PIPELINE_BOT.id, ['agent:filed'], true],
+      [1, ['agent:filed'], false],
     ] as const) {
       author = id;
       labels = names.map((name) => ({ name }));
@@ -199,6 +267,7 @@ test('refusing a plan written without the body comments and drops the stage labe
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,
@@ -272,6 +341,7 @@ test('a build the App started without a Continue never renders, even with a read
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (init.method !== 'GET') writes.push(`${init.method} ${path}`);
     const body = init.method === 'GET' ? (routes[path] ?? []) : {};
     return new Response(JSON.stringify(body), { status: 200 });
@@ -314,27 +384,14 @@ test("a retro plan's issue list holds only the operator's and labelled pipeline 
       user: { id: PIPELINE_BOT.id },
       labels: [{ name: 'agent:filed' }],
     },
-    {
-      ...base,
-      number: 7,
-      title: 'Label alone',
-      user: { id: 1 },
-      labels: [{ name: 'agent:filed' }],
-    },
+    { ...base, number: 7, title: 'Label copy', user: { id: 1 }, labels: [{ name: 'agent:filed' }] },
     { ...base, number: 4, title: 'A PR', user: { id: OPERATOR_ID }, pull_request: {} },
   ]);
   assert.equal(list, '- #1 Mine `retro`\n- #6 Filed `agent:filed`');
 });
 
-test('issue trust requires bot authorship and agent:filed; comment trust stays unchanged', () => {
-  const issue = {
-    number: 3,
-    title: 'Sub',
-    body: 'Do it.',
-    labels: [],
-    created_at: '',
-    user: { id: PIPELINE_BOT.id },
-  };
+test('issue trust requires operator authorship or a labelled pipeline issue; comment trust stays unchanged', () => {
+  const base = { number: 3, title: 'Card', body: 'Body', created_at: '', labels: [] };
   const notes = [
     { body: 'Bot comment', created_at: 't1', user: { id: PIPELINE_BOT.id } },
     {
@@ -347,25 +404,21 @@ test('issue trust requires bot authorship and agent:filed; comment trust stays u
   ];
   const thread = '\n\n## Comment, t1\n\nBot comment\n\n## Comment, t2\n\nApp comment';
   for (const [user, labels, app, trusted] of [
-    [{ id: PIPELINE_BOT.id }, [], null, false],
-    [{ id: PIPELINE_BOT.id }, [], { id: APP }, false],
-    [{ id: PIPELINE_BOT.id }, [{ name: 'agent:filed' }], null, true],
     [{ id: OPERATOR_ID }, [], null, true],
+    [{ id: PIPELINE_BOT.id }, [], null, false],
+    [{ id: PIPELINE_BOT.id }, [{ name: 'agent:filed' }], null, true],
     [{ id: 1 }, [{ name: 'agent:filed' }], { id: APP }, false],
     [null, [{ name: 'agent:filed' }], null, false],
   ] as const) {
-    const candidate = { ...issue, user, labels: [...labels], performed_via_github_app: app };
+    const issue = { ...base, user, labels: [...labels], performed_via_github_app: app };
     const head = trusted
-      ? '# Sub\n\nDo it.'
+      ? '# Card\n\nBody'
       : '# Issue #3\n\n(Written by someone else, so left out.)';
-    assert.equal(issueSnapshot(candidate, notes, APP), head + thread);
+    assert.equal(issueSnapshot(issue, notes, APP), head + thread);
     const parent = trusted
-      ? '# Parent story #3: Sub\n\nDo it.'
+      ? '# Parent story #3: Card\n\nBody'
       : '# Parent story #3\n\n(Written by someone else, so left out.)';
-    assert.equal(
-      issueSnapshot(candidate, notes, APP, candidate),
-      `${parent}\n\n---\n\n${head}${thread}`,
-    );
+    assert.equal(issueSnapshot(issue, notes, APP, issue), `${parent}\n\n---\n\n${head}${thread}`);
   }
 });
 
@@ -375,6 +428,7 @@ test('only the operator dispatcher bypasses the history gate for build and eleva
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (init.method !== 'GET') return new Response(JSON.stringify({}));
     reads.push(path);
     const routes: Record<string, unknown> = {
@@ -478,6 +532,7 @@ test("render puts the parent story in a subtask's issue.md, and nothing when it 
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     if (path === '/repos/o/r/issues/3/parent' && parent) return parent;
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/3': {
@@ -523,6 +578,7 @@ test('a story never builds: it goes to Needs you and says to build each subtask'
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
         number: 1,

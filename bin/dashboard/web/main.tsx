@@ -19,7 +19,7 @@ import {
 } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { type Priority, READY_LABEL, STATUSES } from '../../agent/constants.ts';
+import { type Priority, READY_LABEL, STAGE_LABELS, STATUSES } from '../../agent/constants.ts';
 import type { BoardCard } from '../board.ts';
 import { BOARD_EVENT } from '../constants.ts';
 import type { BoardEvent } from '../events.ts';
@@ -95,7 +95,10 @@ function useWide(): boolean {
 
 /** A queued ask: waiting in Ask until the coordinator or Start begins its plan. */
 function queued(labels: string[]): boolean {
-  return labels.includes(READY_LABEL) && !labels.some((l) => l.startsWith('agent:'));
+  return (
+    labels.includes(READY_LABEL) &&
+    !labels.some((l) => Object.values<string>(STAGE_LABELS).includes(l))
+  );
 }
 
 function parseHash(hash: string): Ref | null {
@@ -214,7 +217,7 @@ function PriorityIcon({ priority }: { priority: Priority }) {
 }
 
 function BoardCardView({ card, onChange }: { card: BoardCard; onChange: () => void }) {
-  const running = card.labels.find((l) => l.startsWith('agent:'));
+  const running = card.labels.find((l) => Object.values<string>(STAGE_LABELS).includes(l));
   return (
     <Card
       className={cn(

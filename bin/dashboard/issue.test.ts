@@ -5,8 +5,29 @@ import { test, vi } from 'vite-plus/test';
 import { OPERATOR_ID, PIPELINE_BOT } from '../agent/constants.ts';
 import { LEFT_OUT, readPull, readThread, statusLine } from './issue.ts';
 
-test('readThread trusts bot issue bodies only with agent:filed and keeps trusting bot comments', async () => {
-  let user: { id: number } = { id: PIPELINE_BOT.id };
+test('the status line says done, waiting on you, or column and running stage', () => {
+  assert.equal(
+    statusLine({ state: 'closed', status: 'Building', labels: ['agent:build'] }),
+    'Done',
+  );
+  assert.equal(statusLine({ state: 'open', status: 'Needs you', labels: [] }), 'Waiting on you');
+  assert.equal(
+    statusLine({ state: 'open', status: 'Planning', labels: ['agent:plan'] }),
+    'Planning · agent:plan running',
+  );
+  assert.equal(
+    statusLine({ state: 'open', status: null, labels: ['ready-for-agent'] }),
+    'Not on the board',
+  );
+  assert.equal(statusLine({ state: 'open', status: 'Ask', labels: ['agent:filed'] }), 'Ask');
+  assert.equal(
+    statusLine({ state: 'open', status: 'Planning', labels: ['agent:filed', 'agent:plan'] }),
+    'Planning · agent:plan running',
+  );
+});
+
+test('readThread trusts only operator or labelled pipeline issue bodies, while bot comments stay trusted', async () => {
+  let user: { id: number } | null = null;
   let labels: { name: string }[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubEnv('PIPELINE_APP_KEY', '');
@@ -15,7 +36,7 @@ test('readThread trusts bot issue bodies only with agent:filed and keeps trustin
       '/repos/gingur-root/scratch/issues/1': {
         user,
         labels,
-        title: 'Title',
+        title: 'Card',
         body: 'Body',
         state: 'open',
         html_url: '',
@@ -34,38 +55,22 @@ test('readThread trusts bot issue bodies only with agent:filed and keeps trustin
   });
   try {
     for (const [id, names, trusted] of [
+      [OPERATOR_ID, [], true],
       [PIPELINE_BOT.id, [], false],
       [PIPELINE_BOT.id, ['agent:filed'], true],
-      [OPERATOR_ID, [], true],
       [1, ['agent:filed'], false],
+      [null, ['agent:filed'], false],
     ] as const) {
-      user = { id };
+      user = id === null ? null : { id };
       labels = names.map((name) => ({ name }));
       const thread = await readThread('scratch', 1);
       assert.equal(thread.bodyTrusted, trusted);
       assert.equal(thread.comments[0]!.trusted, true);
-      assert.equal(thread.comments[0]!.body, 'Bot comment');
     }
   } finally {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   }
-});
-
-test('the status line says done, waiting on you, or column and running stage', () => {
-  assert.equal(
-    statusLine({ state: 'closed', status: 'Building', labels: ['agent:build'] }),
-    'Done',
-  );
-  assert.equal(statusLine({ state: 'open', status: 'Needs you', labels: [] }), 'Waiting on you');
-  assert.equal(
-    statusLine({ state: 'open', status: 'Planning', labels: ['agent:plan'] }),
-    'Planning · agent:plan running',
-  );
-  assert.equal(
-    statusLine({ state: 'open', status: null, labels: ['ready-for-agent'] }),
-    'Not on the board',
-  );
 });
 
 // PRs are public too: a stranger's PR or review comment must not reach the model.

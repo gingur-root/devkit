@@ -900,7 +900,7 @@ export interface Filed {
 /**
  * The issues an earlier try filed for the card, found by the marker that ends
  * their body. Each was filed after the card, so it was updated since then too.
- * Only labelled pipeline issues or the operator's count: anyone may copy a marker.
+ * Only operator issues or labelled pipeline issues count: anyone may copy a marker.
  */
 async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]> {
   const since = encodeURIComponent(card.created_at);
@@ -958,7 +958,7 @@ export function followupLine(count: number): string {
 /**
  * Files or finds the stage's first FOLLOWUP_CAP follow-ups, puts a new one in
  * Ask, and lists them in the card's `followups:<stage>` comment. A follow-up
- * gets only `agent:filed`, which starts nothing. Returns the stage comment's line.
+ * carries only `agent:filed`, which starts nothing. Returns the stage comment's line.
  */
 export async function fileFollowups(
   job: Job,

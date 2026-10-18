@@ -1,9 +1,9 @@
 // Renders the job file and issue snapshot for one stage. The snapshot holds only
-// text by the operator or the pipeline App, so nobody else can steer an agent.
+// trusted issue text and comments, so nobody else can steer an agent.
 // A subtask's snapshot starts with its parent story, and a story never builds:
 // each of its subtasks does (devkit#12).
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
@@ -24,6 +24,7 @@ import {
   ISSUES_FILE,
   JOB_FILE,
   TIMELINE_FILE,
+  TOOLS_FILE,
   type Job,
   marker,
   PLAN_END,
@@ -34,6 +35,7 @@ import {
   TRIAGE_FILE,
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
+import { MANIFEST_PATH } from './tools.ts';
 
 interface Authored {
   body: string | null;
@@ -81,7 +83,7 @@ export interface RenderOptions {
 const HANDOFF_ROLES: readonly string[] = ['build', 'elevated'] satisfies Handoff[];
 
 function trustedComment(item: Authored, appId: number): boolean {
-  // Agents cannot post comments, so bot authorship still proves a comment's origin.
+  // Agents can't post comments, so comment authorship still proves origin.
   return (
     item.user?.id === OPERATOR_ID ||
     item.user?.id === PIPELINE_BOT.id ||
@@ -133,7 +135,7 @@ function timeline(events: Event[]): string {
     .join('\n');
 }
 
-/** The repo's open issues a retro plan may link to: the operator's or labelled pipeline issues. */
+/** The repo's open issues a retro may link to: operator issues or labelled pipeline issues, as the snapshot. */
 export function openIssues(issues: Issue[]): string {
   return issues
     .filter((i) => !i.pull_request && trustedIssue(i))
@@ -239,6 +241,15 @@ export async function render(options: RenderOptions): Promise<Job> {
       throw error;
     }
   }
+  const base = approved && (options.base ?? source);
+  const ref = base ?? source;
+  const manifest = await rest<{ content: string }>(
+    'GET',
+    `/repos/${options.repo}/contents/${MANIFEST_PATH}?ref=${encodeURIComponent(ref)}`,
+  ).catch((error: Error) => {
+    if (!error.message.includes(' 404 ')) throw error;
+    return null;
+  });
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -257,7 +268,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     // A build works from the default branch as it is now, not the plan's older
     // source: the App can't push a branch whose workflow files differ from it.
     source,
-    base: approved && (options.base ?? source),
+    base,
     // A review checks out the candidate itself.
     candidate: options.role === 'review' ? source : null,
     // Publish reads this to hold a retro issue's plan to its triage.
@@ -266,6 +277,9 @@ export async function render(options: RenderOptions): Promise<Job> {
     attemptLimit: null,
   };
   mkdirSync(options.out, { recursive: true });
+  if (manifest)
+    writeFileSync(join(options.out, TOOLS_FILE), Buffer.from(manifest.content, 'base64'));
+  else rmSync(join(options.out, TOOLS_FILE), { force: true });
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),
