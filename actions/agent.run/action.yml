@@ -7,7 +7,7 @@ description: 'Run one agent role on the job file the controller rendered, and up
 # agent starts under `env -i`: with a shell it could otherwise read the job's
 # whole env from /proc. Its only GitHub access is GH_TOKEN, the read token that
 # actions/agent.token sealed in the job before this one.
-# MCP configs and credential requests use tools.json from the trusted job dir.
+# MCP configs and credential requests come from tools.json in the trusted job dir.
 
 inputs:
   role:
@@ -25,7 +25,7 @@ inputs:
     description: 'The commit the pack holds, from the job contract: the change is diffed against it.'
     required: true
   token:
-    description: "AGENTS_SECRETS_TOKEN. Fetches the role's MCP credentials and Claude's OAuth token; Codex uses the runner login. Empty: no Bitwarden fetch (the WSL desk)."
+    description: "AGENTS_SECRETS_TOKEN. Fetches Claude's OAuth token and the role's MCP credentials; Codex uses the runner login. Empty: no credentials are fetched, Claude uses the runner login, and credentialed MCP servers fail for Claude and Codex. Stub needs no credentials."
     required: true
   readToken:
     description: 'The sealed read token from actions/agent.token, opened with `token` and passed to the agent as GH_TOKEN. Empty: no GH_TOKEN (the WSL desk).'

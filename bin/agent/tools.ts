@@ -3,8 +3,8 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import type { Env } from './providers/shared.ts';
 import { TOOLS_FILE } from './job.ts';
+import type { Env } from './providers/shared.ts';
 import { ROLES, type RoleName } from './roles.ts';
 
 export const MANIFEST_PATH = '.devkit/tools.json';

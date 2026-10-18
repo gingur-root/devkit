@@ -97,6 +97,50 @@ const planJob: Job = {
   attemptLimit: null,
 };
 
+test('ready workflow plans direct the operator to elevated and preserve body visibility', () => {
+  const out = mkdtempSync(join(tmpdir(), 'plan-workflows-'));
+  const ready = Result.parse(
+    JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
+  );
+  try {
+    for (const [plan, instruction] of [
+      [
+        'Edit `.github/workflows/agent.build.yml`.',
+        'add `agent:elevated` to run it on the WSL desk (it edits workflow files)',
+      ],
+      [
+        'Edit `.github/workflows/check.yaml`.',
+        'add `agent:elevated` to run it on the WSL desk (it edits workflow files)',
+      ],
+      [
+        'Edit `bin/agent/render.ts`.',
+        'reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk',
+      ],
+      [
+        'Read `.github/workflows/` for context.',
+        'reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk',
+      ],
+    ] as const) {
+      writeFileSync(join(out, PLAN_FILE), plan);
+      for (const bodySeen of [true, false]) {
+        const body = planComment(
+          { ...planJob, issue: { ...planJob.issue, bodySeen } },
+          ready,
+          out,
+          null,
+          [],
+        );
+        const suffix = bodySeen
+          ? ''
+          : ' (written without the issue body, which someone else wrote)';
+        assert.equal(body.split('\n\n')[1], `**Plan: ready: ${instruction}${suffix}**`);
+      }
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
 test('plan comments record body visibility and name a withheld body in every bold head', () => {
   const out = mkdtempSync(join(tmpdir(), 'plan-body-'));
   const ready = Result.parse(

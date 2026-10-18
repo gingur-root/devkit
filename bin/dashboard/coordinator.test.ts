@@ -70,3 +70,23 @@ test('only home turns can route (devkit#104)', () => {
   assert.ok(!toolNames(false).includes('open_thread'));
   assert.ok(toolNames(false).includes('read_issue'));
 });
+
+test('coordinator init allows only its configured GitHub server', async () => {
+  const options = coordinatorOptions({ PATH: bin }, undefined, true);
+  async function* init(tool: string) {
+    yield {
+      type: 'system',
+      subtype: 'init',
+      apiKeySource: 'none',
+      session_id: 'session',
+      tools: [tool],
+    } as SDKMessage;
+  }
+  assert.deepEqual(await Array.fromAsync(turnEvents(init('mcp__github__read_issue'), options)), [
+    { type: 'session', id: 'session' },
+  ]);
+  await assert.rejects(
+    Array.fromAsync(turnEvents(init('mcp__unexpected__tool'), options)),
+    /tools the role does not allow/,
+  );
+});

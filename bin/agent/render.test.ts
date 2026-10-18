@@ -6,16 +6,90 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { onTestFinished, test, vi } from 'vite-plus/test';
+import { test, vi } from 'vite-plus/test';
 
 import renderCommand from '../commands/agent/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
-import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
+import {
+  CONTRACT_PREFIX,
+  editsWorkflows,
+  Job,
+  marker,
+  PLAN_END,
+  PLAN_START,
+  revision,
+} from './job.ts';
 import { approvedPlan, issueSnapshot, openIssues, render } from './render.ts';
 
 const APP = 7;
 const ISSUE = revision('Title', 'Body');
 const PLAN = '## Criteria\n\n- **A1:** it works.';
+
+test('render snapshots only the trusted manifest and propagates non-404 failures', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
+  const requests: string[] = [];
+  // Deliberately invalid JSON: validation belongs to agent tools, after render.
+  const text = '{invalid-manifest';
+  let status = 200;
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string) => {
+    const request = new URL(url);
+    if (request.pathname === '/repos/o/r/contents/.devkit/tools.json') {
+      requests.push(`${request.pathname}${request.search}`);
+      return new Response(
+        JSON.stringify(
+          status === 200
+            ? { content: Buffer.from(text).toString('base64') }
+            : { message: 'fixture API failure' },
+        ),
+        { status },
+      );
+    }
+    const routes: Record<string, unknown> = {
+      '/repos/o/r/issues/1': {
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      },
+      '/repos/o/r/issues/1/comments': [comment()],
+    };
+    return new Response(JSON.stringify(routes[request.pathname] ?? []));
+  });
+  try {
+    for (const role of ['plan', 'build', 'review', 'repair'] as const) {
+      const source = role === 'review' || role === 'repair' ? 'cand' : 'source';
+      const base = role === 'review' || role === 'repair' ? 'base' : undefined;
+      const job = await render({
+        repo: 'o/r',
+        issue: 1,
+        role,
+        source,
+        base,
+        appId: APP,
+        dispatcher: OPERATOR_ID,
+        out,
+      });
+      assert.equal(requests.at(-1), `/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`);
+      assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
+      assert.equal(job.base ?? job.source, base ?? source);
+    }
+    assert.ok(!requests.some((request) => request.endsWith('ref=cand')));
+    status = 404;
+    await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out });
+    assert.equal(existsSync(join(out, 'tools.json')), false);
+    status = 403;
+    await assert.rejects(
+      render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out }),
+      /403.*fixture API failure/,
+    );
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
 
 function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP) {
   const contract = {
@@ -35,73 +109,22 @@ function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP
   return { body, user: { id: 1 }, performed_via_github_app: { id: app }, created_at: '' };
 }
 
-for (const role of ['plan', 'build', 'review', 'repair'] as const) {
-  test(`render snapshots the ${role} manifest at job.base ?? job.source`, async () => {
-    const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
-    onTestFinished(() => {
-      rmSync(out, { recursive: true, force: true });
-      vi.unstubAllGlobals();
-      vi.unstubAllEnvs();
-    });
-    const requests: string[] = [];
-    const manifest = '{"mcpServers":{"trusted":{"command":"docs","roles":["review"]}}}\n';
-    vi.stubEnv('GH_TOKEN', 'test');
-    vi.stubGlobal('fetch', async (url: string) => {
-      const parsed = new URL(url);
-      requests.push(parsed.pathname + parsed.search);
-      const routes: Record<string, unknown> = {
-        '/repos/o/r/issues/1': {
-          number: 1,
-          title: 'Title',
-          body: 'Body',
-          user: { id: OPERATOR_ID },
-          labels: [],
-        },
-        '/repos/o/r/issues/1/comments': [comment()],
-        '/repos/o/r/contents/.devkit/tools.json': {
-          content: Buffer.from(manifest).toString('base64'),
-        },
-      };
-      return new Response(JSON.stringify(routes[parsed.pathname] ?? []));
-    });
-    const job = await render({
-      repo: 'o/r',
-      issue: 1,
-      role,
-      source: 'cand',
-      ...(role === 'review' || role === 'repair' ? { base: 'base' } : {}),
-      appId: APP,
-      dispatcher: OPERATOR_ID,
-      out,
-    });
-    const expected = role === 'review' || role === 'repair' ? 'base' : 'cand';
-    assert.equal(job.base ?? job.source, expected);
-    assert.deepEqual(
-      requests.filter((path) => path.includes('/contents/')),
-      [`/repos/o/r/contents/.devkit/tools.json?ref=${expected}`],
-    );
-    assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), manifest);
-  });
-}
+test('workflow detection requires a named yml or yaml file', () => {
+  assert.equal(editsWorkflows('Edit `.github/workflows/agent.build.yml`.'), true);
+  assert.equal(editsWorkflows('Edit `.github/workflows/check-1.yaml`.'), true);
+  assert.equal(editsWorkflows('Read `.github/workflows/` for context.'), false);
+  assert.equal(editsWorkflows('Edit `bin/agent/render.ts`.'), false);
+});
 
-test('render tolerates a missing manifest but propagates other fetch failures', async () => {
-  const out = mkdtempSync(join(tmpdir(), 'render-no-tools-'));
-  onTestFinished(() => {
-    rmSync(out, { recursive: true, force: true });
-    vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
-  });
-  let status = 404;
-  const requests: string[] = [];
+test('workflow plans refuse build with guidance but still render elevated jobs', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-workflows-'));
+  const plan = 'Edit `.github/workflows/agent.build.yml`.';
+  const writes: { method: string | undefined; path: string; body: unknown }[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
-  vi.stubGlobal('fetch', async (url: string) => {
-    const parsed = new URL(url);
-    if (parsed.pathname.includes('/contents/')) {
-      requests.push(parsed.pathname + parsed.search);
-      return new Response('{"message":"manifest fetch failed"}', { status });
-    }
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
     const routes: Record<string, unknown> = {
-      '/repos/o/r/commits/HEAD': { sha: 'resolved-source' },
       '/repos/o/r/issues/1': {
         number: 1,
         title: 'Title',
@@ -109,16 +132,50 @@ test('render tolerates a missing manifest but propagates other fetch failures', 
         user: { id: OPERATOR_ID },
         labels: [],
       },
+      '/repos/o/r/issues/1/comments': [comment(plan, { planRevision: revision(plan) })],
     };
-    return new Response(JSON.stringify(routes[parsed.pathname] ?? []));
+    if (init.method !== 'GET')
+      writes.push({
+        method: init.method,
+        path,
+        body: init.body ? JSON.parse(String(init.body)) : null,
+      });
+    return new Response(JSON.stringify(init.method === 'GET' ? (routes[path] ?? []) : {}));
   });
-  const options = { repo: 'o/r', issue: 1, role: 'plan', appId: APP, out } as const;
-  const job = await render(options);
-  assert.equal(job.source, 'resolved-source');
-  assert.deepEqual(requests, ['/repos/o/r/contents/.devkit/tools.json?ref=resolved-source']);
-  assert.equal(existsSync(join(out, 'tools.json')), false);
-  status = 403;
-  await assert.rejects(render(options), /403.*manifest fetch failed/);
+  try {
+    const options = {
+      repo: 'o/r',
+      issue: 1,
+      source: 'abc',
+      appId: APP,
+      dispatcher: OPERATOR_ID,
+      out,
+    };
+    const reason =
+      "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.";
+    await assert.rejects(render({ ...options, role: 'build' }), { message: reason });
+    assert.equal(existsSync(join(out, 'job.json')), false);
+    assert.equal(existsSync(join(out, 'plan.md')), false);
+    assert.deepEqual(writes, [
+      {
+        method: 'POST',
+        path: '/repos/o/r/issues/1/comments',
+        body: { body: `<!-- devkit:build -->\n\n**Build refused:** ${reason}` },
+      },
+      { method: 'DELETE', path: '/repos/o/r/issues/1/labels/agent%3Abuild', body: null },
+    ]);
+
+    writes.length = 0;
+    const job = await render({ ...options, role: 'elevated' });
+    assert.equal(job.role, 'elevated');
+    assert.deepEqual(Job.parse(JSON.parse(readFileSync(join(out, 'job.json'), 'utf8'))), job);
+    assert.equal(readFileSync(join(out, 'plan.md'), 'utf8'), `${plan}\n`);
+    assert.deepEqual(writes, []);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
 });
 
 test('only the App’s ready, unedited plan for the live issue is approved', () => {

@@ -12,7 +12,7 @@ export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
-/** The MCP manifest copied from the job's trusted commit by render. */
+/** The MCP manifest from the job's trusted commit. */
 export const TOOLS_FILE = 'tools.json';
 /** A retro issue's plan: the repo's open issues, which it may link findings to. */
 export const ISSUES_FILE = 'issues.md';
@@ -104,6 +104,11 @@ export function revision(...parts: string[]): string {
   return createHash('sha256')
     .update(parts.map((part) => part.replace(/\r\n/g, '\n')).join('\n'))
     .digest('hex');
+}
+
+/** Named workflow files need the WSL desk because the App cannot push them. */
+export function editsWorkflows(plan: string): boolean {
+  return /\.github\/workflows\/[\w.-]+\.ya?ml/.test(plan);
 }
 
 /** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */

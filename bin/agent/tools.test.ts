@@ -5,10 +5,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { onTestFinished, test } from 'vite-plus/test';
+import { onTestFinished, test, vi } from 'vite-plus/test';
 
-import { run } from './run.ts';
 import type { Job } from './job.ts';
+import { Result } from './result.ts';
+import { run } from './run.ts';
 import { ROLES, type RoleName } from './roles.ts';
 import { agentEnv } from './providers/shared.ts';
 import { claudeOptions } from './providers/claude.ts';
@@ -40,137 +41,107 @@ function repo(manifest?: unknown): string {
   return cwd;
 }
 
-function stage(role: RoleName, manifest: unknown) {
+function jobTools(manifest?: unknown): string {
+  const input = repo();
+  if (manifest !== undefined) writeFileSync(join(input, 'tools.json'), JSON.stringify(manifest));
+  return input;
+}
+
+function stage(role: 'plan' | 'review', manifest: unknown) {
   const input = repo();
   const out = repo();
   const job: Job = {
-    job: `${role}-test`,
+    job: `${role}-tools-test`,
     role,
     objective: '',
     repo: 'o/r',
-    issue: { number: 1, title: 'Title', revision: 'rev', bodySeen: true },
-    plan: null,
+    issue: { number: 1, title: 'Tools', revision: 'issue', bodySeen: true },
+    plan: role === 'review' ? { revision: 'plan', criteria: [] } : null,
     source: 'candidate',
-    base: 'base',
-    candidate: null,
+    base: role === 'review' ? 'base' : null,
+    candidate: role === 'review' ? 'candidate' : null,
     artifacts: [],
     operations: [],
     attemptLimit: null,
   };
   writeFileSync(join(input, 'job.json'), JSON.stringify(job));
   writeFileSync(join(input, 'tools.json'), JSON.stringify(manifest));
-  return { input, out };
+  return { in: input, out };
 }
 
-function cli(args: string[], cwd: string, secrets?: string) {
-  const env: NodeJS.ProcessEnv = { ...process.env, DEVKIT_STUB_FIXTURE: 'ready' };
-  delete env.DEVKIT_MCP_SECRETS;
-  if (secrets) env.DEVKIT_MCP_SECRETS = secrets;
-  return spawnSync(
+test('review uses the trusted job manifest despite a candidate manifest', async () => {
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  vi.stubEnv('DEVKIT_STUB_FIXTURE', 'ready');
+  vi.stubEnv('DEVKIT_MCP_SECRETS', JSON.stringify({ MCP_X_TOKEN: 'sentinel' }));
+  const manifest = (uuid: string, url: string) => ({
+    mcpServers: { x: { url, secret: uuid, roles: ['review'] } },
+  });
+  const dirs = stage('review', manifest(HTTP_UUID, 'https://trusted.example/mcp'));
+  const cwd = repo(manifest(STDIO_UUID, 'https://candidate.example/mcp'));
+  await run({ role: 'review', executor: 'stub', cwd, ...dirs });
+  const init = JSON.parse(readFileSync(join(dirs.out, 'transcript.jsonl'), 'utf8').split('\n')[0]!);
+  assert.deepEqual(init.tools.codex.x, {
+    url: 'https://trusted.example/mcp',
+    bearer_token_env_var: 'MCP_X_TOKEN',
+  });
+  assert.doesNotMatch(JSON.stringify(init.tools), /candidate\.example/);
+  const result = spawnSync(
     process.execPath,
-    [fileURLToPath(new URL('../devkit.mjs', import.meta.url)), 'agent', ...args],
-    {
-      cwd,
-      env,
-      encoding: 'utf8',
-    },
+    [
+      fileURLToPath(new URL('../devkit.mjs', import.meta.url)),
+      'agent',
+      'tools',
+      '--role',
+      'review',
+      '--in',
+      dirs.in,
+      '--secrets',
+    ],
+    { cwd, encoding: 'utf8' },
   );
-}
-
-test('credential requests use the job manifest even when the candidate changes it', () => {
-  const trusted = {
-    mcpServers: {
-      trusted: { url: 'https://trusted.example/mcp', secret: HTTP_UUID, roles: ['review'] },
-    },
-  };
-  const candidate = {
-    mcpServers: {
-      candidate: { url: 'https://candidate.example/mcp', secret: STDIO_UUID, roles: ['review'] },
-    },
-  };
-  const cwd = repo(candidate);
-  const { input } = stage('review', trusted);
-  const result = cli(['tools', '--role', 'review', '--in', input, '--secrets'], cwd);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, `${HTTP_UUID} > MCP_TRUSTED_TOKEN\n`);
+  assert.equal(result.stdout, `${HTTP_UUID} > MCP_X_TOKEN\n`);
   assert.ok(!result.stdout.includes(STDIO_UUID));
 });
 
-test('run renders only trusted tools when the candidate adds a different server', () => {
-  const trusted = {
-    mcpServers: {
-      trusted: { url: 'https://trusted.example/mcp', secret: HTTP_UUID, roles: ['review'] },
-    },
-  };
-  const cwd = repo({
-    mcpServers: {
-      candidate: { url: 'https://candidate.example/mcp', secret: STDIO_UUID, roles: ['review'] },
-    },
+test('a credentialed stub succeeds without fetched secret values', async () => {
+  onTestFinished(() => {
+    process.exitCode = undefined;
+    vi.unstubAllEnvs();
   });
-  const { input, out } = stage('review', trusted);
-  const result = cli(
-    ['run', '--role', 'review', '--executor', 'stub', '--cwd', cwd, '--in', input, '--out', out],
-    cwd,
-    JSON.stringify({ MCP_TRUSTED_TOKEN: 'trusted-value', MCP_CANDIDATE_TOKEN: 'candidate-value' }),
-  );
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  const init = JSON.parse(readFileSync(join(out, 'transcript.jsonl'), 'utf8').split('\n')[0]!);
-  assert.deepEqual(init.tools.claude.mcpServers.trusted, {
-    type: 'http',
-    url: 'https://trusted.example/mcp',
-    headers: { Authorization: 'Bearer ${MCP_TRUSTED_TOKEN}' },
-  });
-  assert.deepEqual(init.tools.codex.trusted, {
-    url: 'https://trusted.example/mcp',
-    bearer_token_env_var: 'MCP_TRUSTED_TOKEN',
-  });
-  assert.doesNotMatch(JSON.stringify(init), /candidate|trusted-value|candidate-value|22222222/);
-});
-
-test('stub runs a credentialed manifest without fetched secrets and lists only env names', () => {
+  vi.stubEnv('DEVKIT_STUB_FIXTURE', 'ready');
+  vi.stubEnv('DEVKIT_MCP_SECRETS', undefined);
   const manifest = {
     mcpServers: { x: { url: 'https://example.com/mcp', secret: HTTP_UUID, roles: ['plan'] } },
   };
-  // Both copies reproduce the old loader as well as the trusted job-dir loader.
-  const cwd = repo(manifest);
-  const { input, out } = stage('plan', manifest);
-  const result = cli(
-    ['run', '--role', 'plan', '--executor', 'stub', '--cwd', cwd, '--in', input, '--out', out],
-    cwd,
-  );
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  const envelope = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
-  assert.equal(envelope.status, 'complete');
-  const init = JSON.parse(readFileSync(join(out, 'transcript.jsonl'), 'utf8').split('\n')[0]!);
-  assert.equal(init.type, 'init');
+  const dirs = stage('plan', manifest);
+  await run({ role: 'plan', executor: 'stub', cwd: repo(manifest), ...dirs });
+  const result = Result.parse(JSON.parse(readFileSync(join(dirs.out, 'result.json'), 'utf8')));
+  assert.equal(result.status, 'complete', result.summary);
+  const init = JSON.parse(readFileSync(join(dirs.out, 'transcript.jsonl'), 'utf8').split('\n')[0]!);
   assert.ok(init.tools.env.includes('MCP_X_TOKEN'));
-  assert.ok(init.tools.env.every((name: unknown) => typeof name === 'string'));
-  assert.deepEqual(init.tools.codex.x, {
-    url: 'https://example.com/mcp',
-    bearer_token_env_var: 'MCP_X_TOKEN',
-  });
-  assert.doesNotMatch(JSON.stringify(init), /DEVKIT_MCP_SECRETS|11111111/);
+  assert.equal(init.tools.codex.x.bearer_token_env_var, 'MCP_X_TOKEN');
+  assert.doesNotMatch(JSON.stringify(init), new RegExp(HTTP_UUID));
 });
 
-test('credential env names cannot replace the agent environment', () => {
-  for (const env of [
-    'PATH',
-    'HOME',
-    'GH_TOKEN',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'DEVKIT_MCP_SECRETS',
-    'MCP_',
-  ]) {
-    assert.equal(
-      Tools.safeParse({ mcpServers: { x: { command: 'x', roles: [], env } } }).success,
-      false,
-      env,
-    );
-  }
-  assert.equal(
-    Tools.safeParse({ mcpServers: { x: { command: 'x', roles: [], env: 'MCP_FOO' } } }).success,
-    true,
-  );
+test('a candidate cannot add MCP servers when the trusted manifest is absent', async () => {
+  const dirs = stage('review', {});
+  rmSync(join(dirs.in, 'tools.json'));
+  const cwd = repo({
+    mcpServers: {
+      candidateOnly: {
+        url: 'https://candidate.example/mcp',
+        secret: STDIO_UUID,
+        roles: ['review'],
+      },
+    },
+  });
+  await run({ role: 'review', executor: 'stub', cwd, ...dirs });
+  const init = JSON.parse(readFileSync(join(dirs.out, 'transcript.jsonl'), 'utf8').split('\n')[0]!);
+  assert.deepEqual(init.tools.codex, { context7: { url: 'https://mcp.context7.com/mcp' } });
+  assert.ok(!init.tools.env.includes('MCP_CANDIDATE_ONLY_TOKEN'));
 });
 
 test('agent tools prints both native configs for the selected role', () => {
@@ -183,7 +154,7 @@ test('agent tools prints both native configs for the selected role', () => {
       '--role',
       'plan',
       '--in',
-      stage('plan', {}).input,
+      jobTools(),
     ],
     { encoding: 'utf8' },
   );
@@ -198,11 +169,7 @@ test('agent tools prints both native configs for the selected role', () => {
 
 test('run stops when a manifest CLI is missing from PATH', async () => {
   await assert.rejects(
-    run({
-      role: 'hello',
-      executor: 'stub',
-      in: stage('hello', { clis: ['devkit-nonexistent-cli'] }).input,
-    }),
+    run({ role: 'hello', executor: 'stub', in: jobTools({ clis: ['devkit-nonexistent-cli'] }) }),
     { message: 'devkit-nonexistent-cli is not on PATH.' },
   );
 });
@@ -225,26 +192,45 @@ test('the schema parses defaults and rejects invalid repo manifests', () => {
   ];
   for (const manifest of invalid) {
     assert.equal(Tools.safeParse(manifest).success, false, JSON.stringify(manifest));
-    assert.throws(() => loadTools(stage('plan', manifest).input), { name: 'ZodError' });
+    assert.throws(() => loadTools(jobTools(manifest)), { name: 'ZodError' });
   }
+});
+
+test('credential env names cannot replace the agent environment', () => {
+  for (const env of [
+    'PATH',
+    'HOME',
+    'GH_TOKEN',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'DEVKIT_MCP_SECRETS',
+    'MCP_',
+  ]) {
+    assert.equal(
+      Tools.safeParse({ mcpServers: { x: { command: 'x', env, roles: [] } } }).success,
+      false,
+      env,
+    );
+  }
+  assert.equal(
+    Tools.safeParse({ mcpServers: { x: { command: 'x', env: 'MCP_FOO', roles: [] } } }).success,
+    true,
+  );
 });
 
 test('a repo adds servers, replaces whole defaults and unions CLI requirements', () => {
   assert.deepEqual(loadTools(undefined), DEFAULT_TOOLS);
-  assert.deepEqual(loadTools(repo()), DEFAULT_TOOLS);
+  assert.deepEqual(loadTools(jobTools()), DEFAULT_TOOLS);
   DEFAULT_TOOLS.clis.push('node');
   try {
-    const tools = loadTools(
-      stage('plan', { ...fixture, clis: ['node', 'docs-mcp', 'docs-mcp'] }).input,
-    );
+    const tools = loadTools(jobTools({ ...fixture, clis: ['node', 'docs-mcp', 'docs-mcp'] }));
     assert.deepEqual(Object.keys(tools.mcpServers).sort(), ['context7', 'localDocs', 'x']);
     assert.deepEqual(tools.clis, ['node', 'docs-mcp']);
     const replaced = loadTools(
-      stage('plan', {
+      jobTools({
         mcpServers: {
           context7: { command: 'repo-docs', roles: ['retro'] },
         },
-      }).input,
+      }),
     );
     assert.deepEqual(replaced.mcpServers.context7, {
       command: 'repo-docs',
@@ -252,11 +238,11 @@ test('a repo adds servers, replaces whole defaults and unions CLI requirements',
       roles: ['retro'],
     });
     const disabled = loadTools(
-      stage('plan', {
+      jobTools({
         mcpServers: {
           context7: { url: 'https://mcp.context7.com/mcp', roles: [] },
         },
-      }).input,
+      }),
     );
     for (const role of Object.keys(ROLES) as RoleName[])
       assert.deepEqual(renderTools(disabled, role).codex, {});

@@ -5,6 +5,8 @@ description: 'Fetch Bitwarden Secrets Manager secrets by UUID with bitwarden/sm-
 # sm-action exports every secret into the env of each later step in the job, so
 # a job fetches only the UUIDs it uses. With `setEnv: false` nothing is
 # exported; the values come back in `json` instead (see app.token).
+# sm-action hides its error text from later steps, so retry any failure with
+# 1s, 2s and 4s waits, for up to four attempts.
 
 inputs:
   token:
@@ -21,12 +23,57 @@ inputs:
 outputs:
   json:
     description: 'Every fetched secret as a JSON object keyed by ENV_NAME. Read with fromJSON().'
-    value: ${{ toJSON(steps.fetch.outputs) }}
+    value: ${{ toJSON((steps.fetch1.outcome == 'success' && steps.fetch1.outputs) || (steps.fetch2.outcome == 'success' && steps.fetch2.outputs) || (steps.fetch3.outcome == 'success' && steps.fetch3.outputs) || steps.fetch4.outputs) }}
 
 runs:
   using: 'composite'
   steps:
-    - id: fetch
+    - id: fetch1
+      continue-on-error: true
+      uses: bitwarden/sm-action@v3.0.1
+      with:
+        access_token: ${{ inputs.token }}
+        secrets: ${{ inputs.secrets }}
+        set_env: ${{ inputs.setEnv }}
+
+    - if: steps.fetch1.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::Bitwarden fetch failed (attempt 1 of 4); retrying in 1s"
+        sleep 1
+
+    - id: fetch2
+      if: steps.fetch1.outcome == 'failure'
+      continue-on-error: true
+      uses: bitwarden/sm-action@v3.0.1
+      with:
+        access_token: ${{ inputs.token }}
+        secrets: ${{ inputs.secrets }}
+        set_env: ${{ inputs.setEnv }}
+
+    - if: steps.fetch2.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::Bitwarden fetch failed (attempt 2 of 4); retrying in 2s"
+        sleep 2
+
+    - id: fetch3
+      if: steps.fetch2.outcome == 'failure'
+      continue-on-error: true
+      uses: bitwarden/sm-action@v3.0.1
+      with:
+        access_token: ${{ inputs.token }}
+        secrets: ${{ inputs.secrets }}
+        set_env: ${{ inputs.setEnv }}
+
+    - if: steps.fetch3.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::Bitwarden fetch failed (attempt 3 of 4); retrying in 4s (last attempt)"
+        sleep 4
+
+    - id: fetch4
+      if: steps.fetch3.outcome == 'failure'
       uses: bitwarden/sm-action@v3.0.1
       with:
         access_token: ${{ inputs.token }}

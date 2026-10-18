@@ -3,7 +3,7 @@
 // A subtask's snapshot starts with its parent story, and a story never builds:
 // each of its subtasks does (devkit#12).
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readSteps, refuseStart } from './approval.ts';
@@ -12,10 +12,12 @@ import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
+  editsWorkflows,
   ISSUE_FILE,
   ISSUES_FILE,
   JOB_FILE,
   TIMELINE_FILE,
+  TOOLS_FILE,
   type Job,
   marker,
   PLAN_END,
@@ -24,7 +26,6 @@ import {
   PlanContract,
   revision,
   TRIAGE_FILE,
-  TOOLS_FILE,
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
 import { MANIFEST_PATH } from './tools.ts';
@@ -213,6 +214,10 @@ export async function render(options: RenderOptions): Promise<Job> {
         if (why) throw new Error(`Not approved: ${why}.`);
       }
       approved = approvedPlan(comments, options.appId, issueRevision, bodySeen);
+      if (options.role === 'build' && editsWorkflows(approved.plan))
+        throw new Error(
+          "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.",
+        );
       if (story)
         throw new Error(
           `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
@@ -226,9 +231,10 @@ export async function render(options: RenderOptions): Promise<Job> {
     }
   }
   const base = approved && (options.base ?? source);
+  const ref = base ?? source;
   const manifest = await rest<{ content: string }>(
     'GET',
-    `/repos/${options.repo}/contents/${MANIFEST_PATH}?ref=${base ?? source}`,
+    `/repos/${options.repo}/contents/${MANIFEST_PATH}?ref=${encodeURIComponent(ref)}`,
   ).catch((error: Error) => {
     if (!error.message.includes(' 404 ')) throw error;
     return null;
@@ -262,6 +268,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   mkdirSync(options.out, { recursive: true });
   if (manifest)
     writeFileSync(join(options.out, TOOLS_FILE), Buffer.from(manifest.content, 'base64'));
+  else rmSync(join(options.out, TOOLS_FILE), { force: true });
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),
