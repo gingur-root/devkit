@@ -51,6 +51,7 @@ Skip the "This runner" section of worker.md. Instead:
 - Write only in $JOB: your report file, and the result envelope as $JOB/<stage>.json.
   It must parse with `Result` from <devkit>/bin/agent/result.ts.
 - Don't commit, push, or call gh write commands. The controller publishes.
+- Don't load the pipeline skill. You are one stage of it.
 ```
 
 Check each envelope before you act on it:
@@ -73,8 +74,9 @@ codex exec -C <worktree> --add-dir $JOB -s danger-full-access -c model_reasoning
 
 ## Preflight
 
-Run these before step 1. Each failure names its fix; show Troy the fix and
-stop. Don't install anything yourself.
+Run these once per session, before the first run's step 1. A later run in the
+same session skips them when an earlier run already passed them. Each failure
+names its fix; show Troy the fix and stop. Don't install anything yourself.
 
 1. **GitHub user.** `gh api user -q .login` prints `gingur`. Fix:
    `gh auth login`.
