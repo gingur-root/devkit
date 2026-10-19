@@ -251,7 +251,9 @@ Never point the pipeline repo's main caller at a branch: every run would run
 that branch too. Run the proof by hand from your own pipeline branch instead,
 on a scratch issue.
 
-1. Branch gingur-root/pipeline, and in `.github/workflows/agents.yml` change
+1. Branch gingur-root/pipeline as `proof/<name>` (only that name may use the
+   `agents` environment, and only an org admin can create one), and in
+   `.github/workflows/agents.yml` change
    each `agent.*.yml@main` and `devkitRef: main` to your devkit branch. Push it.
    Don't open a PR.
 2. Run one stage on a scratch issue:
