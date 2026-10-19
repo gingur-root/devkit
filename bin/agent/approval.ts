@@ -1,7 +1,7 @@
 // The dashboard's Continue as a build approval (devkit#99). Continue posts an
 // App comment with a `continue` marker, then adds `agent:plan`. A plan that
-// ends ready hands off by adding `agent:build` (or `agent:elevated`) as the
-// App. The admission expression lets the App add those labels, so this file is
+// ends ready hands off by adding `agent:build` as the App. The
+// admission expression lets the App add that label, so this file is
 // the rest of the gate: the stage refuses an App label unless a Continue led
 // straight to it, and each Continue starts one run only.
 
@@ -35,7 +35,7 @@ interface Event {
   label?: { name: string };
 }
 
-const STARTS = new Set<string>([STAGE_LABELS.plan, STAGE_LABELS.build, STAGE_LABELS.elevated]);
+const STARTS = new Set<string>([STAGE_LABELS.plan, STAGE_LABELS.build]);
 const HANDOFFS = Object.keys(CONTINUE_ROLES) as Handoff[];
 
 /** The steps in a card's comments and issue events, oldest first. */
@@ -98,7 +98,7 @@ export function armedContinue(history: Step[]): Handoff | null {
 }
 
 /**
- * Whether a build or elevated run may start: null if so, or why not. The
+ * Whether a build run may start: null if so, or why not. The
  * operator actor input needs his latest start to match this stage. The App
  * may only when its label is the latest step and follows a plan that a
  * matching Continue started, so a Continue is spent by

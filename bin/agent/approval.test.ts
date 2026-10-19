@@ -62,23 +62,8 @@ test('only an App comment counts as a Continue', () => {
   assert.notEqual(refuseStart(APP, steps(forged, [...PLAN, HANDOFF]), 'build'), null);
 });
 
-test('a Continue without Elevate never starts an elevated run, and the reverse', () => {
-  assert.notEqual(
-    refuseStart(APP, steps(CONTINUE, [...PLAN, label(5, 'agent:elevated')]), 'elevated'),
-    null,
-  );
-  const elevated = [comment(1, marker('continue-elevated'))];
-  assert.equal(
-    refuseStart(APP, steps(elevated, [...PLAN, label(5, 'agent:elevated')]), 'elevated'),
-    null,
-  );
-  assert.notEqual(refuseStart(APP, steps(elevated, [...PLAN, HANDOFF]), 'build'), null);
-});
-
 test("the App's own label must come right after the Continue's plan", () => {
-  // A later label of another stage, or the operator's, is not this run's.
-  const elevatedAfter = steps(CONTINUE, [...PLAN, label(5, 'agent:elevated')]);
-  assert.notEqual(refuseStart(APP, elevatedAfter, 'build'), null);
+  // A later label of the operator's is not this run's.
   const operatorAfter = steps(CONTINUE, [...PLAN, label(5, 'agent:build', OPERATOR_ID)]);
   assert.notEqual(refuseStart(APP, operatorAfter, 'build'), null);
   // The step after a Continue must be a plan, not a build the operator started.
@@ -93,7 +78,6 @@ test('anyone but the operator and the App is refused, even with a Continue', () 
 
 test('an operator actor input needs the latest start to be his matching stage', () => {
   assert.equal(typeof refuseStart(OPERATOR_ID, [], 'build'), 'string');
-  assert.equal(typeof refuseStart(OPERATOR_ID, [], 'elevated'), 'string');
   assert.equal(typeof refuseStart(OPERATOR_ID, steps([], [HANDOFF]), 'build'), 'string');
   assert.equal(
     typeof refuseStart(OPERATOR_ID, steps([], [label(1, 'agent:plan', OPERATOR_ID)]), 'build'),
@@ -122,10 +106,6 @@ test('an operator actor input needs the latest start to be his matching stage', 
   );
   assert.equal(
     refuseStart(OPERATOR_ID, steps([comment(1, '/approve', OPERATOR_ID)], []), 'build'),
-    null,
-  );
-  assert.equal(
-    refuseStart(OPERATOR_ID, steps([], [label(1, 'agent:elevated', OPERATOR_ID)]), 'elevated'),
     null,
   );
   // A later Continue is not a start, so the latest start still supplies the proof.

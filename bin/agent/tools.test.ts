@@ -354,7 +354,7 @@ test('credential input fails loudly without quoting credential values', () => {
 });
 
 test('defaults scope keyless Context7 independently of built-in web search', () => {
-  for (const role of ['plan', 'build', 'repair', 'review', 'elevated'] as const) {
+  for (const role of ['plan', 'build', 'repair', 'review'] as const) {
     const rendered = renderTools(DEFAULT_TOOLS, role);
     assert.deepEqual(Object.keys(rendered.codex), ['context7']);
     assert.deepEqual(rendered.secrets, {});

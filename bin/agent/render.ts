@@ -9,7 +9,6 @@ import { join } from 'node:path';
 import { readSteps, refuseStart } from './approval.ts';
 import {
   filedByPipeline,
-  type Handoff,
   OPERATOR_ID,
   PIPELINE_BOT,
   RETRO_LABEL,
@@ -19,7 +18,6 @@ import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
   CONTRACT_PREFIX,
-  editsWorkflows,
   ISSUE_FILE,
   ISSUES_FILE,
   JOB_FILE,
@@ -79,8 +77,6 @@ export interface RenderOptions {
   dispatcher?: number;
   out: string;
 }
-
-const HANDOFF_ROLES: readonly string[] = ['build', 'elevated'] satisfies Handoff[];
 
 function trustedComment(item: Authored, appId: number): boolean {
   // Agents can't post comments, so comment authorship still proves origin.
@@ -210,25 +206,21 @@ export async function render(options: RenderOptions): Promise<Job> {
     options.role === 'plan' && issue.labels.some((label) => label.name === RETRO_LABEL);
   // One run never carries out a whole story: each subtask builds on its own.
   const subtasks = issue.sub_issues_summary?.total ?? 0;
-  const story = HANDOFF_ROLES.includes(options.role) && subtasks > 0;
+  const story = options.role === 'build' && subtasks > 0;
   // A retro reads whatever the run left, ready plan or not.
   let approved: ReturnType<typeof approvedPlan> | null = null;
   if (options.role !== 'plan' && options.role !== 'retro') {
     try {
-      if (HANDOFF_ROLES.includes(options.role) && options.dispatcher !== OPERATOR_ID) {
+      if (options.role === 'build' && options.dispatcher !== OPERATOR_ID) {
         // No actor fails closed: it is neither the operator nor the App.
         const why = refuseStart(
           options.actor ?? Number.NaN,
           await readSteps(options.repo, options.issue),
-          options.role as Handoff,
+          'build',
         );
         if (why) throw new Error(`Not approved: ${why}.`);
       }
       approved = approvedPlan(comments, options.appId, issueRevision, bodySeen);
-      if (options.role === 'build' && editsWorkflows(approved.plan))
-        throw new Error(
-          "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.",
-        );
       if (story)
         throw new Error(
           `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
@@ -265,8 +257,7 @@ export async function render(options: RenderOptions): Promise<Job> {
       revision: approved.contract.planRevision,
       criteria: Object.keys(approved.contract.checks),
     },
-    // A build works from the default branch as it is now, not the plan's older
-    // source: the App can't push a branch whose workflow files differ from it.
+    // A build works from the default branch as it is now, not the plan's older source.
     source,
     base,
     // A review checks out the candidate itself.

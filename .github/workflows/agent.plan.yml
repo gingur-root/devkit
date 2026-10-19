@@ -3,8 +3,6 @@ name: Plan
 # agent:plan on an issue, or a /plan comment: render the job, run the planner,
 # publish the plan as one marker comment and move the card to Needs you.
 # Callers set concurrency (one group per card) at their own workflow level.
-# With `runner: wsl` every job runs on the operator's WSL desk, as him, with no
-# pipeline or agent secrets: his `gh` publishes and his Claude login plans.
 
 on:
   workflow_call:
@@ -43,7 +41,6 @@ on:
         required: false
         default: ''
     secrets:
-      # Both unset on the WSL desk.
       AGENTS_SECRETS_TOKEN:
         required: false
       PIPELINE_SECRETS_TOKEN:
@@ -54,11 +51,9 @@ permissions: {}
 jobs:
   start:
     name: Start
-    # github.token packs the repo on the WSL desk, which mints no App token.
-    permissions:
-      contents: read
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:plan') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner }}
+    environment: agents
     outputs:
       source: ${{ steps.render.outputs.source }}
       readToken: ${{ steps.read.outputs.sealed }}
@@ -74,10 +69,7 @@ jobs:
         with:
           cwd: devkit
 
-      # The WSL desk mints no App token: the operator's own `gh` writes there
-      # (bin/agent/github.ts), for repos the App can't reach (infra#47).
       - id: app
-        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -119,13 +111,11 @@ jobs:
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.render.outputs.source }}
-          token: ${{ steps.app.outputs.token || github.token }}
+          token: ${{ steps.app.outputs.token }}
           name: agent-repo
 
-      # The planner's read token, minted last so its hour starts late. The WSL
-      # desk mints none: the planner keeps the operator's own `gh` login.
+      # The planner's read token, minted last so its hour starts late.
       - id: read
-        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/agent.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -151,6 +141,7 @@ jobs:
     name: Plan
     needs: start
     runs-on: ${{ inputs.runner }}
+    environment: agents
     permissions:
       contents: read
     steps:
@@ -169,6 +160,7 @@ jobs:
     needs: [start, plan]
     if: always() && needs.start.result == 'success'
     runs-on: ${{ inputs.runner }}
+    environment: agents
     steps:
       - uses: actions/checkout@v6
         with:
@@ -193,10 +185,7 @@ jobs:
           name: agent-out
           path: ${{ runner.temp }}/agent/out
 
-      # The WSL desk mints no App token: the operator's own `gh` writes there
-      # (bin/agent/github.ts), for repos the App can't reach (infra#47).
       - id: app
-        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}

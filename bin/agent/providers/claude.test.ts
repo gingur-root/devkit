@@ -25,7 +25,6 @@ test('every role passes its turn cap to Claude', () => {
     repair: 200,
     review: 100,
     retro: 50,
-    elevated: 200,
   };
   for (const [name, role] of Object.entries(ROLES)) {
     const options = claudeOptions(role, {

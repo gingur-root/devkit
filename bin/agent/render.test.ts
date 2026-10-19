@@ -10,15 +10,7 @@ import { test, vi } from 'vite-plus/test';
 
 import renderCommand from '../commands/agent/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
-import {
-  CONTRACT_PREFIX,
-  editsWorkflows,
-  Job,
-  marker,
-  PLAN_END,
-  PLAN_START,
-  revision,
-} from './job.ts';
+import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
 import { approvedPlan, issueSnapshot, openIssues, render } from './render.ts';
 
 const APP = 7;
@@ -109,14 +101,7 @@ function comment(plan = PLAN, overrides: Record<string, unknown> = {}, app = APP
   return { body, user: { id: 1 }, performed_via_github_app: { id: app }, created_at: '' };
 }
 
-test('workflow detection requires a named yml or yaml file', () => {
-  assert.equal(editsWorkflows('Edit `.github/workflows/agent.build.yml`.'), true);
-  assert.equal(editsWorkflows('Edit `.github/workflows/check-1.yaml`.'), true);
-  assert.equal(editsWorkflows('Read `.github/workflows/` for context.'), false);
-  assert.equal(editsWorkflows('Edit `bin/agent/render.ts`.'), false);
-});
-
-test('workflow plans refuse build with guidance but still render elevated jobs', async () => {
+test('a plan that edits workflow files builds like any other', async () => {
   const out = mkdtempSync(join(tmpdir(), 'render-workflows-'));
   const plan = 'Edit `.github/workflows/agent.build.yml`.';
   const writes: { method: string | undefined; path: string; body: unknown }[] = [];
@@ -151,23 +136,8 @@ test('workflow plans refuse build with guidance but still render elevated jobs',
       dispatcher: OPERATOR_ID,
       out,
     };
-    const reason =
-      "This plan edits workflow files, which the App can't push. Add `agent:elevated` instead.";
-    await assert.rejects(render({ ...options, role: 'build' }), { message: reason });
-    assert.equal(existsSync(join(out, 'job.json')), false);
-    assert.equal(existsSync(join(out, 'plan.md')), false);
-    assert.deepEqual(writes, [
-      {
-        method: 'POST',
-        path: '/repos/o/r/issues/1/comments',
-        body: { body: `<!-- devkit:build -->\n\n**Build refused:** ${reason}` },
-      },
-      { method: 'DELETE', path: '/repos/o/r/issues/1/labels/agent%3Abuild', body: null },
-    ]);
-
-    writes.length = 0;
-    const job = await render({ ...options, role: 'elevated' });
-    assert.equal(job.role, 'elevated');
+    const job = await render({ ...options, role: 'build' });
+    assert.equal(job.role, 'build');
     assert.deepEqual(Job.parse(JSON.parse(readFileSync(join(out, 'job.json'), 'utf8'))), job);
     assert.equal(readFileSync(join(out, 'plan.md'), 'utf8'), `${plan}\n`);
     assert.deepEqual(writes, []);
@@ -290,7 +260,6 @@ test('refusing a plan written without the body comments and drops the stage labe
   try {
     for (const [role, label] of [
       ['build', 'agent%3Abuild'],
-      ['elevated', 'agent%3Aelevated'],
       ['review', 'agent%3Abuild'],
     ] as const) {
       writes.length = 0;
@@ -422,7 +391,7 @@ test('issue trust requires operator authorship or a labelled pipeline issue; com
   }
 });
 
-test('only the operator dispatcher bypasses the history gate for build and elevated', async () => {
+test('only the operator dispatcher bypasses the history gate for build', async () => {
   const out = mkdtempSync(join(tmpdir(), 'render-dispatcher-'));
   const reads: string[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
@@ -439,7 +408,7 @@ test('only the operator dispatcher bypasses the history gate for build and eleva
     return new Response(JSON.stringify(routes[path] ?? []));
   });
   try {
-    for (const role of ['build', 'elevated'] as const) {
+    for (const role of ['build'] as const) {
       const options = {
         repo: 'o/r',
         issue: 1,
@@ -617,7 +586,7 @@ test('a story never builds: it goes to Needs you and says to build each subtask'
     return new Response(JSON.stringify(init.method === 'GET' ? (routes[path] ?? []) : {}));
   });
   try {
-    for (const role of ['build', 'elevated'] as const) {
+    for (const role of ['build'] as const) {
       writes.length = 0;
       await assert.rejects(
         render({

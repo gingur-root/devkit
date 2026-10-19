@@ -4,7 +4,7 @@ How to take an issue from idea to merged PR with the agents. Only Troy can
 start a stage: every job checks the actor, so labels or comments from anyone
 else do nothing. The one exception is the pipeline App. It may add
 `agent:plan` (the board loop below, and the dashboard). It may add
-`agent:build` or `agent:elevated` only to hand off a plan right after Troy
+`agent:build` only to hand off a plan right after Troy
 pressed **Continue** on the dashboard, and the stage checks that Continue
 before it starts ([board.md](board.md#how-a-continue-becomes-a-build)).
 
@@ -19,8 +19,8 @@ from a pack the App-token job makes (`actions/repo.pack`), since their own
 token can't read another private repo. The agents can also read every other
 enrolled repo with `GH_TOKEN`, a read-only token minted for each run
 (`actions/agent.token`); the pack still carries the target repo. A repo is
-enrolled when infra lists it `enrolled`, which installs the App on it. infra is the exception: the App must
-never reach it, so it keeps its own caller on the WSL desk.
+enrolled when infra lists it `enrolled`, which installs the App on it. infra
+keeps its own caller, which runs the same plan and build workflows.
 
 ## The flow
 
@@ -62,15 +62,14 @@ run reacts on that comment. A label or a manual dispatch reacts on the issue.
 
 Who writes them (`bin/agent/reactions.ts`):
 
-- **👀:** the webhook receiver, right after it dispatches a plan, build or
-  elevated run. It has the comment ID, which the dispatch can't carry. For an
+- **👀:** the webhook receiver, right after it dispatches a plan or build
+  run. It has the comment ID, which the dispatch can't carry. For an
   event the receiver didn't dispatch (infra's caller, a manual dispatch), the
   start job adds it. A board-loop tick gets none.
 - **The end state:** publish, once the run's last stage is done. When a run
   dies before it publishes, the start job's failure step or the board loop's
   stalled path sets `-1`.
-- The writer is the App. On the WSL desk with no App token, it's Troy's own
-  `gh`, so the reactions show as his there.
+- The writer is the App.
 - The end step swaps only the writer's own 👀 for one end reaction, and
   removes its older ones on that target. Your reactions stay.
 - Reactions are best effort: a failed one logs a warning and never fails the
@@ -91,8 +90,7 @@ ended, and when Troy adds `ready-for-agent`. Each tick on a repo:
    `ready-for-agent` card in **Ask**, but only if Troy added that label.
 
 Each decision, including what it skipped, goes in the job summary. It never
-touches a card in **Needs you**, **Ready** or **Done**, and never runs on the
-WSL desk. `--dry-run` prints the decisions without acting.
+touches a card in **Needs you**, **Ready** or **Done**. `--dry-run` prints the decisions without acting.
 
 The central caller runs `agent.loop.yml` when Troy adds `ready-for-agent`. If the VPS is down for more than 24 hours, the loop's own job
 expires in GitHub's queue and a card can sit until the repo's next event.
@@ -159,11 +157,10 @@ lands instead of sitting in a comment (devkit#115):
    adds `agent:plan`. The run's issue gets a comment linking it.
 2. The planner triages each finding: a new issue, a note on an open issue
    that already covers it, or dropped with a reason. For each new issue it
-   says whether to plan it now or leave it in the backlog, and whether it
-   needs the WSL desk.
+   says whether to plan it now or leave it in the backlog.
 3. Approve the plan as usual (`/approve`, or **Continue**). Instead of a
-   build, the run files the new issues (with `agent:plan` or
-   `needs:elevated` as the plan said, and a link back to the retro), comments
+   build, the run files the new issues (with `agent:plan` if the plan said
+   to plan it now, and a link back to the retro), comments
    on linked issues, and closes
    the retro issue. No PR.
 
@@ -173,7 +170,6 @@ lands instead of sitting in a comment (devkit#115):
   the normal flow.
 - It can't read the Actions log, so a job that died before its agent wrote
   anything shows up only as `failure`; the retro names the step to check.
-- Elevated runs get no retro yet.
 - A stub proof run that reaches a retro files a real retro issue, which starts
   a real plan. Close it if you don't want that.
 
@@ -188,13 +184,10 @@ Agents propose new issues in their result, and publish files them
   off to a build, even after a **Continue**. Plan, approve and build each
   subtask on its own. A subtask's `issue.md` starts with the story's title and
   body, so its plan stays inside the story.
-- **A story never builds.** `agent:build` or `agent:elevated` on an issue with
+- **A story never builds.** `agent:build` on an issue with
   sub-issues is refused. The card goes to **Needs you** with "Build each
   subtask instead", and the label is removed. This includes stories made by
   hand.
-- **Elevated subtasks.** A subtask the plan marks `elevated` gets
-  `needs:elevated` and the note "Needs the WSL desk: add `agent:elevated` after
-  the plan." The pipeline never adds `agent:elevated` itself.
 - **Follow-ups.** Any stage except a retro may return `followups`. Each becomes
   a new issue in **Ask** with no label, so it starts nothing. Its body links
   back to the card, the stage and the run. A comment on the card lists them,
@@ -211,41 +204,19 @@ Agents propose new issues in their result, and publish files them
 - A retro's `followups` are its findings, which it files as one `retro` issue
   ([Retros](#retros)).
 
-## Elevated runs (the WSL desk)
+## Workflow-file changes
 
-For a plan that needs Troy's own admin access (a new provider, an org setting,
-his browser), add `agent:elevated` instead of `agent:build`. The run goes to
-the one runner on his WSL desk, which runs as him and which GitHub lets only
-`agent.elevated.yml` on main use.
+A plan that edits `.github/workflows` builds like any other: approve it with
+`/approve` or **Continue**. The tokens that push an agent's commits (Publish
+and each repair) ask for `workflows: write`, so the App pushes workflow files
+like any file (infra#150). A branch workflow can't read the pipeline's
+secrets: they live in the `agents` environment, which only `main` may use.
 
-1. The card goes to **Needs you** with "Queued for the WSL desk".
-2. The desk runner takes it. Troy's gingur stack keeps that runner up while he
-   is logged in to Windows (setup in infra's runbook). While the desk is off,
-   the job waits in GitHub's queue, which cancels it after 24 hours.
-3. Claude carries out the plan with his access, gating each outside write on a
-   named rollback. Publish runs on the desk too: his git login pushes the
-   commit, and the App comments and opens the draft PR. Then the same review and repair rounds as a
-   build run on the VPS (not for a desk-only repo). A repair pushes as the App,
-   so a finding that needs a workflow edit ends in Needs you.
+## Repo persona and skills
 
-A plan that edits `.github/workflows` runs elevated: the App has no
-`workflows` permission, so only the desk can push those files. Render refuses
-a build when its approved plan names a workflow file and says to add
-`agent:elevated` instead.
-
-`needs:elevated` marks an issue an agent says needs the desk. It starts
-nothing; add `agent:elevated` yourself.
-
-**Desk-only repos (infra).** A repo the App must never reach passes
-`runner: wsl` to `agent.plan.yml` and `agent.elevated.yml` (see
-[infra's caller](https://github.com/gingur-root/infra/blob/main/.github/workflows/agents.yml)).
-Every job then runs on the desk, so nothing happens while the desk is off, and
-Troy's own `gh` writes the comments, moves the card and opens the draft PR.
-There is no `agent:build`: `agent:elevated` is the approval.
-
-**Repo persona and skills.** A repo replaces any role file by committing the
-same path under `.devkit/` (infra's `.devkit/agents/elevated.md`). A skill is
-`skills/<name>/SKILL.md` with a `roles: plan, elevated` frontmatter line; a
+A repo replaces any role file by committing the
+same path under `.devkit/` (e.g. `.devkit/agents/build.md`). A skill is
+`skills/<name>/SKILL.md` with a `roles: plan, build` frontmatter line; a
 repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
 
 ## Measuring a prompt or skill change

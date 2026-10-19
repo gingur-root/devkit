@@ -54,7 +54,6 @@ test('the server answers 409 on a stale card and writes nothing', async () => {
         action: 'continue',
         seen: idle('Needs you'),
         note: '',
-        elevated: false,
       },
       undefined,
       async () => now,
@@ -71,7 +70,6 @@ test('Merge answers 501 until the merge token exists', async () => {
     action: 'merge',
     seen: idle('Ready'),
     note: '',
-    elevated: false,
   } as const;
   await assert.rejects(
     act(req, undefined, async () => ready),
@@ -155,7 +153,7 @@ test('Stop cancels each run in its hosting repo and refuses only when both lists
         return new Response(null, { status: 204 });
       });
       const result = act(
-        { repo: 'scratch', number: 1, action: 'stop', seen: card.state, note: '', elevated: false },
+        { repo: 'scratch', number: 1, action: 'stop', seen: card.state, note: '' },
         undefined,
         async () => card,
       );

@@ -39,7 +39,7 @@ export function CardButtons({ card, onDone }: { card: BoardCard; onDone: () => v
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'continue' | 'request-changes' | null>(null);
 
-  async function press(action: CardAction, extra: { note?: string; elevated?: boolean } = {}) {
+  async function press(action: CardAction, extra: { note?: string } = {}) {
     setBusy(true);
     setError(null);
     const response = await fetch('/api/card', {
@@ -104,7 +104,7 @@ export function CardButtons({ card, onDone }: { card: BoardCard; onDone: () => v
           action={dialog}
           busy={busy}
           onClose={() => setDialog(null)}
-          onSend={(note, elevated) => press(dialog, { note, elevated })}
+          onSend={(note) => press(dialog, { note })}
         />
       )}
     </div>
@@ -120,58 +120,34 @@ function NoteDialog({
   action: 'continue' | 'request-changes';
   busy: boolean;
   onClose: () => void;
-  onSend: (note: string, elevated: boolean) => void;
+  onSend: (note: string) => void;
 }) {
   const [note, setNote] = useState('');
-  const [elevated, setElevated] = useState(false);
-  // Elevate runs with Troy's own admin access, so it always takes a second step.
-  const [confirming, setConfirming] = useState(false);
   const isContinue = action === 'continue';
   const ready = isContinue || note.trim().length > 0;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {confirming ? 'Run elevated?' : isContinue ? 'Continue' : 'Request changes'}
-          </DialogTitle>
+          <DialogTitle>{isContinue ? 'Continue' : 'Request changes'}</DialogTitle>
           <DialogDescription>
-            {confirming
-              ? 'The build runs on the WSL desk with your own admin access. It waits while the desk is off.'
-              : isContinue
-                ? 'Approves the build. The planner reads your note, updates the plan if needed, then builds or asks again.'
-                : 'The planner reads your note, re-plans, then builds again.'}
+            {isContinue
+              ? 'Approves the build. The planner reads your note, updates the plan if needed, then builds or asks again.'
+              : 'The planner reads your note, re-plans, then builds again.'}
           </DialogDescription>
         </DialogHeader>
-        {!confirming && (
-          <>
-            <Textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder={isContinue ? 'Note for the planner (optional)' : 'What to change'}
-              aria-label="Note"
-            />
-            {isContinue && (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={elevated}
-                  onChange={(e) => setElevated(e.target.checked)}
-                />
-                Elevate: build on the WSL desk
-              </label>
-            )}
-          </>
-        )}
+        <Textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder={isContinue ? 'Note for the planner (optional)' : 'What to change'}
+          aria-label="Note"
+        />
         <DialogFooter>
-          <Button variant="outline" onClick={confirming ? () => setConfirming(false) : onClose}>
-            {confirming ? 'Back' : 'Cancel'}
+          <Button variant="outline" onClick={onClose}>
+            Cancel
           </Button>
-          <Button
-            disabled={busy || !ready}
-            onClick={() => (elevated && !confirming ? setConfirming(true) : onSend(note, elevated))}
-          >
-            {confirming ? 'Run elevated' : isContinue ? 'Continue' : 'Send'}
+          <Button disabled={busy || !ready} onClick={() => onSend(note)}>
+            {isContinue ? 'Continue' : 'Send'}
           </Button>
         </DialogFooter>
       </DialogContent>

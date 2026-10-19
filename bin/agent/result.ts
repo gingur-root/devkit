@@ -35,7 +35,6 @@ export const Triage = z.array(
       body: z.string(),
       link: z.number().int().nullable(),
       start: z.enum(['plan', 'backlog']),
-      elevated: z.boolean(),
       priority: z.enum(PRIORITIES),
     })
     .strict(),
@@ -133,11 +132,7 @@ export const Result = z
       )
       .nullable(),
     subtasks: z
-      .array(
-        z
-          .object({ title: z.string(), body: z.string(), pr: z.boolean(), elevated: z.boolean() })
-          .strict(),
-      )
+      .array(z.object({ title: z.string(), body: z.string(), pr: z.boolean() }).strict())
       .nullable()
       .describe('A ready plan files each as a sub-issue of the card, which becomes a story.'),
     followups: z

@@ -106,11 +106,6 @@ export function revision(...parts: string[]): string {
     .digest('hex');
 }
 
-/** Named workflow files need the WSL desk because the App cannot push them. */
-export function editsWorkflows(plan: string): boolean {
-  return /\.github\/workflows\/[\w.-]+\.ya?ml/.test(plan);
-}
-
 /** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */
 export function usage(events: string): { input: number; output: number } {
   const total = { input: 0, output: 0 };

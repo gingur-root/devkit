@@ -15,7 +15,7 @@
   },
   "status": "complete",
   "outcome": "ready",
-  "summary": "Stub story plan: two subtasks, one for the WSL desk. Ready to build each subtask.",
+  "summary": "Stub story plan: two subtasks. Ready to build each subtask.",
   "evidence": [],
   "changes": null,
   "hypotheses": null,
@@ -38,14 +38,12 @@
     {
       "title": "Stub subtask: add STUB.md",
       "body": "Adds STUB.md, as the stub build does.",
-      "pr": true,
-      "elevated": false
+      "pr": true
     },
     {
       "title": "Stub subtask: change an org setting",
-      "body": "Changes an org setting, so it needs the WSL desk.",
-      "pr": false,
-      "elevated": true
+      "body": "Changes an org setting, so it lands without a PR.",
+      "pr": false
     }
   ],
   "followups": null,

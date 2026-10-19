@@ -32,8 +32,7 @@ These override anything below that conflicts with them.
 - **Identity comes from a verified record.** Who acted and who approved is
   checked against GitHub's own record or a verified token, never a dispatch
   input or localhost. A missing credential fails the job; it never falls back
-  to a hosted runner or an ambient `gh` login. Elevated runs on the WSL desk
-  act as the operator by decision (devkit#119, #128).
+  to a hosted runner or an ambient `gh` login (devkit#119, #128).
 - **Trust comes from the base.** Credential, permission and fetch decisions use
   the trusted base/source commit, never the PR's own code or any commit an
   agent wrote (devkit#5, #188).
@@ -187,7 +186,7 @@ composite, so it's bumped once.
   value, so the token crosses jobs sealed with `AGENTS_SECRETS_TOKEN` (openssl
   AES-256). `agent.run` opens it and hands it to the agent as `GH_TOKEN`. It
   expires an hour after minting, and the agent can leak it (worst case: a copy
-  of private code). The WSL desk mints none. `test/agent.token.test.ts` pins the
+  of private code). `test/agent.token.test.ts` pins the
   agent jobs' permissions and the token's scope.
 - **Issue provenance needs `agent:filed`.** The agent's read token can still
   open public issues as the pipeline bot, even when scoped to private repos:
@@ -201,7 +200,13 @@ composite, so it's bumped once.
   trusted by author because agents get 403 when posting them (devkit#186).
 - **GitHub writes** go through `app.token`: a short-lived installation
   token for the gingur-root pipeline App, narrowed per call by its
-  `permission*` inputs. The App has no `workflows` permission.
+  `permission*` inputs. The tokens that push an agent's commits (Publish and
+  each repair) ask for `workflows: write`, so agents push workflow files like
+  any other file (infra#150).
+- **Pipeline secrets live in the `agents` environment**, which only `main` may
+  use, since a branch can carry a workflow (infra#150). Every job that reads
+  `PIPELINE_SECRETS_TOKEN` or `AGENTS_SECRETS_TOKEN` sets `environment: agents`
+  on itself; a reusable workflow's caller can't set it for it.
 - Never print, echo or commit a secret value.
 - **Tests never act as the operator.** On the WSL desk, `bin/agent/github.ts`
   falls back to Troy's own `gh` login when `GH_TOKEN` is unset. Under Vitest,
@@ -223,8 +228,7 @@ top-level `&&` with `(<admission>)` as one operand, e.g.
 - Callers route with `runner: ${{ vars.RUNNER }}` (the org variable, `local`).
   A caller repo's variables don't resolve inside a cross-repo reusable workflow,
   so a caller that omits the input runs GitHub-hosted.
-- Every other gingur-root job runs self-hosted (`vars.RUNNER`, or `wsl` for the
-  desk), throwaway probes included. Outside devkit's own CI, only infra's
+- Every other gingur-root job runs self-hosted (`vars.RUNNER`), throwaway probes included. Outside devkit's own CI, only infra's
   `vps.scan.yml` and its manual `RUNNER=ubuntu-latest` fallback run
   GitHub-hosted (gingur-root/infra `docs/runbook.md`).
 

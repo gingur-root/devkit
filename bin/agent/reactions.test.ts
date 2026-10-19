@@ -20,7 +20,6 @@ test('each end state maps to its reaction, and a stage with a later stage after 
     ['review', 'Building', false, false, null],
     ['review', 'Ready', false, false, 'done'],
     ['review', 'Needs you', false, false, 'question'],
-    ['elevated', 'Ready', false, false, 'done'],
     ['build', 'Done', false, false, 'done'],
     ['retro', 'Needs you', false, false, null],
   ] as const) {

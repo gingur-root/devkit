@@ -33,7 +33,7 @@ export const DEFAULT_TOOLS: Tools = Tools.parse({
   mcpServers: {
     context7: {
       url: 'https://mcp.context7.com/mcp',
-      roles: ['plan', 'build', 'repair', 'review', 'elevated'],
+      roles: ['plan', 'build', 'repair', 'review'],
     },
   },
 });

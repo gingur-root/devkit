@@ -13,14 +13,13 @@ import { REPAIR_ROUNDS } from '../bin/agent/constants.ts';
 const ADMISSION =
   "github.repository_owner_id == '340382989' && github.run_attempt == '1' && " +
   "((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || " +
-  '(github.event_name == \'issues\' && github.event.action == \'labeled\' && contains(fromJSON(\'["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]\'), github.event.label.name)) || ' +
+  '(github.event_name == \'issues\' && github.event.action == \'labeled\' && contains(fromJSON(\'["agent:plan","agent:build","agent:research","ready-for-agent"]\'), github.event.label.name)) || ' +
   "(github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || " +
   "startsWith(github.event.comment.body, '/approve'))))) || " +
   // The pipeline App's bot may add only stage labels: `agent:plan` for the board loop (devkit#47),
-  // and `agent:build` or `agent:elevated` for a plan's hand-off after a dashboard Continue, which
-  // render then checks (bin/agent/approval.ts, devkit#99).
+  // and `agent:build` for a plan's hand-off after a dashboard Continue, which render then checks (bin/agent/approval.ts, devkit#99).
   "(github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && " +
-  'contains(fromJSON(\'["agent:plan","agent:build","agent:elevated"]\'), github.event.label.name)) || ' +
+  'contains(fromJSON(\'["agent:plan","agent:build"]\'), github.event.label.name)) || ' +
   // The org webhook receiver dispatches every stage in the central caller (devkit#118); it applies
   // the rule above to the event's sender first (bin/webhooks/pipeline.ts).
   "(github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))";
@@ -28,14 +27,12 @@ const ADMISSION =
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);
 
-test('build and elevated runs have one repair job per configured repair round', () => {
-  for (const file of ['agent.build.yml', 'agent.elevated.yml']) {
-    const workflow = parse(readFileSync(new URL(file, workflows), 'utf8')) as {
-      jobs: Record<string, unknown>;
-    };
-    const repairs = Object.keys(workflow.jobs).filter((id) => /^repair-\d+$/.test(id));
-    assert.equal(repairs.length, REPAIR_ROUNDS, file);
-  }
+test('build runs have one repair job per configured repair round', () => {
+  const workflow = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')) as {
+    jobs: Record<string, unknown>;
+  };
+  const repairs = Object.keys(workflow.jobs).filter((id) => /^repair-\d+$/.test(id));
+  assert.equal(repairs.length, REPAIR_ROUNDS);
 });
 
 // Splits on an operator at paren depth 0, outside string literals.
