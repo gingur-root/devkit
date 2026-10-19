@@ -23,9 +23,11 @@ on:
         type: string
         required: false
         default: ''
+    # Optional: the jobs that use them read the `agents` environment's copies
+    # (infra#150), which win over anything passed in.
     secrets:
       AGENTS_SECRETS_TOKEN:
-        required: true
+        required: false
 
 permissions: {}
 
