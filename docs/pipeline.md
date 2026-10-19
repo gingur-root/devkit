@@ -284,10 +284,6 @@ proof, then pin it back.
   removes its label, so add it again once the plan is ready.
 - **A plan written without the issue body is refused once the body becomes visible.**
   Run `agent:plan` again.
-- **A workflow-file change on main blocks a build retry.** If main changed
-  anything under `.github/workflows/` since the branch was made, the push to
-  `agent/issue-<n>` is rejected (the App has no `workflows` permission). Close
-  the PR and delete the branch, then add `agent:build` again.
 - **A repair needs the branch as reviewed.** If anyone pushes to
   `agent/issue-<n>` while a repair runs, its push is rejected and the card
   stops in Needs you.

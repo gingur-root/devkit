@@ -316,9 +316,6 @@ function buildComment(job: Job, result: Result, pull: Pull | null): string {
  * Commits the candidate on top of the issue's branch, or on the source when the
  * branch is new, so a retry is a plain fast-forward push. A repair commits on
  * the commit it fixed, so a branch that moved since rejects the push.
- * shortcut: a retry after the default branch changed a workflow file is
- * rejected (the App has no `workflows` permission); close the PR and delete the
- * branch first. Rebuild the branch instead if that happens often.
  */
 function pushCandidate(
   job: Job,

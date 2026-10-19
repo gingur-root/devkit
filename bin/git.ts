@@ -15,7 +15,7 @@ export function git(cwd: string, args: string[], as?: Identity): string {
 
 /**
  * Runs git without GH_TOKEN, so on the WSL desk `gh`'s credential helper uses
- * the operator's own login, which can push workflow files (the App can't).
+ * the operator's own login.
  */
 export function gitAsOperator(cwd: string, args: string[]): string {
   const { GH_TOKEN: _, ...env } = process.env;
