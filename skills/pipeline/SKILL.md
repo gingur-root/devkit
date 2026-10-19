@@ -1,9 +1,9 @@
 ---
-name: pipeline-session
+name: pipeline
 description: Use when Troy asks to run the pipeline in this session instead of on GitHub, or to plan, build and review an issue that is a file (under .devkit/issues/) rather than a GitHub issue.
 ---
 
-# Pipeline session
+# Pipeline
 
 Run the GitHub pipeline (`docs/pipeline.md`) from a desk session. Each stage
 is a fresh subagent with that stage's role files. You are the controller: you
@@ -21,20 +21,20 @@ GitHub pipeline can't drift apart.
 | Plan, review, repair       | Subagents, as in the table below                                                 |
 | Publish                    | You: branch, push, draft PR, PR reviews, issues                                  |
 
-| Stage  | Subagent model (`bin/agent/roles.ts`)      | Role files after `worker.md`, `contract.md` |
-| ------ | ------------------------------------------ | ------------------------------------------- |
-| plan   | Opus 5.5                                   | `plan.md`                                   |
-| build  | Codex if `codex` is on PATH, else Opus 5.5 | `build.md`                                  |
-| review | Opus 5.5, read-only tools                  | `review.md`                                 |
-| repair | same as build                              | `build.md`, `repair.md`                     |
-| retro  | Opus 5.5, read-only tools                  | `retro.md`                                  |
-| memory | Sonnet 5.5 (planned, devkit#260)           | `memory.md`, once it exists                 |
+| Stage  | Subagent model (`bin/agent/roles.ts`) | Role files after `worker.md`, `contract.md` |
+| ------ | ------------------------------------- | ------------------------------------------- |
+| plan   | Opus 5.5                              | `plan.md`                                   |
+| build  | Codex (preflight 2)                   | `build.md`                                  |
+| review | Opus 5.5, read-only tools             | `review.md`                                 |
+| repair | same as build                         | `build.md`, `repair.md`                     |
+| retro  | Opus 5.5, read-only tools             | `retro.md`                                  |
+| memory | Sonnet 5.5 (planned, devkit#260)      | `memory.md`, once it exists                 |
 
 Use each role's effort from `bin/agent/roles.ts`. Every stage also gets each
 `skills/*/SKILL.md` whose `roles:` line names it, and a repo's `.devkit/<path>`
-replaces devkit's file of the same path. With no `codex`, say
-in the PR that Claude both built and reviewed it: the pipeline relies on a
-second model reviewing the first.
+replaces devkit's file of the same path. Codex builds and Claude reviews, so a
+second model checks the first. A Claude build is allowed only when Troy says
+so, and the PR then says Claude both built and reviewed it.
 
 ## Subagent prompt
 
@@ -61,9 +61,33 @@ node --input-type=module -e "import {readFileSync} from 'node:fs'; import {Resul
 
 A stage that fails the parse or writes no envelope has stopped (step 9).
 
+Build and repair run on Codex, from the controller, with the same prompt.
+`--output-schema` makes its last message the envelope, as the pipeline's Codex
+run does:
+
+```bash
+node --input-type=module -e "import {RESULT_JSON_SCHEMA} from '<devkit>/bin/agent/result.ts'; console.log(JSON.stringify(RESULT_JSON_SCHEMA))" > $JOB/result.schema.json
+codex exec -C <worktree> --add-dir $JOB -s danger-full-access -c model_reasoning_effort=high \
+  --output-schema $JOB/result.schema.json -o $JOB/<stage>.json "<prompt>"
+```
+
+## Preflight
+
+Run these before step 1. Each failure names its fix; show Troy the fix and
+stop. Don't install anything yourself.
+
+1. **GitHub user.** `gh api user -q .login` prints `gingur`. Fix:
+   `gh auth login`.
+2. **Codex.** `codex --version` runs and `codex login status` says logged in.
+   Fix when `command -v codex` finds nothing: Codex was installed under
+   another nvm Node, so run `npm install -g @openai/codex` under the active
+   one. Fix when logged out: `codex login`.
+3. **devkit.** A devkit checkout at the default branch's head, with
+   `pnpm install` done. `<devkit>` in this skill means that checkout.
+
 ## Procedure
 
-1. **Set up.** Confirm `gh api user -q .login` prints `gingur`. Make a
+1. **Set up.** Make a
    worktree of the target repo from its default branch on
    `agent/<slug>`. If Troy gave the issue only in chat, write his words to
    `.devkit/issues/<slug>.md` yourself (`<slug>`: a few kebab-case words).

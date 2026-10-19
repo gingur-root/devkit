@@ -221,7 +221,7 @@ repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
 
 ## Running it from a desk session
 
-The `pipeline-session` skill (`skills/pipeline-session/SKILL.md`) runs the
+The `pipeline` skill (`skills/pipeline/SKILL.md`) runs the
 same stages from a Claude Code session, with Troy's `gh` user and one
 subagent per stage. The issue is a file under `.devkit/issues/` that never
 reaches main. The pipeline itself never loads that skill, since it has no
