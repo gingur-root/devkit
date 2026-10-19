@@ -53,6 +53,8 @@ function scratch(prefix: string): string {
 test('every discovered route becomes a registered command', async () => {
   const { program, routes } = await build();
   assert.ok(registered(program).includes('agent.tools'));
+  assert.ok(registered(program).includes('memory.check'));
+  assert.ok(registered(program).includes('memory.reindex'));
   assert.deepEqual(registered(program).sort(), routes.map((r) => r.path.join('.')).sort());
 });
 
