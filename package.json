@@ -47,6 +47,7 @@
   "dependencies": {
     "commander": "^15.0.0",
     "oxc-transform": "0.150.0",
+    "yaml": "^2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -79,7 +80,6 @@
     "typescript": "^7",
     "use-stick-to-bottom": "^1.1.6",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
-    "vite-plus": "1.1.0",
-    "yaml": "^2"
+    "vite-plus": "1.1.0"
   }
 }
