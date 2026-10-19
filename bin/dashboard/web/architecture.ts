@@ -84,7 +84,7 @@ export const PARTS = {
   app: {
     provider: 'GitHub',
     title: 'Pipeline App',
-    detail: 'writes comments, PRs, cards; never infra',
+    detail: 'writes comments, PRs, cards',
     logo: siGithub,
     at: [3, 3.3],
   },
@@ -94,13 +94,6 @@ export const PARTS = {
     detail: 'plan → build → review ⇄ repair; infra workflows',
     logo: siGithubactions,
     at: [4, 1.5],
-  },
-  elevated: {
-    provider: 'WSL desk',
-    title: 'Elevated runner',
-    detail: 'runner group wsl, kept up by the gingur stack',
-    logo: siUbuntu,
-    at: [5, 0],
   },
   runners: {
     provider: 'VPS',
@@ -149,7 +142,6 @@ export const LINKS: readonly Link[] = [
   { from: 'dashboard', to: 'app', label: 'acts as' },
   { from: 'issues', to: 'actions', label: 'label starts a stage' },
   { from: 'app', to: 'actions', label: 'App token' },
-  { from: 'actions', to: 'elevated', label: 'agent:elevated' },
   { from: 'actions', to: 'runners', label: 'agent jobs' },
   { from: 'actions', to: 'infra', label: 'runs on' },
   { from: 'runners', to: 'r2', label: 'transcripts' },

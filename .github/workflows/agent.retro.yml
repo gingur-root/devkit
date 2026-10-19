@@ -54,7 +54,6 @@ on:
         required: false
         default: ''
     secrets:
-      # Both unset on the WSL desk.
       AGENTS_SECRETS_TOKEN:
         required: false
       PIPELINE_SECRETS_TOKEN:
@@ -65,11 +64,9 @@ permissions: {}
 jobs:
   start:
     name: Start
-    # github.token packs the repo on the WSL desk, which mints no App token.
-    permissions:
-      contents: read
-    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
+    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
     runs-on: ${{ inputs.runner }}
+    environment: agents
     steps:
       - uses: actions/checkout@v6
         with:
@@ -82,9 +79,7 @@ jobs:
         with:
           cwd: devkit
 
-      # The WSL desk mints no App token: the operator's own `gh` reads there.
       - id: app
-        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -126,13 +121,14 @@ jobs:
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ inputs.source || github.sha }}
-          token: ${{ steps.app.outputs.token || github.token }}
+          token: ${{ steps.app.outputs.token }}
           name: retro-repo
 
   retro:
     name: Retro
     needs: start
     runs-on: ${{ inputs.runner }}
+    environment: agents
     permissions:
       contents: read
     steps:
@@ -150,6 +146,7 @@ jobs:
     name: Publish
     needs: retro
     runs-on: ${{ inputs.runner }}
+    environment: agents
     steps:
       - uses: actions/checkout@v6
         with:
@@ -173,7 +170,6 @@ jobs:
           path: ${{ runner.temp }}/agent/out
 
       - id: app
-        if: inputs.runner != 'wsl'
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}

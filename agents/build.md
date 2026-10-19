@@ -42,8 +42,7 @@ Implement the supplied approved issue and plan in the assigned worktree.
   the job file's `plan.criteria`.
 - Leave your change in the working tree, which is the repo checked out at the
   job's `source`. Committing is optional; the controller takes the whole tree
-  as the candidate and publishes it. Never push, and don't edit
-  `.github/workflows`: the controller can't publish those.
+  as the candidate and publishes it. Never push.
 - In the envelope, `inputs.plan` is the job file's `plan.revision`, unchanged.
   `evidence` holds one entry per criterion you checked, with its ID in
   `criterion`. `changes` maps each criterion to what you changed for it.
@@ -51,7 +50,7 @@ Implement the supplied approved issue and plan in the assigned worktree.
   pass. Otherwise `status` is `blocked` or `failed`, with the reason in
   `summary` and any question in `questions`.
 - A check that needs access you don't have (the App token, a live pipeline or
-  scratch run, the WSL desk) is the reviewer's or operator's. It doesn't block
+  scratch run) is the reviewer's or operator's. It doesn't block
   you: record it in `evidence` as `not-verified`, with why, and still return
   `implemented` when every check you can run passes. Blocking throws your
   change away.

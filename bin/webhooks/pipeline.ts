@@ -20,24 +20,22 @@ import type { Delivery, WebhookHandler } from './receiver.ts';
 
 export const PIPELINE_REPO = 'pipeline';
 export const PIPELINE_WORKFLOW = 'agents.yml';
-// infra keeps its own caller on the WSL desk: the App must never reach it (infra#47).
+// infra keeps its own caller (its .github/workflows/agents.yml).
 const SKIPPED_REPOS: readonly string[] = ['infra', PIPELINE_REPO];
 
-export const DISPATCH_STAGES = ['plan', 'build', 'elevated', 'loop'] as const;
+export const DISPATCH_STAGES = ['plan', 'build', 'loop'] as const;
 export type DispatchStage = (typeof DISPATCH_STAGES)[number];
 
 // Troy's labels. agent:research is admitted too, but no stage handles it yet.
 const OPERATOR_LABELS: Record<string, DispatchStage> = {
   [STAGE_LABELS.plan]: 'plan',
   [STAGE_LABELS.build]: 'build',
-  [STAGE_LABELS.elevated]: 'elevated',
   [READY_LABEL]: 'loop',
 };
-// The App's hand-offs: the board loop's plan, and a plan's build or elevated after a Continue, which render checks.
+// The App's hand-offs: the board loop's plan, and a plan's build after a Continue, which render checks.
 const APP_LABELS: Record<string, DispatchStage> = {
   [STAGE_LABELS.plan]: 'plan',
   [STAGE_LABELS.build]: 'build',
-  [STAGE_LABELS.elevated]: 'elevated',
 };
 // /revise is admitted too, but no stage handles it yet.
 const COMMANDS = Object.fromEntries(

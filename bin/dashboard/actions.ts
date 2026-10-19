@@ -7,7 +7,6 @@ import { setStatus } from '../agent/board.ts';
 import {
   BOARD_TITLE,
   CONTINUE_ROLES,
-  type Handoff,
   STAGE_LABELS,
   STATUS_FIELD,
   STATUSES,
@@ -29,8 +28,6 @@ export const CardRequest = z.object({
   /** The card as the page drew it. */
   seen: z.object({ column: z.enum(STATUSES), live: z.boolean() }),
   note: z.string().max(MAX_NOTE).default(''),
-  /** Continue only: build on the WSL desk (`agent:elevated`). The page confirms it first. */
-  elevated: z.boolean().default(false),
 });
 export type CardRequest = z.infer<typeof CardRequest>;
 
@@ -148,9 +145,8 @@ export function dispatchedRuns(runs: Run[], repo: string, number: number): Run[]
 }
 
 /** The App comment a Continue leaves: the planner reads the note, and the gate reads the marker. */
-export function continueComment(to: Handoff, heading: string, note: string): string {
-  const where = to === 'elevated' ? ' Build it elevated, on the WSL desk.' : '';
-  return [marker(CONTINUE_ROLES[to]), `**${heading} from the dashboard.**${where}`, note.trim()]
+export function continueComment(heading: string, note: string): string {
+  return [marker(CONTINUE_ROLES.build), `**${heading} from the dashboard.**`, note.trim()]
     .filter(Boolean)
     .join('\n\n');
 }
@@ -208,9 +204,8 @@ export async function act(
       // shortcut: no /revise yet (devkit#13), so the planner takes the change request as a Continue note.
       if (req.action === 'request-changes' && !req.note.trim())
         throw new ActionError(400, 'Say what to change.');
-      const to: Handoff = req.action === 'continue' && req.elevated ? 'elevated' : 'build';
       await rest('POST', `${issue}/comments`, {
-        body: continueComment(to, HEADINGS[req.action], req.note),
+        body: continueComment(HEADINGS[req.action], req.note),
       });
       await rest('POST', `${issue}/labels`, { labels: [STAGE_LABELS.plan] });
       return;

@@ -75,9 +75,9 @@ Output is one JSON object per line (`init`, `message`, `tool`, `result`,
 
 Add `.devkit/tools.json` to the target repo to declare MCP servers and required
 CLIs. Without the file, devkit uses its defaults: keyless Context7 at
-`https://mcp.context7.com/mcp` for plan, build, repair, review and elevated,
+`https://mcp.context7.com/mcp` for plan, build, repair and review,
 and no required CLIs. Web search follows the role's `web` setting, independently
-of MCP servers: on for plan, build, repair, review and elevated, off for retro
+of MCP servers: on for plan, build, repair and review, off for retro
 and hello. There is no research role.
 
 `agent render` reads the manifest from the job's trusted commit
@@ -121,7 +121,7 @@ An invalid manifest stops the run with its validation error.
 | `args`             | String array of stdio arguments; defaults to `[]`.                                                                                                |
 | `secret`           | Optional Bitwarden `agents` secret UUID. Omit it for a keyless server.                                                                            |
 | `env`              | Optional credential env name matching `^MCP_[A-Z0-9_]+$`. Defaults to `MCP_<SCREAMING_SNAKE_NAME>_TOKEN`; `docsApi` becomes `MCP_DOCS_API_TOKEN`. |
-| `roles`            | Required array of allowed roles: `hello`, `plan`, `build`, `repair`, `review`, `retro`, `elevated`. `[]` turns the server off.                    |
+| `roles`            | Required array of allowed roles: `hello`, `plan`, `build`, `repair`, `review`, `retro`. `[]` turns the server off.                                |
 | `clis`             | Required CLI names on PATH for every role; defaults to `[]`. A missing executable stops the run with `<name> is not on PATH.`                     |
 
 Repo entries add new servers or replace a default's whole config by name.
@@ -164,6 +164,6 @@ The defaults have no `github` MCP server. #182 covers the read-only credential.
 Skills keep their existing registry: frontmatter `roles:` in
 `skills/<name>/SKILL.md`, with repo replacements or additions under
 `.devkit/skills/`. Instructions inline the selected skills; nothing is copied
-to `~/.codex`. `plain-english` covers plan, build, repair, review, elevated
-and retro; `simple-english` covers build, repair and elevated. Playwright and
+to `~/.codex`. `plain-english` covers plan, build, repair, review
+and retro; `simple-english` covers build and repair. Playwright and
 frontend-design remain follow-up work for later manifest entries.

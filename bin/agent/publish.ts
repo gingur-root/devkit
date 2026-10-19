@@ -16,12 +16,10 @@ import { git, gitAsOperator } from '../git.ts';
 import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
-  ELEVATED_NOTE,
   FILED_LABEL,
   filedByPipeline,
   FOLLOWUP_CAP,
   type Handoff,
-  NEEDS_ELEVATED_LABEL,
   OPERATOR_COAUTHOR,
   OPERATOR_ID,
   OPERATOR_LOGIN,
@@ -35,7 +33,6 @@ import { graphql, removeLabel, rest, restAll, stageComment, upsertStageComment }
 import {
   CANDIDATE_FILE,
   CONTRACT_PREFIX,
-  editsWorkflows,
   followupMarker,
   ISSUES_FILE,
   JOB_FILE,
@@ -238,7 +235,7 @@ export function failureReason(failure: Failure, summary: string): string {
 }
 
 function retry(role: string): string {
-  if (role === 'plan' || role === 'elevated') return `add \`${STAGE_LABELS[role]}\``;
+  if (role === 'plan') return `add \`${STAGE_LABELS.plan}\``;
   return 'reply `/approve`';
 }
 
@@ -275,7 +272,7 @@ export function planComment(
     ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
     : handoff
       ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
-      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : editsWorkflows(plan) ? 'ready: add `agent:elevated` to run it on the WSL desk (it edits workflow files)' : 'ready: reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk'}${bodyNote}**`;
+      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: revision(plan),
     outcome: result.outcome,
@@ -291,8 +288,7 @@ export function planComment(
     head,
     result.summary,
     result.priority && `**Priority:** ${result.priority}, unless the card already has one.`,
-    story.length &&
-      `## Subtasks\n\n${story.map((s) => `- #${s.number} ${s.title}${s.elevated ? ', needs the WSL desk' : ''}`).join('\n')}`,
+    story.length && `## Subtasks\n\n${story.map((s) => `- #${s.number} ${s.title}`).join('\n')}`,
     numbered(result.questions),
     `${PLAN_START}\n${plan}\n${PLAN_END}`,
     `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
@@ -302,8 +298,7 @@ export function planComment(
 }
 
 function buildComment(job: Job, result: Result, pull: Pull | null): string {
-  const stage =
-    job.role === 'elevated' ? 'Elevated run' : job.role === 'repair' ? 'Repair' : 'Build';
+  const stage = job.role === 'repair' ? 'Repair' : 'Build';
   const link = pull && `[#${pull.number}](${pull.html_url})`;
   const head = !link
     ? result.status !== 'complete'
@@ -321,9 +316,6 @@ function buildComment(job: Job, result: Result, pull: Pull | null): string {
  * Commits the candidate on top of the issue's branch, or on the source when the
  * branch is new, so a retry is a plain fast-forward push. A repair commits on
  * the commit it fixed, so a branch that moved since rejects the push.
- * shortcut: a retry after the default branch changed a workflow file is
- * rejected (the App has no `workflows` permission); close the PR and delete the
- * branch first. Rebuild the branch instead if that happens often.
  */
 function pushCandidate(
   job: Job,
@@ -861,7 +853,7 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
       title: item.title,
       body: `${item.body}\n\n${from}`,
       // Not `retro`: that label makes a plan triage the issue again instead of building it.
-      labels: [FILED_LABEL, ...(item.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
+      labels: [FILED_LABEL],
     });
     await proposePriority(job.repo, filed.node_id, item.priority);
     if (item.start === 'plan')
@@ -869,7 +861,7 @@ async function fileTriage(job: Job, triage: Triage): Promise<string> {
         labels: [STAGE_LABELS.plan],
       });
     lines.push(
-      `- Filed #${filed.number} (${item.priority}), ${item.start === 'plan' ? 'planning now' : 'in the backlog'}${item.elevated ? ', needs the WSL desk' : ''}`,
+      `- Filed #${filed.number} (${item.priority}), ${item.start === 'plan' ? 'planning now' : 'in the backlog'}`,
     );
   }
   await rest('PATCH', `/repos/${job.repo}/issues/${job.issue.number}`, {
@@ -894,7 +886,6 @@ function runUrl(): string {
 export interface Filed {
   number: number;
   title: string;
-  elevated: boolean;
 }
 
 /**
@@ -912,8 +903,7 @@ async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]
 /**
  * Files or finds each subtask, links it as a native sub-issue of the card, and
  * puts a new one in Ask. A retry only files and links what is missing, so it
- * never moves a subtask that has started back to Ask. An elevated subtask asks
- * for the WSL desk; the operator still adds `agent:elevated` himself.
+ * never moves a subtask that has started back to Ask.
  */
 export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): Promise<Filed[]> {
   const mark = subtaskMarker(card.number);
@@ -926,17 +916,15 @@ export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): 
       earlier.find((i) => i.title === subtask.title) ??
       (await rest<Issue>('POST', `/repos/${job.repo}/issues`, {
         title: subtask.title,
-        body: [subtask.body, `Part of #${card.number}.`, subtask.elevated && ELEVATED_NOTE, mark]
-          .filter(Boolean)
-          .join('\n\n'),
-        labels: [FILED_LABEL, ...(subtask.elevated ? [NEEDS_ELEVATED_LABEL] : [])],
+        body: [subtask.body, `Part of #${card.number}.`, mark].join('\n\n'),
+        labels: [FILED_LABEL],
       }));
     if (!linked.has(issue.id)) {
       // The numeric id, not the number.
       await rest('POST', path, { sub_issue_id: issue.id });
       await setStatus(job.repo, issue.node_id, 'Ask');
     }
-    filed.push({ number: issue.number, title: issue.title, elevated: subtask.elevated });
+    filed.push({ number: issue.number, title: issue.title });
   }
   return filed;
 }

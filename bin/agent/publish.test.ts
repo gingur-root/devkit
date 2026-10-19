@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, vi } from 'vite-plus/test';
 
-import { ELEVATED_NOTE, OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
+import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import {
   commitMessage,
   failureReason,
@@ -98,29 +98,17 @@ const planJob: Job = {
   attemptLimit: null,
 };
 
-test('ready workflow plans direct the operator to elevated and preserve body visibility', () => {
+test('a ready plan that edits workflow files is approved like any other, and keeps body visibility', () => {
   const out = mkdtempSync(join(tmpdir(), 'plan-workflows-'));
   const ready = Result.parse(
     JSON.parse(readFileSync(new URL('fixtures/plan.ready.json', import.meta.url), 'utf8')),
   );
   try {
     for (const [plan, instruction] of [
-      [
-        'Edit `.github/workflows/agent.build.yml`.',
-        'add `agent:elevated` to run it on the WSL desk (it edits workflow files)',
-      ],
-      [
-        'Edit `.github/workflows/check.yaml`.',
-        'add `agent:elevated` to run it on the WSL desk (it edits workflow files)',
-      ],
-      [
-        'Edit `bin/agent/render.ts`.',
-        'reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk',
-      ],
-      [
-        'Read `.github/workflows/` for context.',
-        'reply `/approve` to build it, or add `agent:elevated` to run it on the WSL desk',
-      ],
+      ['Edit `.github/workflows/agent.build.yml`.', 'reply `/approve` to build it'],
+      ['Edit `.github/workflows/check.yaml`.', 'reply `/approve` to build it'],
+      ['Edit `bin/agent/render.ts`.', 'reply `/approve` to build it'],
+      ['Read `.github/workflows/` for context.', 'reply `/approve` to build it'],
     ] as const) {
       writeFileSync(join(out, PLAN_FILE), plan);
       for (const bodySeen of [true, false]) {
@@ -151,8 +139,7 @@ test('plan comments record body visibility and name a withheld body in every bol
   const variants = [
     { result: ready, handoff: null, story: [] },
     { result: ready, handoff: 'build', story: [] },
-    { result: ready, handoff: 'elevated', story: [] },
-    { result: ready, handoff: null, story: [{ number: 2, title: 'Subtask', elevated: false }] },
+    { result: ready, handoff: null, story: [{ number: 2, title: 'Subtask' }] },
     { result: { ...ready, outcome: 'needs-input' }, handoff: null, story: [] },
     { result: { ...ready, status: 'failed', outcome: null }, handoff: null, story: [] },
     { result: { ...ready, triage: [] }, handoff: null, story: [] },
@@ -186,7 +173,7 @@ test('plan comments record body visibility and name a withheld body in every bol
 for (const status of ['blocked', 'failed'] as const) {
   test(`a ${status} result stops at its role with the reason`, () => {
     const result = { ...pass, status, outcome: null, summary: 'No fixture.', failure: null };
-    for (const role of ['plan', 'build', 'review', 'retro', 'elevated']) {
+    for (const role of ['plan', 'build', 'review', 'retro']) {
       assert.deepEqual(check({ ...planJob, role }, result), {
         stage: role,
         reason: `\`${status}\`: No fixture`,
@@ -200,7 +187,7 @@ for (const status of ['blocked', 'failed'] as const) {
 }
 
 test('a stale result stops at stale and names the superseded input', () => {
-  for (const role of ['plan', 'build', 'repair', 'review', 'retro', 'elevated']) {
+  for (const role of ['plan', 'build', 'repair', 'review', 'retro']) {
     assert.deepEqual(
       check(
         { ...planJob, role },
@@ -486,7 +473,7 @@ test("a stop names the CLI's failure class and a rate limit's reset time", () =>
 
 test('every pushed commit lists the operator as co-author', () => {
   const issue = { number: 76, title: 'Add a thing', revision: '', bodySeen: true };
-  for (const role of ['build', 'repair', 'elevated']) {
+  for (const role of ['build', 'repair']) {
     const trailers = commitMessage({ role, issue }).split('\n\n').at(-1);
     assert.equal(
       trailers,
@@ -569,9 +556,7 @@ test("only a retro issue's plan triages, and every other plan sets a priority", 
     attemptLimit: null,
   };
   const retro = { ...job, artifacts: [ISSUES_FILE] };
-  const triage = [
-    { title: 'Fix', body: 'b', link: null, start: 'plan', elevated: false, priority: 'P2' },
-  ] as const;
+  const triage = [{ title: 'Fix', body: 'b', link: null, start: 'plan', priority: 'P2' }] as const;
   const check = (j: Job, r: Result) => {
     const out = mkdtempSync(join(tmpdir(), 'verdict-'));
     writeFileSync(join(out, PLAN_FILE), 'plan');
@@ -799,28 +784,24 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
     );
     assert.deepEqual(github.statuses, ['item-I_2 Ask', 'item-I_3 Ask']);
     assert.deepEqual(filed, [
-      { number: 2, title: subtasks[0]!.title, elevated: false },
-      { number: 3, title: subtasks[1]!.title, elevated: true },
+      { number: 2, title: subtasks[0]!.title },
+      { number: 3, title: subtasks[1]!.title },
     ]);
 
-    // An elevated subtask asks for the desk; nothing adds a stage label.
-    const [plain, elevated] = github.issues;
+    // Nothing adds a stage label.
+    const [plain, second] = github.issues;
     assert.deepEqual(plain!.labels, ['agent:filed']);
-    assert.deepEqual(elevated!.labels, ['agent:filed', 'needs:elevated']);
-    assert.equal(
-      elevated!.body,
-      `${subtasks[1]!.body}\n\nPart of #1.\n\n${ELEVATED_NOTE}\n\n<!-- devkit:subtask #1 -->`,
-    );
+    assert.deepEqual(second!.labels, ['agent:filed']);
     assert.equal(plain!.body, `${subtasks[0]!.body}\n\nPart of #1.\n\n<!-- devkit:subtask #1 -->`);
 
     // A retry after a partial filing that never linked the second subtask.
-    github.linked.delete(elevated!.id);
+    github.linked.delete(second!.id);
     github.calls.length = 0;
     github.statuses.length = 0;
     await fileSubtasks(storyJob, CARD, subtasks);
     assert.equal(posts().length, 0, 'no duplicate issue');
     assert.deepEqual(links(), [
-      `POST /repos/o/r/issues/1/sub_issues {"sub_issue_id":${elevated!.id}}`,
+      `POST /repos/o/r/issues/1/sub_issues {"sub_issue_id":${second!.id}}`,
     ]);
     assert.deepEqual(github.statuses, ['item-I_3 Ask'], 'a started subtask stays where it is');
     assert.equal(github.issues.length, 2);
@@ -912,7 +893,7 @@ test('subtasks and follow-ups ignore copied markers unless the issue is from the
       try {
         if (kind === 'subtask') {
           const filed = await fileSubtasks(storyJob, CARD, [
-            { title: 'Same title', body: 'Approved body', pr: true, elevated: false },
+            { title: 'Same title', body: 'Approved body', pr: true },
           ]);
           assert.equal(filed[0]!.number, reuse ? 7 : 3);
           assert.equal(github.linked.has(7), reuse);
@@ -989,7 +970,7 @@ test('a story plan lists its subtasks and never hands off, even after a Continue
     );
     assert.ok(
       stage.includes(
-        `## Subtasks\n\n- #2 ${story.subtasks![0]!.title}\n- #3 ${story.subtasks![1]!.title}, needs the WSL desk`,
+        `## Subtasks\n\n- #2 ${story.subtasks![0]!.title}\n- #3 ${story.subtasks![1]!.title}`,
       ),
     );
     assert.ok(stage.includes('Filed 1 follow-up, listed below.'));
@@ -1024,7 +1005,7 @@ test('a retro files its findings as one retro issue, never as follow-ups', async
   }
 });
 
-test('retro triage labels plain and elevated issues with filing provenance', async () => {
+test('retro triage labels its issues with filing provenance', async () => {
   const github = fakeGitHub();
   const paths = staged({ ...storyJob, role: 'build' }, fixtureResult('build.ready'));
   writeFileSync(
@@ -1035,10 +1016,9 @@ test('retro triage labels plain and elevated issues with filing provenance', asy
         body: 'One',
         link: null,
         start: 'backlog',
-        elevated: false,
         priority: 'P2',
       },
-      { title: 'Elevated', body: 'Two', link: null, start: 'plan', elevated: true, priority: 'P2' },
+      { title: 'Second', body: 'Two', link: null, start: 'plan', priority: 'P2' },
     ]),
   );
   try {
@@ -1046,7 +1026,7 @@ test('retro triage labels plain and elevated issues with filing provenance', asy
     const posts = github.calls.filter((c) => c.startsWith('POST /repos/o/r/issues '));
     assert.deepEqual(
       posts.map((c) => JSON.parse(c.split(' ').slice(2).join(' ')).labels),
-      [['agent:filed'], ['agent:filed', 'needs:elevated']],
+      [['agent:filed'], ['agent:filed']],
     );
     assert.ok(github.calls.includes('POST /repos/o/r/issues/3/labels {"labels":["agent:plan"]}'));
   } finally {

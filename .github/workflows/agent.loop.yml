@@ -5,8 +5,7 @@ name: Loop
 # the run left in Planning or Building goes to Needs you; callers also call it
 # when the operator adds `ready-for-agent`. Then it starts the repo's oldest
 # ready card if no card is planning. Event-driven only: nothing polls.
-# Self-hosted runners only, and never the WSL desk: desk repos are out of the
-# App's reach.
+# Self-hosted runners only.
 
 on:
   workflow_call:
@@ -45,7 +44,6 @@ on:
         required: false
         default: ''
     secrets:
-      # Unset on the WSL desk, where the job doesn't run.
       PIPELINE_SECRETS_TOKEN:
         required: false
 
@@ -55,8 +53,9 @@ jobs:
   tick:
     name: Tick
     # always(): a cancelled run still gets its last word.
-    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.runner != 'wsl'
+    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch')))
     runs-on: ${{ inputs.runner }}
+    environment: agents
     steps:
       - uses: actions/checkout@v6
         with:

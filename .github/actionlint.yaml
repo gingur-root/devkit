@@ -1,4 +1,0 @@
-self-hosted-runner:
-  # The WSL desk's runner (infra wsl/elevated), used by agent.elevated.yml only.
-  labels:
-    - wsl

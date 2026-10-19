@@ -42,7 +42,6 @@ test("Troy's labels and commands start their stage, carrying him as the actor", 
     actor: OPERATOR_ID,
   });
   assert.equal(stage(labeled('agent:build')), 'build');
-  assert.equal(stage(labeled('agent:elevated')), 'elevated');
   assert.equal(stage(labeled('ready-for-agent')), 'loop');
   assert.equal(stage(commented('/plan please')), 'plan');
   assert.equal(stage(commented('/approve')), 'build');
@@ -51,12 +50,11 @@ test("Troy's labels and commands start their stage, carrying him as the actor", 
 test('the App starts only its hand-offs, and nobody else starts anything', () => {
   assert.deepEqual(dispatchFor(labeled('agent:build', PIPELINE_BOT.id))?.actor, PIPELINE_BOT.id);
   assert.equal(stage(labeled('agent:plan', PIPELINE_BOT.id)), 'plan');
-  assert.equal(stage(labeled('agent:elevated', PIPELINE_BOT.id)), 'elevated');
   assert.equal(stage(labeled('ready-for-agent', PIPELINE_BOT.id)), null);
   assert.equal(stage(labeled('agent:filed', PIPELINE_BOT.id)), null);
   assert.equal(stage(labeled('agent:filed')), null);
   assert.equal(stage(commented('/approve', PIPELINE_BOT.id)), null);
-  for (const label of ['agent:plan', 'agent:build', 'agent:elevated', 'ready-for-agent']) {
+  for (const label of ['agent:plan', 'agent:build', 'ready-for-agent']) {
     assert.equal(stage(labeled(label, STRANGER)), null, label);
   }
   assert.equal(stage(commented('/approve', STRANGER)), null);

@@ -104,11 +104,6 @@ export function filedByPipeline(issue: {
   return issue.user?.id === PIPELINE_BOT.id && issue.labels.some((l) => l.name === FILED_LABEL);
 }
 
-/** An agent says the issue needs the WSL desk. It starts nothing. */
-export const NEEDS_ELEVATED_LABEL = 'needs:elevated';
-/** What an elevated subtask says. The pipeline never adds `agent:elevated` itself. */
-export const ELEVATED_NOTE = 'Needs the WSL desk: add `agent:elevated` after the plan.';
-
 /** Follow-ups one stage may file (devkit#12); the rest are dropped and reported. */
 export const FOLLOWUP_CAP = 5;
 
@@ -127,7 +122,6 @@ export const STAGE_LABELS = {
   build: 'agent:build',
   review: 'agent:build',
   repair: 'agent:build',
-  elevated: 'agent:elevated',
 } as const;
 
 /**
@@ -148,7 +142,7 @@ export const PIPELINE_BOT = {
  * marker role of the App comment that records the Continue. The comment is the
  * proof the gate needs before it accepts that stage's label from the App.
  */
-export const CONTINUE_ROLES = { build: 'continue', elevated: 'continue-elevated' } as const;
+export const CONTINUE_ROLES = { build: 'continue' } as const;
 export type Handoff = keyof typeof CONTINUE_ROLES;
 /** Continue adds `agent:plan` right after its comment; a later plan start is not the Continue's. */
 export const CONTINUE_WINDOW_MS = 60_000;

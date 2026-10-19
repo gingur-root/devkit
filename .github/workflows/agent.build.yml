@@ -60,22 +60,22 @@ on:
         type: string
         required: false
         default: ''
+    # Optional: the jobs that use them read the `agents` environment's copies
+    # (infra#150), which win over anything passed in.
     secrets:
       AGENTS_SECRETS_TOKEN:
-        required: true
+        required: false
       PIPELINE_SECRETS_TOKEN:
-        required: true
+        required: false
 
 permissions: {}
 
 jobs:
   start:
     name: Start
-    # github.token packs the repo on the WSL desk, which mints no App token.
-    permissions:
-      contents: read
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","agent:elevated","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:elevated"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && ((github.event_name == 'issues' && github.event.label.name == 'agent:build') || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/approve') && !github.event.issue.pull_request) || (github.event_name == 'workflow_dispatch' && inputs.issue != ''))
     runs-on: ${{ inputs.runner }}
+    environment: agents
     outputs:
       source: ${{ steps.render.outputs.source }}
       triage: ${{ steps.render.outputs.triage }}
@@ -141,7 +141,7 @@ jobs:
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.render.outputs.source }}
-          token: ${{ steps.app.outputs.token || github.token }}
+          token: ${{ steps.app.outputs.token }}
           name: agent-repo
 
       # The builder's read token, minted last so its hour starts late.
@@ -173,6 +173,7 @@ jobs:
     needs: start
     if: needs.start.outputs.triage != 'true'
     runs-on: ${{ inputs.runner }}
+    environment: agents
     permissions:
       contents: read
     steps:
@@ -191,6 +192,7 @@ jobs:
     needs: [start, build]
     if: always() && needs.start.result == 'success'
     runs-on: ${{ inputs.runner }}
+    environment: agents
     outputs:
       candidate: ${{ steps.publish.outputs.candidate }}
       readToken: ${{ steps.read.outputs.sealed }}
@@ -205,6 +207,8 @@ jobs:
           permissionIssues: write
           permissionPullRequests: write
           permissionOrganizationProjects: write
+          # Agents push workflow files like any file (infra#150).
+          permissionWorkflows: write
 
       - uses: actions/checkout@v6
         with:
@@ -273,7 +277,7 @@ jobs:
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.publish.outputs.candidate }}
-          token: ${{ steps.app.outputs.token || github.token }}
+          token: ${{ steps.app.outputs.token }}
           name: review-0-repo
 
       # The round-0 reviewer's read token.

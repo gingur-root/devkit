@@ -31,7 +31,4 @@ test('every role may return follow-ups, and each subtask says whether it needs t
     const parsed = Result.safeParse(fixture(file.replace(/\.json$/, '')));
     assert.ok(parsed.success, `${file}: ${parsed.error?.message}`);
   }
-  const story = fixture('plan.story');
-  const { elevated: _, ...noDesk } = story.subtasks[0];
-  assert.ok(!Result.safeParse({ ...story, subtasks: [noDesk] }).success, 'elevated is required');
 });

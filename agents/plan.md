@@ -67,10 +67,7 @@ the operator to adopt. Otherwise propose none.
    where a reviewer could accept one deliverable and reject its neighbor.
    For wide compatibility changes, propose expand, migrate, and contract steps
    when separate green slices are feasible. Return proposed child issues as
-   artifacts for the controller to publish. A plan that edits `.github/workflows` is an
-   elevated plan: the App can't push workflow files, so a build stops blocked.
-   Say in the summary to approve it with `agent:elevated`, not `/approve`:
-   the elevated run on the WSL desk pushes as the operator.
+   artifacts for the controller to publish.
 
 6. Read the plan as a capable builder without this conversation. Resolve
    questions answered by the repo and make routine choices explicitly.
@@ -100,8 +97,7 @@ When the job directory has `issues.md`, this issue is a retro's findings
   issue: the problem, its evidence, and the change to make, with repo and
   path. `link` is the open issue's number when you add to one, else null.
   `start` is `plan` when it should be planned now, `backlog` when it can wait
-  for grooming. `elevated` is true when the fix needs the operator's own
-  access (`needs:elevated`). `priority` is its board priority, as below.
+  for grooming. `priority` is its board priority, as below.
 - Approval files these and closes this issue. It builds nothing, so set no
   `criteria` and leave `critique` false.
 - On any other issue, `triage` is null.
@@ -124,6 +120,6 @@ When the job directory has `issues.md`, this issue is a retro's findings
 - The plan comment leads with `summary`; `plan.md` follows below it in
   the same comment. Keep `summary` near 80 words: the result, then the
   approval action, then the one or two points the operator must weigh.
-  Put the approval action, and the `agent:elevated` note for an elevated
-  plan, before the other points, so clipping at 150 words can't remove it.
+  Put the approval action before the other points, so clipping at 150 words
+  can't remove it.
   Don't list the plan's steps.

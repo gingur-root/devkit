@@ -2,8 +2,9 @@ name: 'GitHub App token'
 description: 'Mint a short-lived installation token for the gingur-root pipeline App, narrowed per call.'
 
 # The App key is fetched from Bitwarden `pipeline` without entering the job's
-# env, and handed straight to actions/create-github-app-token. The App has no
-# `workflows` permission, so no token from it can push .github/workflows.
+# env, and handed straight to actions/create-github-app-token. A token that
+# pushes an agent's commits asks for `permissionWorkflows: write`, so it can push
+# .github/workflows like any file (infra#150).
 # Permission inputs left empty are not requested; when all are empty the token
 # carries every permission the App has.
 
@@ -42,6 +43,10 @@ inputs:
     description: 'read or write.'
     required: false
     default: ''
+  permissionWorkflows:
+    description: 'write.'
+    required: false
+    default: ''
 
 outputs:
   token:
@@ -74,3 +79,4 @@ runs:
         permission-issues: ${{ inputs.permissionIssues }}
         permission-pull-requests: ${{ inputs.permissionPullRequests }}
         permission-organization-projects: ${{ inputs.permissionOrganizationProjects }}
+        permission-workflows: ${{ inputs.permissionWorkflows }}

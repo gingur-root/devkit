@@ -27,13 +27,13 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
   // Only roles that write docs or instructions get Simple English.
   assert.match(instructions('build', ROLES.build, cwd), /# Simple English/);
   assert.doesNotMatch(instructions('review', ROLES.review, cwd), /# Simple English/);
-  for (const role of ['plan', 'build', 'repair', 'review', 'elevated', 'retro'] as const)
+  for (const role of ['plan', 'build', 'repair', 'review', 'retro'] as const)
     assert.match(instructions(role, ROLES[role], cwd), /# Plain English/);
-  for (const role of ['build', 'repair', 'elevated'] as const)
+  for (const role of ['build', 'repair'] as const)
     assert.match(instructions(role, ROLES[role], cwd), /# Simple English/);
 
-  repoSkill(cwd, 'infra', 'elevated', 'INFRA SKILL');
-  assert.match(instructions('elevated', ROLES.elevated, cwd), /INFRA SKILL/);
+  repoSkill(cwd, 'infra', 'build', 'INFRA SKILL');
+  assert.match(instructions('build', ROLES.build, cwd), /INFRA SKILL/);
   assert.doesNotMatch(instructions('plan', ROLES.plan, cwd), /INFRA SKILL/);
 
   repoSkill(cwd, 'plain-english', 'plan', 'REPO PLAIN');

@@ -5,7 +5,7 @@
 // operator a question; every other role runs `ready`. `rate-limit` returns no
 // result and a rate limit, as a CLI that hit one does. `red` changes only the
 // build, whose STUB.md fails a format check until the repair rewrites it.
-// `story` changes only the plan, which proposes two subtasks, one elevated.
+// `story` changes only the plan, which proposes two subtasks.
 // `followups` changes only the build, which proposes seven follow-ups, two over
 // the cap.
 // `crash` throws, `timeout` reports a timeout, and `missing` returns no result.
