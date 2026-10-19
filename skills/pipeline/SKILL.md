@@ -79,9 +79,13 @@ stop. Don't install anything yourself.
 1. **GitHub user.** `gh api user -q .login` prints `gingur`. Fix:
    `gh auth login`.
 2. **Codex.** `codex --version` runs and `codex login status` says logged in.
-   Fix when `command -v codex` finds nothing: Codex was installed under
-   another nvm Node, so run `npm install -g @openai/codex` under the active
-   one. Fix when logged out: `codex login`.
+   Fix when `command -v codex` finds nothing:
+   - `bash -lc 'command -v codex'` finds it: this session's PATH is missing
+     Vite+'s bin. Use that path for `codex` in this run.
+   - Otherwise: `vp install -g @openai/codex`.
+
+   Fix when logged out: `codex login`.
+
 3. **devkit.** A devkit checkout at the default branch's head, with
    `pnpm install` done. `<devkit>` in this skill means that checkout.
 
