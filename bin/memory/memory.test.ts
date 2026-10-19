@@ -25,7 +25,7 @@ function entry(overrides: Record<string, unknown> = {}): string {
     date: '2026-10-19',
     source: 'gingur-root/devkit#257',
     supersedes: null,
-    evidence: [{ at: 'devkit:AGENTS.md', quote: 'Simple first.' }],
+    evidence: [{ at: 'gingur-root/devkit:AGENTS.md', quote: 'Simple first.' }],
     ...overrides,
   })}---\n\nThe policy.\n`;
 }
@@ -179,10 +179,13 @@ for (const [name, edit, file, reason] of structureCases) {
 for (const at of [
   '../repo:a.md',
   '_org:a.md',
-  'devkit:',
-  'devkit:/a.md',
-  'devkit:a/../b.md',
-  'devkit:C:\\a.md',
+  'devkit:a.md',
+  'gingur-root/devkit/extra:a.md',
+  'gingur-root/:a.md',
+  'gingur-root/devkit:',
+  'gingur-root/devkit:/a.md',
+  'gingur-root/devkit:a/../b.md',
+  'gingur-root/devkit:C:\\a.md',
 ]) {
   test(`rejects invalid evidence reference ${at}`, async () => {
     const dir = fixture();
@@ -195,7 +198,11 @@ for (const at of [
 
 test('blank quotes and supersedes paths are invalid', async () => {
   const dir = fixture();
-  put(dir, 'devkit/policy.md', entry({ evidence: [{ at: 'devkit:a.md', quote: ' ' }] }));
+  put(
+    dir,
+    'devkit/policy.md',
+    entry({ evidence: [{ at: 'gingur-root/devkit:a.md', quote: ' ' }] }),
+  );
   assert.deepEqual(await check(dir, { offline: true }), [
     { file: 'devkit/policy.md', reason: 'bad frontmatter: evidence.0.quote' },
   ]);
@@ -229,13 +236,13 @@ test('evidence: missing file, absent quote, and hard-wrapped quote', async () =>
   const files = new Map<string, string>();
   const read: Reader = async (at) => files.get(at) ?? null;
   assert.deepEqual(await check(dir, { read }), [
-    { file: 'devkit/policy.md', reason: 'evidence devkit:AGENTS.md not found' },
+    { file: 'devkit/policy.md', reason: 'evidence gingur-root/devkit:AGENTS.md not found' },
   ]);
-  files.set('devkit:AGENTS.md', 'different');
+  files.set('gingur-root/devkit:AGENTS.md', 'different');
   assert.deepEqual(await check(dir, { read }), [
-    { file: 'devkit/policy.md', reason: 'quote not found in devkit:AGENTS.md' },
+    { file: 'devkit/policy.md', reason: 'quote not found in gingur-root/devkit:AGENTS.md' },
   ]);
-  files.set('devkit:AGENTS.md', '**Simple\n  first.**');
+  files.set('gingur-root/devkit:AGENTS.md', '**Simple\n  first.**');
   assert.deepEqual(await check(dir, { read }), []);
   put(dir, 'devkit/policy.md', entry({ type: 'decision', evidence: [] }));
   assert.deepEqual(
@@ -254,9 +261,9 @@ test('memoize shares in-flight promises, including missing files', async () => {
     calls++;
     return null;
   });
-  const first = read('devkit:a.md');
-  assert.equal(read('devkit:a.md'), first);
-  assert.deepEqual(await Promise.all([first, read('devkit:a.md')]), [null, null]);
+  const first = read('gingur-root/devkit:a.md');
+  assert.equal(read('gingur-root/devkit:a.md'), first);
+  assert.deepEqual(await Promise.all([first, read('gingur-root/devkit:a.md')]), [null, null]);
   assert.equal(calls, 1);
 });
 
@@ -270,8 +277,8 @@ test('check memoizes across entries, filters changed evidence, and reads nothing
       entry({
         name,
         evidence: [
-          { at: 'devkit:a.md', quote: 'A' },
-          { at: 'infra:b.md', quote: 'B' },
+          { at: 'gingur-root/devkit:a.md', quote: 'A' },
+          { at: 'gingur-root/infra:b.md', quote: 'B' },
         ],
       }),
     );
@@ -287,19 +294,22 @@ test('check memoizes across entries, filters changed evidence, and reads nothing
   const reads: string[] = [];
   const read: Reader = async (at) => {
     reads.push(at);
-    return at === 'devkit:a.md' ? 'A' : 'B';
+    return at === 'gingur-root/devkit:a.md' ? 'A' : 'B';
   };
   assert.deepEqual(await check(dir, { read }), []);
-  assert.deepEqual(reads, ['devkit:a.md', 'infra:b.md']);
+  assert.deepEqual(reads, ['gingur-root/devkit:a.md', 'gingur-root/infra:b.md']);
   reads.length = 0;
-  assert.deepEqual(await check(dir, { read, changed: ['devkit:a.md', 'other:unused.md'] }), []);
-  assert.deepEqual(reads, ['devkit:a.md']);
+  assert.deepEqual(
+    await check(dir, { read, changed: ['gingur-root/devkit:a.md', 'gingur-root/other:unused.md'] }),
+    [],
+  );
+  assert.deepEqual(reads, ['gingur-root/devkit:a.md']);
   reads.length = 0;
   assert.deepEqual(await check(dir, { read, changed: [] }), []);
   assert.deepEqual(await check(dir, { read, offline: true }), []);
   assert.deepEqual(reads, []);
   put(dir, 'devkit/one.md', 'bad');
-  assert.deepEqual(await check(dir, { read, changed: ['other:unused.md'] }), [
+  assert.deepEqual(await check(dir, { read, changed: ['gingur-root/other:unused.md'] }), [
     { file: 'devkit/one.md', reason: 'missing frontmatter' },
   ]);
 });
@@ -354,7 +364,13 @@ test('CLI usage errors still exit 2', () => {
 });
 
 test('CLI accepts multiple changed files and skips unrelated evidence', () => {
-  const result = cli(fixture(), 'check', '--changed', 'other:a.md', 'other:b.md');
+  const result = cli(
+    fixture(),
+    'check',
+    '--changed',
+    'gingur-root/other:a.md',
+    'gingur-root/other:b.md',
+  );
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, '');
 });

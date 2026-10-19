@@ -12,7 +12,7 @@ export default {
   configure(command) {
     command
       .requiredOption('--dir <dir>', 'memory directory')
-      .option('--changed <repo:path...>', 'check only evidence at these changed files')
+      .option('--changed <owner/repo:path...>', 'check only evidence at these changed files')
       .option('--offline', 'skip evidence reads');
   },
   async run({ dir, changed, offline }) {

@@ -17,7 +17,7 @@ export function memoize(read: Reader): Reader {
 
 export const githubReader: Reader = async (at) => {
   const colon = at.indexOf(':');
-  const repo = at.slice(0, colon);
+  const [owner = '', repo = ''] = at.slice(0, colon).split('/');
   const path = at
     .slice(colon + 1)
     .split('/')
@@ -25,7 +25,10 @@ export const githubReader: Reader = async (at) => {
     .join('/');
   let file: { content: string; encoding: string };
   try {
-    file = await rest('GET', `/repos/gingur-root/${encodeURIComponent(repo)}/contents/${path}`);
+    file = await rest(
+      'GET',
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`,
+    );
   } catch (error) {
     if (error instanceof Error && error.message.includes(' 404 ')) return null;
     throw error;

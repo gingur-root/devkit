@@ -21,10 +21,12 @@ export const entrySchema = z
       z.object({
         at: z.string().refine((value) => {
           const colon = value.indexOf(':');
-          const repo = value.slice(0, colon);
+          const [owner = '', repo = '', ...extra] = value.slice(0, colon).split('/');
           const path = value.slice(colon + 1);
           return (
             colon > 0 &&
+            extra.length === 0 &&
+            repoName.test(owner) &&
             repoName.test(repo) &&
             path.length > 0 &&
             !path.startsWith('/') &&
