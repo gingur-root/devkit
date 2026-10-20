@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { git, gitAsOperator, gitBytes } from '../git.ts';
 import { check as checkMemory, frontmatter } from '../memory/check.ts';
 import { githubReader } from '../memory/reader.ts';
-import { armedContinue, readSteps } from './approval.ts';
+import { armedContinue, criticismPasses, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
   FILED_LABEL,
@@ -53,6 +53,7 @@ import {
   upsertStageComment,
 } from './github.ts';
 import {
+  type Criticism,
   CANDIDATE_FILE,
   CHECKS_FILE,
   THREADS_FILE,
@@ -66,6 +67,7 @@ import {
   PLAN_FILE,
   PLAN_START,
   type PlanContract,
+  planRevision,
   RESULT_FILE,
   REVIEW_FILE,
   revision,
@@ -84,6 +86,7 @@ import {
   type Pull,
   type Thread,
 } from './threads.ts';
+import { approvedPlan } from './render.ts';
 import { denyRules } from './merge.ts';
 import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
@@ -91,6 +94,8 @@ import { type Failure, type Followup, Result, type Subtask, Triage } from './res
 export interface PublishOptions {
   in: string;
   out: string;
+  critique?: string;
+  appId?: number;
   /** A build's target repo, checked out at the job's source with push access. */
   checkout?: string;
   /** A review's repair round: 0 reviews the build, n the nth repair. */
@@ -228,7 +233,7 @@ export function specChanged(
   plan: string | null,
 ): boolean {
   return (
-    (plan !== null && revision(plan.trim()) !== approved.revision) ||
+    (plan !== null && planRevision(plan) !== approved.revision) ||
     changedCriteria(approved.checks, result.criteria).length > 0
   );
 }
@@ -401,6 +406,126 @@ function numbered(questions: string[]): string {
   return questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
 }
 
+const CRITIQUE_OUTCOMES = ['pass', 'changes-requested', 'inconclusive'] as const;
+
+interface Assessment {
+  criticism: Criticism;
+  text: string;
+  valid: boolean;
+}
+
+function readCriticism(job: Job, out: string): Assessment {
+  const v = verdict(job, job.issue.revision, out);
+  const valid =
+    'result' in v &&
+    v.result.status === 'complete' &&
+    CRITIQUE_OUTCOMES.some((outcome) => outcome === v.result.outcome) &&
+    v.result.inputs.base === job.source &&
+    !(v.result.outcome === 'pass' && v.result.findings?.some((finding) => finding.blocking));
+  const criticism: Criticism = {
+    outcome: valid && 'result' in v ? v.result.outcome! : 'failed',
+    planRevision: job.plan!.revision,
+    issueRevision: job.issue.revision,
+    source: job.source,
+  };
+  const text =
+    'result' in v
+      ? [
+          v.result.summary,
+          ...(v.result.findings ?? [])
+            .filter((finding) => finding.blocking)
+            .map(
+              (finding) => `- ${finding.id}: ${finding.scenario} ${finding.impact} ${finding.fix}`,
+            ),
+        ].join('\n\n')
+      : v.reason;
+  return { criticism, text, valid };
+}
+
+function planCriticism(job: Job, out: string, dir: string): Assessment {
+  const expected: Job = {
+    ...job,
+    role: 'critique',
+    plan: {
+      revision: planRevision(readFileSync(join(out, PLAN_FILE), 'utf8')),
+      criteria: [],
+      checks: {},
+    },
+  };
+  try {
+    const critic = Job.parse(JSON.parse(readFileSync(join(dir, 'in', JOB_FILE), 'utf8')));
+    if (
+      critic.job !== job.job ||
+      critic.role !== expected.role ||
+      critic.repo !== job.repo ||
+      critic.issue.revision !== job.issue.revision ||
+      critic.source !== job.source ||
+      critic.plan?.revision !== expected.plan!.revision
+    )
+      throw new Error('The criticism job is for different inputs.');
+    return readCriticism(critic, join(dir, 'out'));
+  } catch (error) {
+    return {
+      criticism: {
+        outcome: 'failed',
+        planRevision: expected.plan!.revision,
+        issueRevision: job.issue.revision,
+        source: job.source,
+      },
+      text: error instanceof Error ? error.message : String(error),
+      valid: false,
+    };
+  }
+}
+
+async function publishCriticism(job: Job, issue: Issue, options: PublishOptions): Promise<void> {
+  let assessment = readCriticism(job, options.out);
+  try {
+    if (options.appId === undefined) throw new Error('Criticism publish needs --app-id.');
+    const comment = await stageComment(job.repo, job.issue.number, 'plan');
+    if (!comment) throw new Error('The plan comment is missing.');
+    const approved = approvedPlan(
+      [comment],
+      options.appId,
+      revision(issue.title, issue.body ?? ''),
+      issue.user?.id === OPERATOR_ID || filedByPipeline(issue),
+    );
+    if (
+      approved.contract.planRevision !== job.plan?.revision ||
+      revision(issue.title, issue.body ?? '') !== job.issue.revision
+    )
+      throw new Error('The plan or issue changed while criticism ran.');
+    const contract = { ...approved.contract, criticism: assessment.criticism };
+    const body = comment.body!.replace(
+      /^<!-- devkit:contract [^\r\n]* -->/m,
+      () => `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
+    );
+    await rest('PATCH', `/repos/${job.repo}/issues/comments/${comment.id}`, { body });
+  } catch (error) {
+    assessment = {
+      ...assessment,
+      valid: false,
+      criticism: { ...assessment.criticism, outcome: 'failed' },
+    };
+    console.error(error);
+  }
+  const pass = assessment.valid && assessment.criticism.outcome === 'pass';
+  if (!pass) {
+    const body = `Build blocked: criticism ${assessment.criticism.outcome} on plan ${job.plan!.revision.slice(0, 7)} at ${job.source.slice(0, 7)}`;
+    await upsertStageComment(
+      job.repo,
+      job.issue.number,
+      'build',
+      mention(`${marker('build')}\n\n${body}`),
+    );
+    await removeLabel(job.repo, job.issue.number, STAGE_LABELS.build);
+    await setStatus(job.repo, issue.node_id, 'Needs you');
+    await settle(job.repo, job.issue.number, assessment.valid ? 'question' : 'failed');
+  }
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `pass=${pass}\n`);
+  if (!assessment.valid) process.exitCode = 1;
+}
+
 export function planComment(
   job: Job,
   result: Result,
@@ -408,19 +533,27 @@ export function planComment(
   handoff: Handoff | null,
   story: Filed[],
   checks?: Record<string, string>,
+  assessment?: Assessment,
 ): string {
   const planFile = join(out, PLAN_FILE);
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
   const bodyNote = job.issue.bodySeen
     ? ''
     : ' (written without the issue body, which someone else wrote)';
-  const head = story.length
-    ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
-    : handoff
-      ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
-      : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
+  const criticismBlocked =
+    result.outcome === 'ready' &&
+    result.critique === true &&
+    assessment?.criticism.outcome !== 'pass';
+  const head = criticismBlocked
+    ? `**Plan: ready, but criticism did not pass${bodyNote}. Run /revise, then /approve.**`
+    : story.length
+      ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
+      : handoff
+        ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
+        : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
   const contract: PlanContract = {
-    planRevision: revision(plan),
+    planRevision: planRevision(plan),
+    criticism: assessment?.criticism ?? null,
     outcome: result.outcome,
     source: job.source,
     issueRevision: job.issue.revision,
@@ -444,6 +577,7 @@ export function planComment(
     result.priority && `**Priority:** ${result.priority}, unless the card already has one.`,
     story.length && `## Subtasks\n\n${story.map((s) => `- #${s.number} ${s.title}`).join('\n')}`,
     numbered(result.questions),
+    assessment && `## Criticism\n\n**${assessment.criticism.outcome}**\n\n${assessment.text}`,
     `${PLAN_START}\n${plan}\n${PLAN_END}`,
     `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
   ]
@@ -1256,6 +1390,7 @@ async function publishBuildOrPlan(
   handoff: Handoff | null,
   subtasks: Subtask[],
   options: PublishOptions,
+  assessment: Assessment | undefined,
 ): Promise<Outcome> {
   let pull: Pull | null = null;
   let candidate = '';
@@ -1318,7 +1453,7 @@ async function publishBuildOrPlan(
   if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
     job.role === 'plan'
-      ? planComment(job, v.result, out, handoff, story)
+      ? planComment(job, v.result, out, handoff, story, undefined, assessment)
       : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
@@ -1774,6 +1909,10 @@ export async function publish(options: PublishOptions): Promise<void> {
     await settle(job.repo, job.issue.number, 'done');
     return;
   }
+  if (job.role === 'critique') {
+    await publishCriticism(job, issue, options);
+    return;
+  }
   let v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
   const reviewFile = join(options.in, REVIEW_FILE);
   if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {
@@ -1791,8 +1930,21 @@ export async function publish(options: PublishOptions): Promise<void> {
   const subtasks =
     ready && 'result' in v && !job.artifacts.includes(ISSUES_FILE) ? (v.result.subtasks ?? []) : [];
   // A ready plan a dashboard Continue started goes straight to its build (devkit#99), unless it is a story.
+  const assessment =
+    ready && options.critique ? planCriticism(job, options.out, options.critique) : undefined;
+  const criticismPassed =
+    ready &&
+    'result' in v &&
+    criticismPasses(
+      { critique: v.result.critique, criticism: assessment?.criticism ?? null },
+      planRevision(readFileSync(join(options.out, PLAN_FILE), 'utf8')),
+      job.issue.revision,
+      job.source,
+    );
   const handoff =
-    ready && !subtasks.length ? armedContinue(await readSteps(job.repo, job.issue.number)) : null;
+    ready && criticismPassed && !subtasks.length
+      ? armedContinue(await readSteps(job.repo, job.issue.number))
+      : null;
   const check =
     job.role === 'review'
       ? readVerifier(job, revision(issue.title, issue.body ?? ''), options)
@@ -1811,6 +1963,7 @@ export async function publish(options: PublishOptions): Promise<void> {
             handoff,
             subtasks,
             options,
+            assessment,
           );
   const { status, stopped } = outcome;
   const followups = 'result' in v ? (v.result.followups ?? []) : [];
@@ -1851,5 +2004,5 @@ export async function publish(options: PublishOptions): Promise<void> {
     process.env.GITHUB_OUTPUT
   )
     appendFileSync(process.env.GITHUB_OUTPUT, 'retro=true\n');
-  if (stopped) process.exitCode = 1;
+  if (stopped || (job.role === 'plan' && assessment && !assessment.valid)) process.exitCode = 1;
 }

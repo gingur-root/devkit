@@ -64,6 +64,7 @@ function stage(role: 'plan' | 'review', manifest: unknown) {
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   writeFileSync(join(input, 'job.json'), JSON.stringify(job));
   writeFileSync(join(input, 'tools.json'), JSON.stringify(manifest));

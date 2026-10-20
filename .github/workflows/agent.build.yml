@@ -39,7 +39,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story`, `followups` or `unverified`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story`, `followups`, `unverified`, `critique` or `critique-pass`.'
         type: string
         required: false
         default: 'ready'
@@ -89,6 +89,7 @@ jobs:
       resume: ${{ steps.render.outputs.resume }}
       candidate: ${{ steps.render.outputs.candidate }}
       triage: ${{ steps.render.outputs.triage }}
+      critique: ${{ steps.render.outputs.critique }}
       readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - uses: actions/checkout@v6
@@ -166,6 +167,17 @@ jobs:
           if [ -f "$RUNNER_TEMP/agent/in/triage.json" ]; then echo "triage=true" >>"$GITHUB_OUTPUT"; fi
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
 
+      - name: Chain critique
+        if: steps.render.outputs.critique == 'true'
+        working-directory: devkit
+        run: pnpm agent chain --role critique --from-in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/critique/in"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.render.outputs.critique == 'true'
+        with:
+          name: critique-in
+          path: ${{ runner.temp }}/critique/in
+
       - if: steps.render.outputs.resume == ''
         uses: gingur-root/devkit/actions/repo.pack@main
         with:
@@ -198,10 +210,81 @@ jobs:
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
         run: pnpm agent react --repo "$REPO" --issue "$ISSUE" --end failed
 
+  critique:
+    name: Critique
+    needs: start
+    if: needs.start.outputs.critique == 'true'
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: critique
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          prefix: critique
+          pack: agent-repo
+          source: ${{ needs.start.outputs.source }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          readToken: ${{ needs.start.outputs.readToken }}
+          devkitRef: ${{ inputs.devkitRef }}
+
+  criticism:
+    name: Publish Criticism
+    needs: [start, critique]
+    if: ${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.critique == 'true' }}
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    outputs:
+      pass: ${{ steps.publish.outputs.pass }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: critique-in
+          path: ${{ runner.temp }}/critique/in
+
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: critique-out
+          path: ${{ runner.temp }}/critique/out
+
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionIssues: write
+          permissionOrganizationProjects: write
+
+      - id: publish
+        name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_ID: ${{ inputs.appId }}
+        run: |
+          pnpm agent publish --in "$RUNNER_TEMP/critique/in" --out "$RUNNER_TEMP/critique/out" \
+            --app-id "$APP_ID"
+
   build:
     name: Build
-    needs: start
-    if: needs.start.outputs.triage != 'true' && needs.start.outputs.resume == ''
+    needs: [start, criticism]
+    if: ${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.triage != 'true' && needs.start.outputs.resume == '' && (needs.criticism.result == 'skipped' || needs.criticism.outputs.pass == 'true') }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     permissions:
@@ -221,7 +304,7 @@ jobs:
     name: Publish
     needs: [start, build]
     # The loop reports cancelled runs; never publish their partial output.
-    if: ${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.resume == '' }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.resume == '' && (needs.build.result != 'skipped' || needs.start.outputs.triage == 'true') }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
@@ -633,6 +716,8 @@ jobs:
     needs:
       [
         start,
+        critique,
+        criticism,
         build,
         publish,
         review,
@@ -674,6 +759,8 @@ jobs:
     needs:
       [
         start,
+        critique,
+        criticism,
         build,
         publish,
         review,

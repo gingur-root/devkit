@@ -12,6 +12,8 @@ export default {
     command
       .option('--in <dir>', 'the job directory ($AGENT_IN)')
       .option('--out <dir>', "the agent's output directory ($AGENT_OUT)")
+      .option('--critique <dir>', 'critique parent directory, containing in and out')
+      .option('--app-id <id>', 'pipeline App ID for criticism publication', Number)
       .option('--checkout <dir>', "a build's target repo at the job's source, with push access")
       .option('--round <n>', "a review's repair round: 0 for the build's review", Number)
       .option('--rounds <n>', 'the repair-round cap; default REPAIR_ROUNDS', (value) => {

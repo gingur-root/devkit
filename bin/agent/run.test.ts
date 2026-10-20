@@ -36,7 +36,15 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
     // Only roles that write docs or instructions get Simple English.
     assert.match(instructions('build', ROLES.build, overrides), /# Simple English/);
     assert.doesNotMatch(instructions('review', ROLES.review, overrides), /# Simple English/);
-    for (const role of ['plan', 'build', 'repair', 'review', 'replan', 'retro'] as const)
+    for (const role of [
+      'plan',
+      'critique',
+      'build',
+      'repair',
+      'review',
+      'replan',
+      'retro',
+    ] as const)
       assert.match(instructions(role, ROLES[role], overrides), /# Plain English/);
     for (const role of ['build', 'repair'] as const)
       assert.match(instructions(role, ROLES[role], overrides), /# Simple English/);
@@ -115,6 +123,7 @@ test('the envelope written for a run with no result passes the schema publish ch
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   const missing = settle({ ok: true }, true);
   assert.equal(missing.ok, false);

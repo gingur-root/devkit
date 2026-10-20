@@ -3,11 +3,11 @@
 // A subtask's snapshot starts with its parent story, and a story never builds:
 // each of its subtasks does (devkit#12).
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { render as memoryIndex } from '../memory/render.ts';
-import { readSteps, refuseStart } from './approval.ts';
+import { criticismPasses, readSteps, refuseStart } from './approval.ts';
 import {
   filedByPipeline,
   OPERATOR_ID,
@@ -38,6 +38,7 @@ import {
   PLAN_FILE,
   PLAN_START,
   PlanContract,
+  planRevision,
   revision,
   TRIAGE_FILE,
 } from './job.ts';
@@ -222,7 +223,7 @@ function between(body: string, start: string, end: string): string | null {
  * The pipeline's plan comment, if it is ready, unedited, and for the issue as it is now.
  */
 export function approvedPlan(
-  comments: Authored[],
+  comments: (Omit<Authored, 'created_at'> & { created_at?: string })[],
   appId: number,
   issueRevision: string,
   bodySeen: boolean,
@@ -240,7 +241,7 @@ export function approvedPlan(
   if (plan === null || json === null) throw new Error('The plan comment has no plan or contract.');
   const contract = PlanContract.parse(JSON.parse(json));
   if (contract.outcome !== 'ready') throw new Error('The plan is not ready. Answer it first.');
-  if (revision(plan) !== contract.planRevision)
+  if (planRevision(plan) !== contract.planRevision)
     throw new Error('The plan text was edited after it was published. Run `agent:plan` again.');
   if (contract.issueRevision !== issueRevision)
     throw new Error('The issue changed after the plan. Run `agent:plan` again.');
@@ -387,6 +388,7 @@ async function renderMemory(options: RenderOptions): Promise<Job> {
     artifacts: [PR_FILE, DIFF_FILE, CHANGED_FILE, 'check.txt'],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   const text = [
     `# PR #${pull.number}${bodySeen ? `: ${pull.title}` : ''}`,
@@ -498,6 +500,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     artifacts: retroPlan ? [ISSUES_FILE] : [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   mkdirSync(options.out, { recursive: true });
   for (const file of [THREADS_FILE, CHECKS_FILE, RESUME_FILE])
@@ -547,12 +550,23 @@ export async function render(options: RenderOptions): Promise<Job> {
       job.artifacts.push(CHECKS_FILE);
     }
   }
+  if (options.role === 'build' && approved && !existsSync(join(options.out, RESUME_FILE))) {
+    job.baseMoved = approved.contract.source !== base;
+    if (
+      !criticismPasses(approved.contract, approved.contract.planRevision, issueRevision, base!) &&
+      process.env.GITHUB_OUTPUT
+    )
+      appendFileSync(process.env.GITHUB_OUTPUT, 'critique=true\n');
+  }
   // After the resume, which can move job.base to the loop's recorded base.
   const ref = job.base ?? source;
   const manifest = await trustedFile(options.repo, MANIFEST_PATH, ref);
   const overrides = join(options.out, OVERRIDES_DIR);
   rmSync(overrides, { recursive: true, force: true });
-  for (const path of ROLES[options.role].instructions) {
+  for (const path of new Set([
+    ...ROLES[options.role].instructions,
+    ...(['plan', 'build'].includes(options.role) ? ROLES.critique.instructions : []),
+  ])) {
     const content = await trustedFile(options.repo, `.devkit/${path}`, ref);
     if (content === null) continue;
     const file = join(overrides, path);

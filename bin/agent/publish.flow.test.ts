@@ -187,6 +187,7 @@ function harness(
       artifacts: [],
       operations: [],
       attemptLimit: null,
+      baseMoved: false,
     };
     const matched = {
       ...result,

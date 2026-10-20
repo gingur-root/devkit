@@ -21,7 +21,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `story` or `followups`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `story`, `followups`, `critique` or `critique-pass`.'
         type: string
         required: false
         default: 'ready'
@@ -148,13 +148,16 @@ jobs:
 
   plan:
     name: Plan
+    outputs:
+      critique: ${{ steps.run.outputs.critique }}
     needs: start
     runs-on: ${{ inputs.runner }}
     environment: agents
     permissions:
       contents: read
     steps:
-      - uses: gingur-root/devkit/actions/agent.run@main
+      - id: run
+        uses: gingur-root/devkit/actions/agent.run@main
         with:
           role: plan
           executor: ${{ inputs.executor }}
@@ -164,9 +167,62 @@ jobs:
           readToken: ${{ needs.start.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
+  critique:
+    name: Critique
+    needs: [start, plan]
+    if: needs.plan.outputs.critique == 'true'
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-in
+          path: ${{ runner.temp }}/plan/in
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-out
+          path: ${{ runner.temp }}/plan/out
+
+      - name: Chain
+        working-directory: devkit
+        run: |
+          pnpm agent chain --role critique --from-in "$RUNNER_TEMP/plan/in" \
+            --from-out "$RUNNER_TEMP/plan/out" --out "$RUNNER_TEMP/critique/in"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: critique-in
+          path: ${{ runner.temp }}/critique/in
+
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: critique
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          prefix: critique
+          pack: agent-repo
+          source: ${{ needs.start.outputs.source }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          readToken: ${{ needs.start.outputs.readToken }}
+          devkitRef: ${{ inputs.devkitRef }}
+
   publish:
     name: Publish
-    needs: [start, plan]
+    needs: [start, plan, critique]
     if: ${{ !cancelled() && needs.start.result == 'success' }}
     runs-on: ${{ inputs.runner }}
     environment: agents
@@ -194,6 +250,20 @@ jobs:
           name: agent-out
           path: ${{ runner.temp }}/agent/out
 
+      - uses: actions/download-artifact@v8
+        if: needs.plan.outputs.critique == 'true'
+        continue-on-error: true
+        with:
+          name: critique-in
+          path: ${{ runner.temp }}/critique/in
+
+      - uses: actions/download-artifact@v8
+        if: needs.plan.outputs.critique == 'true'
+        continue-on-error: true
+        with:
+          name: critique-out
+          path: ${{ runner.temp }}/critique/out
+
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
         with:
@@ -207,12 +277,15 @@ jobs:
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out"
+          CRITIQUE: ${{ needs.plan.outputs.critique }}
+        run: |
+          pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" \
+            ${CRITIQUE:+--critique "$RUNNER_TEMP/critique"}
 
   # A plan that asked questions is the normal flow; only a failed job gets a retro.
   retro:
     name: Retro
-    needs: [start, plan, publish]
+    needs: [start, plan, critique, publish]
     if: always() && needs.start.result != 'skipped' && contains(needs.*.result, 'failure')
     # The ceiling for the nested jobs: the agent checks out this repo.
     permissions:
@@ -237,7 +310,7 @@ jobs:
   # starts planning.
   next:
     name: Next
-    needs: [start, plan, publish, retro]
+    needs: [start, plan, critique, publish, retro]
     if: always() && needs.start.result != 'skipped'
     uses: ./.github/workflows/agent.loop.yml
     with:

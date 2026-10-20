@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ''
   fixture:
-    description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit` or `unverified`.'
+    description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `unverified`, `critique` or `critique-pass`.'
     required: false
     default: 'ready'
   source:
@@ -43,6 +43,11 @@ inputs:
     description: "The artifacts' prefix: reads `<prefix>-in` and `<prefix>-repo`, uploads `<prefix>-out`. A run's later stages each need their own."
     required: false
     default: 'agent'
+
+outputs:
+  critique:
+    description: 'A complete ready plan requested criticism.'
+    value: ${{ steps.result.outputs.critique }}
 
 runs:
   using: 'composite'
@@ -152,6 +157,18 @@ runs:
           DEVKIT_STUB_FIXTURE="$FIXTURE" \
           pnpm agent run --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} \
             --cwd "$GITHUB_WORKSPACE/repo" --in "$RUNNER_TEMP/agent/in" --out "$out"
+
+    - id: result
+      name: Result flags
+      shell: bash
+      run: |
+        critique=$(node -p '
+          try {
+            const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            r.status === "complete" && r.outcome === "ready" && r.critique === true ? "true" : "";
+          } catch { ""; }
+        ' "$RUNNER_TEMP/agent/out/result.json")
+        echo "critique=$critique" >> "$GITHUB_OUTPUT"
 
     # The agent's whole change against the source, its commits included, for the
     # controller to publish. Under `env -i` too: git runs whatever hooks or

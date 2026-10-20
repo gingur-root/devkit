@@ -22,6 +22,7 @@ test('every role passes its turn cap to Claude', () => {
     hello: 10,
     plan: 100,
     replan: 100,
+    critique: 100,
     build: 200,
     repair: 200,
     review: 100,

@@ -64,6 +64,18 @@ export const ROLES = {
     maxTurns: 100,
     result: true,
   },
+  critique: {
+    executor: 'codex',
+    effort: 'high',
+    objective:
+      'Criticise the plan revision against its source commit: pass, changes-requested or inconclusive.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/critique.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep'],
+    web: false,
+    timeoutMinutes: 30,
+    maxTurns: 100,
+    result: true,
+  },
   build: {
     // agents/sdlc.md: Codex at High implements; the account default model.
     executor: 'codex',
