@@ -823,7 +823,10 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
   const changed =
     'result' in v && specChanged({ revision: job.plan!.revision, checks }, v.result, plan);
-  const step = replanStep(v, changed);
+  const step =
+    pull.head.sha !== job.source && round < (options.rounds ?? REPAIR_ROUNDS)
+      ? 'rerun'
+      : replanStep(v, changed);
   if ('result' in v)
     await replyChanges(job.repo, pull.number, v.result.changes ?? [], job.source, 'Planner');
   // Record approval before rewriting the plan comment, so the render guard holds even after a partial publish.
@@ -854,8 +857,14 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `next=${step}\n${step === 'repair' ? 'repair=true\n' : ''}`,
+      `next=${step}\n${step === 'repair' ? 'repair=true\n' : ''}${step === 'rerun' ? `head=${pull.head.sha}\n` : ''}`,
     );
+  if (step === 'rerun')
+    return {
+      body: `${marker('replan')}\n\nRe-reviewing \`${pull.head.sha.slice(0, 7)}\`: the PR has a newer commit than the planner saw. Round ${round + 1} of ${options.rounds ?? REPAIR_ROUNDS}.`,
+      status: 'Building',
+      stopped: false,
+    };
   const reason =
     'stage' in v
       ? `stopped at \`${v.stage}\`: ${v.reason}`
@@ -938,6 +947,8 @@ async function publishReview(
     appendFileSync(process.env.GITHUB_OUTPUT, `next=${step}\n`);
     if (step === 'repair') appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
   }
+  const threads: Thread[] =
+    'result' in v ? JSON.parse(readFileSync(join(options.in, THREADS_FILE), 'utf8')) : [];
   const result =
     'result' in v
       ? gated(
@@ -945,6 +956,7 @@ async function publishReview(
           job.candidate,
           options.verified ?? '',
           criteria.kind === 'findings' ? criteria.findings : [],
+          threads.map((t) => t.id),
         )
       : null;
   if ('result' in v && criteria.kind === 'stop')
@@ -1030,6 +1042,7 @@ export function gated(
   candidate: string | null,
   verified: string,
   extra: Finding[] = [],
+  threadIds: string[] = [],
 ): Result {
   const green = candidate !== null && verified === candidate;
   const finding = {
@@ -1057,14 +1070,13 @@ export function gated(
           outcome: result.outcome === 'pass' ? 'changes-requested' : result.outcome,
           findings,
         };
-  const ids = new Set(findings.map((f) => f.id));
-  let question = 0;
+  let question = [...threadIds, ...findings.map((f) => f.id)].reduce(
+    (max, id) => Math.max(max, Number(/^Q(\d+)$/.exec(id)?.[1] ?? 0)),
+    0,
+  );
   for (const text of result.questions) {
-    while (ids.has(`Q${++question}`)) {
-      /* keep existing finding IDs */
-    }
     findings.push({
-      id: `Q${question}`,
+      id: `Q${++question}`,
       axis: 'spec',
       blocking: false,
       criterion: null,
@@ -1209,16 +1221,21 @@ async function publishBuildOrPlan(
         job.role === 'repair'
           ? ((await openPull(job, branch)) ?? null)
           : await upsertPull(job, branch, v.result);
-      if (job.role === 'repair' && pull)
-        await replyChanges(job.repo, pull.number, v.result.changes ?? [], commit);
       // The review job's input.
       if (process.env.GITHUB_OUTPUT)
         appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${commit}\n`);
+      if (job.role === 'repair' && pull) {
+        try {
+          await replyChanges(job.repo, pull.number, v.result.changes ?? [], commit);
+        } catch (error) {
+          console.error('Posting repair thread replies failed; continuing to review.', error);
+        }
+      }
     } catch (error) {
       console.error(error);
       v = {
         stage: 'publish',
-        reason: 'publishing the change, PR or thread replies failed; see the run log',
+        reason: 'publishing the change or PR failed; see the run log',
       };
     }
   }

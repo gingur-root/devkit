@@ -284,9 +284,12 @@ test('each repair is gated by replan and resume skips the builder', () => {
     on.workflow_call.outputs.next.value,
     "${{ jobs.verdict.outputs.next || (jobs.gate.outputs.next != 'repair' && jobs.gate.outputs.next || '') }}",
   );
+  assert.equal(on.workflow_call.outputs.retro.value, '${{ jobs.verdict.outputs.retro }}');
+  assert.ok(!('retro' in jobs.gate.outputs));
+  assert.equal(jobs.gate.outputs.candidate, '${{ steps.publish.outputs.head }}');
   assert.equal(
-    on.workflow_call.outputs.retro.value,
-    '${{ jobs.verdict.outputs.retro || jobs.gate.outputs.retro }}',
+    on.workflow_call.outputs.candidate.value,
+    '${{ jobs.verdict.outputs.candidate || jobs.gate.outputs.candidate }}',
   );
   const renderReplan = jobs.verdict.steps.find((s: { id?: string }) => s.id === 'next');
   assert.match(renderReplan.run, /--role replan/);

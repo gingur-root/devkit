@@ -10,9 +10,18 @@ import { git, gitAsOperator } from '../git.ts';
 import { setStatus } from './board.ts';
 import { PIPELINE_BOT } from './constants.ts';
 import { type Comment } from './github.ts';
-import { CANDIDATE_FILE, JOB_FILE, type Job, RESULT_FILE, REVIEW_FILE, revision } from './job.ts';
+import {
+  CANDIDATE_FILE,
+  JOB_FILE,
+  type Job,
+  RESULT_FILE,
+  REVIEW_FILE,
+  THREADS_FILE,
+  revision,
+} from './job.ts';
 import { loopComment, publish, readLoopState } from './publish.ts';
 import { Result } from './result.ts';
+import { readThreads } from './threads.ts';
 
 vi.mock('./board.ts', () => ({ setStatus: vi.fn(), proposePriority: vi.fn() }));
 vi.mock('../git.ts', () => ({ git: vi.fn(), gitAsOperator: vi.fn() }));
@@ -168,6 +177,7 @@ function harness() {
         candidate: options.candidate ?? job.candidate,
       },
     };
+    writeFileSync(join(dir, THREADS_FILE), JSON.stringify(await readThreads('o/r', pull.number)));
     writeFileSync(join(dir, JOB_FILE), JSON.stringify(job));
     writeFileSync(join(dir, RESULT_FILE), JSON.stringify(matched));
     writeFileSync(
@@ -176,6 +186,7 @@ function harness() {
     );
     if (options.review) writeFileSync(join(dir, REVIEW_FILE), JSON.stringify(options.review));
     const output = join(dir, 'github-output');
+    writeFileSync(output, '');
     vi.stubEnv('GITHUB_OUTPUT', output);
     const verifierDir = join(dir, 'verifier');
     if (options.verifier) {
@@ -348,6 +359,42 @@ test('red verification adds CI and hands it to repair; advisory-only green passe
         w.path === '/graphql' && String(w.body.query).includes('markPullRequestReadyForReview'),
     ),
   );
+});
+
+test('a failed repair thread reply keeps the pushed candidate available for review', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const fetch = globalThis.fetch;
+  let outputAtReply = '';
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    if (String(init.body).includes('addPullRequestReviewThreadReply')) {
+      outputAtReply = readFileSync(process.env.GITHUB_OUTPUT!, 'utf8');
+      return new Response(JSON.stringify({ errors: [{ message: 'thread reply denied' }] }));
+    }
+    return fetch(url, init);
+  });
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  onTestFinished(() => errors.mockRestore());
+  const result = await h.stage(
+    {
+      ...repair,
+      changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }],
+    },
+    1,
+    { review: changes },
+  );
+  assert.equal(outputAtReply, 'candidate=repaired\n', 'output precedes thread replies');
+  assert.equal(result.output, 'candidate=repaired\n');
+  assert.notEqual(process.exitCode, 1, 'reply failure does not fail publication');
+  assert.match(String(errors.mock.calls.flat().join(' ')), /GraphQL:.*thread reply denied/);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Building');
+  const state = readLoopState(h.comments[0]!.body);
+  assert.equal(state.entries.at(-1)?.candidate, 'repaired');
+  assert.notEqual(state.entries.at(-1)?.step, 'stop');
+  h.pull.head.sha = 'repaired';
+  const review = await h.stage(ready, 1);
+  assert.match(review.output, /next=ready/);
+  assert.equal(h.threads[0]!.isResolved, true, 'next review still resolves the fixed finding');
 });
 
 test('an incomplete repair map stops at validate before any git write', async () => {
@@ -665,5 +712,41 @@ test('a malformed verifier job stops at contract and moves the card to Needs you
     assert.ok(
       !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
     );
+  }
+});
+
+test('new questions get new threads past every open, resolved and current Q ID', async () => {
+  const h = harness();
+  await h.stage({ ...changes, questions: ['Original API question?'] }, 0);
+  h.threads.push({
+    ...newThread('<!-- devkit:finding Q20 -->', 'STUB.md', 1, 20),
+    isResolved: true,
+  });
+  const second = await h.stage(
+    {
+      ...changes,
+      findings: [...changes.findings!, { ...changes.findings![0]!, id: 'Q12', blocking: false }],
+      questions: ['New API question?', 'Another question?'],
+    },
+    1,
+  );
+  const review = Result.parse(JSON.parse(readFileSync(join(second.dir, REVIEW_FILE), 'utf8')));
+  assert.deepEqual(
+    review.findings?.slice(-2).map((f) => f.id),
+    ['Q21', 'Q22'],
+  );
+  assert.deepEqual(review.questions, []);
+  assert.equal(h.threads[1]!.isResolved, true, 'the old question is resolved');
+  for (const [id, text] of [
+    ['Q21', 'New API question?'],
+    ['Q22', 'Another question?'],
+  ]) {
+    const t = h.threads.find((t) =>
+      t.comments.nodes[0]!.body.startsWith(`<!-- devkit:finding ${id} -->`),
+    );
+    assert.ok(t, id);
+    assert.equal(t.isResolved, false, 'the new question stays open for the planner');
+    assert.equal(t.comments.nodes.length, 1, 'a fresh thread, not a reply on the old one');
+    assert.ok(t.comments.nodes[0]!.body.includes(text!));
   }
 });
