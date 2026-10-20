@@ -179,7 +179,8 @@ a resolved thread gets a new thread.
   repair or a push. The card stays in **Building**, and the issue comment
   names the commit being re-reviewed and the next round. Reruns count toward
   the cap; a stale review at the cap stops at **Needs you**. A stale review
-  never posts a PR review or changes the PR's ready state.
+  never posts a PR review or changes the PR's ready state. A head that moves
+  while the planner runs reruns the same way, within the cap.
 
 After a spec stop, reply `/approve` or press Continue to approve the new plan.
 The run skips Build and re-reviews the current head of the same PR in the
