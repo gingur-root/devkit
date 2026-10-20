@@ -194,6 +194,22 @@ the operator to adopt. Otherwise propose none.
    Record exact shared signatures and fixed values where downstream tasks
    depend on them. Include consequential input classes and failure paths.
 
+   Every stage runs on a pipeline runner with only these. It can read every
+   repo the pipeline App reaches with `GH_TOKEN` (contents read, about an hour),
+   and run local commands in its checkout: install, build, test, typecheck, lint,
+   and a headless browser from the runner image.
+   It can't dispatch, read or write workflow runs (in scratch or anywhere), use
+   live secrets (Bitwarden, the App key), write to GitHub, or reach a deployed
+   service.
+
+   Every `agent` check must run within that list. A check that needs live
+   access is `ci` when a CI seam can prove it, otherwise `operator`. Name each
+   `operator` or post-merge check in the summary.
+
+   Check a 'still works as before' criterion by running or rendering the same
+   input at the base commit and at the candidate, then diffing the two.
+   Asserting the candidate's own output does not count.
+
 4. Choose the work profile: routine, feature, debugging, UI behavior, visual
    design, architecture, migration, or infrastructure/security. Recommend the
    executor, effort, and conditional tools. Request research or a disposable
@@ -211,6 +227,9 @@ the operator to adopt. Otherwise propose none.
    For wide compatibility changes, propose expand, migrate, and contract steps
    when separate green slices are feasible. Return proposed child issues as
    artifacts for the controller to publish.
+   Fill a subtask's `blockedBy` only for a real blocking edge, where it needs an earlier subtask's output; order alone is not one.
+   When slicing, put a criterion that depends on another slice's output into
+   that slice, or a later one whose `blockedBy` names it.
 
 6. Read the plan as a capable builder without this conversation. Resolve
    questions answered by the repo and make routine choices explicitly.
@@ -225,6 +244,9 @@ the operator to adopt. Otherwise propose none.
    decision prevents implementation. Any research or prototype needed to
    establish feasibility must have answered its question. Otherwise return
    needs-input with the next owner and action.
+   A criterion whose check needs output from an open issue (its results, its
+   backfill, its merge) has no feasible check yet. Return needs-input naming
+   that issue, or move the criterion to a later slice.
 ```
 
 Use Matt's spec and ticket synthesis and Superpowers' lean planning as references. Adapt their interactive steps for unattended execution. Planning may propose glossary or ADR changes; implementation applies the agreed changes. For unchanged test seams recorded in an approved plan, downstream workers already have the needed agreement. Keep domain definitions in the glossary. Propose an ADR for a real tradeoff that is costly to reverse and would otherwise surprise a future reader.
@@ -306,6 +328,9 @@ Implement the supplied approved issue and plan in the assigned worktree.
    it fail for the intended reason before applying the fix. For mechanical
    edits or docs, use the relevant existing checks rather than manufacturing
    tests that restate the edit.
+   Check a 'still works as before' criterion by running or rendering the same
+   input at the base commit and at the candidate, then diffing the two.
+   Asserting the candidate's own output does not count.
 
 3. For debugging, first establish a runnable reproduction of the reported
    symptom. Minimize it, test falsifiable hypotheses, then apply the smallest
@@ -408,6 +433,10 @@ Review the change against the issue and repository at the supplied commits.
 6. Return pass, changes-requested, or inconclusive, with separate Correctness,
    Spec, and Standards results. Pass requires no confirmed blocking finding and
    adequate evidence for mandatory criteria. State the remaining review limits.
+   An `operator` criterion needs no evidence to pass. On `pass` only, return
+   one follow-up that lists each `operator` criterion, its check and its
+   expected result, so Troy can run them. Don't return `inconclusive` for an
+   `operator` criterion.
    Return findings to the controller; implementation applies any fixes.
 ```
 

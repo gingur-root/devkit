@@ -38,12 +38,14 @@
     {
       "title": "Stub subtask: add STUB.md",
       "body": "Adds STUB.md, as the stub build does.",
-      "pr": true
+      "pr": true,
+      "blockedBy": null
     },
     {
       "title": "Stub subtask: change an org setting",
       "body": "Changes an org setting, so it lands without a PR.",
-      "pr": false
+      "pr": false,
+      "blockedBy": [0]
     }
   ],
   "followups": null,

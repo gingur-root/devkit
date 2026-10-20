@@ -10,7 +10,14 @@ import { test } from 'vite-plus/test';
 import type { Job } from './job.ts';
 import { Result } from './result.ts';
 import { ROLES } from './roles.ts';
-import { failedResult, instructions, settle, skillRoles } from './run.ts';
+import { failedResult, instructions, resolveRole, settle, skillRoles } from './run.ts';
+
+test('credential selection uses the effective executor, including role defaults and overrides', () => {
+  assert.equal(resolveRole({ role: 'build' }).executor, 'codex');
+  assert.equal(resolveRole({ role: 'plan' }).executor, 'claude');
+  assert.equal(resolveRole({ role: 'build', executor: 'claude' }).executor, 'claude');
+  assert.equal(resolveRole({ role: 'plan', executor: 'stub' }).executor, 'stub');
+});
 
 function repoSkill(cwd: string, name: string, roles: string, body: string): void {
   mkdirSync(join(cwd, '.devkit', 'skills', name), { recursive: true });

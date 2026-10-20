@@ -80,6 +80,21 @@ function workflowJobs(): [string, Record<string, Job>][] {
     ]);
 }
 
+test('cancelled runs skip publishing agent output', () => {
+  const jobsByWorkflow = new Map(workflowJobs());
+  for (const [file, id] of [
+    ['agent.build.yml', 'publish'],
+    ['agent.plan.yml', 'publish'],
+    ['agent.review.yml', 'push'],
+  ] as const) {
+    const condition = jobsByWorkflow.get(file)?.[id]?.if;
+    const where = `${file}#${id}`;
+    assert.ok(typeof condition === 'string', `${where} needs a condition`);
+    assert.match(condition, /!cancelled\(\)/, where);
+    assert.doesNotMatch(condition, /always\(\)/, where);
+  }
+});
+
 const STATUS_FN = /\b(always|cancelled|failure)\(\)/;
 
 /**

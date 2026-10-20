@@ -78,6 +78,15 @@ jobs:
           pnpm agent eval --repo "$GITHUB_WORKSPACE/repo" --out "$RUNNER_TEMP/eval" ${CASES:+--only "$CASES"}
           { echo "### Eval of devkit \`$DEVKIT_REF\`"; echo; cat "$RUNNER_TEMP/eval/scorecard.md"; } >>"$GITHUB_STEP_SUMMARY"
 
+      # Keep filename cleanup in sync with actions/agent.run/action.yml.
+      - name: Prepare artifact
+        if: ${{ always() }}
+        run: |
+          out="$RUNNER_TEMP/eval"
+          mkdir -p "$out"
+          find "$out" -depth -name $'*[":<>|*?\r\n]*' -exec bash -c \
+            'for f; do b=${f##*/}; mv "$f" "${f%/*}/${b//[$'"'"'":<>|*?\r\n'"'"']/_}"; done' bash {} +
+
       - if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
