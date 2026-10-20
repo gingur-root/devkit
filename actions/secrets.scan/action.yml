@@ -1,11 +1,15 @@
 name: 'Gitleaks scan'
-description: 'Scan git history for secrets with a pinned, checksum-verified gitleaks release.'
+description: 'Scan git history or a directory for secrets with a pinned, checksum-verified gitleaks release.'
 
 # The release binary, not gitleaks/gitleaks-action: the action needs a
 # gitleaks.io license key for organization accounts. Bump `version` and `sha256`
 # together, from the release's gitleaks_<version>_checksums.txt.
 
 inputs:
+  path:
+    description: 'Directory to scan. Empty scans git history.'
+    required: false
+    default: ''
   logOpts:
     description: 'git log options limiting the scan, e.g. `<base>..<head>`. Empty scans all history.'
     required: false
@@ -32,4 +36,10 @@ runs:
       shell: bash
       env:
         LOG_OPTS: ${{ inputs.logOpts }}
-      run: gitleaks git --redact --no-banner --log-opts "$LOG_OPTS" .
+        SCAN_PATH: ${{ inputs.path }}
+      run: |
+        if [[ -n "$SCAN_PATH" ]]; then
+          gitleaks dir --redact --no-banner --config "$GITHUB_ACTION_PATH/gitleaks.toml" "$SCAN_PATH"
+        else
+          gitleaks git --redact --no-banner --log-opts "$LOG_OPTS" .
+        fi

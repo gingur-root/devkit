@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public Bitwarden secret ID from actions/agent.run/action.yml, not its value."
+targetRules = ["generic-api-key"]
+regexes = ['''^2cf223b6-0ed8-415b-a651-b4e2000da674$''']

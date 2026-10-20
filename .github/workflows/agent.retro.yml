@@ -121,6 +121,40 @@ jobs:
           mkdir -p "$RUNNER_TEMP/agent/in/run"
           printf '%s\n' "$JOBS" >"$RUNNER_TEMP/agent/in/run/jobs.json"
 
+      - id: logsToken
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionActions: read
+
+      - name: Logs
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.logsToken.outputs.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/agent/in/run/logs"
+          mkdir -p "$logs"
+          gh api --paginate "repos/$REPO/actions/runs/$RUN/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "failure") | [.id, .name, .runner_name] | @tsv' \
+            >"$RUNNER_TEMP/agent/failed-jobs.tsv"
+          while IFS=$'\t' read -r id job runner; do
+            name=$(printf '%s' "$job" | sed 's/[^A-Za-z0-9._-]/-/g')
+            file="$logs/${name:0:180}-$id.log"
+            printf 'job: %s\nrunner: %s\n' "$job" "$runner" >"$file"
+            if ! gh api --allow-escape-sequences "repos/$REPO/actions/jobs/$id/logs" | tail -n 200 >>"$file"; then
+              rm "$file"
+              echo "::warning::Could not fetch log for job $id"
+            fi
+          done <"$RUNNER_TEMP/agent/failed-jobs.tsv"
+
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        with:
+          path: ${{ runner.temp }}/agent/in/run/logs
+
       - uses: actions/upload-artifact@v7
         with:
           name: retro-in

@@ -15,14 +15,16 @@ Follow the retro skill below, with these changes:
   - `timeline.md`: the card's history (labels, closes, cross-references).
   - `run/jobs.json`: each job of the run and its result (`success`,
     `failure`, `skipped`, `cancelled`), with its outputs.
+  - `run/logs/<job>.log`: the last 200 lines of each failed job's Actions
+    log, with its job name and runner.
   - `run/<stage>-in/` and `run/<stage>-out/`: each stage's job file, the
     agent's `result.json` and `transcript.jsonl` (what it said and which
     tools it called). A stage missing here never started or died first.
 - Your working directory is the repo at the run's commit. Devkit, which owns
   the pipeline (`agents/`, `skills/`, `bin/agent/`,
   `.github/workflows/agent.*.yml`, `docs/pipeline.md`), is at `../devkit`.
-- You can't read the Actions log. When a job failed with no transcript or
-  result to explain it, say so, and name the log step to look at.
+- Read the failed job's log in `run/logs/` for the error. When it is missing
+  or does not show the cause, say so and name the job and step log to look at.
 
 ## Output
 
