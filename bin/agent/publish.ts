@@ -9,10 +9,23 @@
 // and every other stage files its follow-ups as new issues (devkit#12). Only
 // this writes GitHub, and only with the App.
 
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 import { git, gitAsOperator } from '../git.ts';
+import { check as checkMemory, frontmatter } from '../memory/check.ts';
+import { githubReader } from '../memory/reader.ts';
+import { render as memoryIndex } from '../memory/render.ts';
 import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
@@ -65,6 +78,10 @@ export interface PublishOptions {
   rounds?: number;
   /** A review's round: the commit toolchain.verify passed on, or empty when it did not pass. */
   verified?: string;
+  /** A memory run's failed jobs, encoded as the caller's toJSON(needs). */
+  failed?: string;
+  repo?: string;
+  issue?: number;
 }
 
 interface Issue {
@@ -214,6 +231,7 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const candidate = join(out, CANDIDATE_FILE);
   if (
     result.outcome === 'implemented' &&
+    job.role !== 'memory' &&
     !(existsSync(candidate) && statSync(candidate).size > 0)
   ) {
     return {
@@ -997,10 +1015,185 @@ function summarizeUsage(stage: string, out: string): void {
   );
 }
 
+export interface MemoryChange {
+  path: string;
+  text: string | null;
+  evidence: string[];
+}
+
+/** Validate the whole proposal before any file in the store is touched. */
+export function memoryChanges(out: string, repo: string): MemoryChange[] {
+  const root = join(out, 'memory');
+  const changes: MemoryChange[] = [];
+  const invalid = (file: string, why: string): never => {
+    throw new Error(`memory/${file}: ${why}`);
+  };
+  const inspect = (file: string) => {
+    const stat = lstatSync(join(root, file));
+    if (stat.isSymbolicLink()) invalid(file, 'symlink refused');
+    return stat;
+  };
+  // existsSync follows symlinks, including broken ones. Inspect the directory entry itself.
+  if (!readdirSync(out).includes('memory')) return [];
+  if (!inspect('').isDirectory()) invalid('', 'expected directory');
+  for (const folder of readdirSync(root)) {
+    if (!['_org', repo.split('/')[1]].includes(folder)) invalid(folder, 'outside the memory slice');
+    if (!inspect(folder).isDirectory()) invalid(folder, 'expected directory');
+    for (const name of readdirSync(join(root, folder))) {
+      const file = `${folder}/${name}`;
+      if (
+        !inspect(file).isFile() ||
+        !(name === 'INDEX.md' || /^[a-z0-9][a-z0-9._-]*\.md(\.delete)?$/.test(name))
+      )
+        invalid(file, 'invalid memory path');
+      const text = readFileSync(join(root, file), 'utf8');
+      const removed = name.endsWith('.delete');
+      let evidence: string[] = [];
+      if (removed && text.length) invalid(file, 'delete marker must be empty');
+      if (!removed && name !== 'INDEX.md') {
+        const entry = frontmatter(text);
+        if (typeof entry === 'string') invalid(file, entry);
+        else if (!entry.evidence.length) invalid(file, 'at least one evidence item is required');
+        else evidence = entry.evidence.map(({ at }) => at);
+      }
+      const path = removed ? file.slice(0, -7) : file;
+      if (changes.some((change) => change.path === path))
+        invalid(file, 'conflicting writes and deletes');
+      changes.push({ path, text: removed ? null : text, evidence });
+    }
+  }
+  return changes;
+}
+
+export function memoryComment(jobs: Record<string, { result?: string }>, url: string): string {
+  const failed = Object.entries(jobs)
+    .filter(([, job]) => ['failure', 'cancelled'].includes(job.result ?? ''))
+    .map(([id]) => id);
+  return `${marker('memory')}\n\n**Memory stopped:** ${failed.join(', ') || 'unknown'}. See [run](${url}).\n\n@${OPERATOR_LOGIN}`;
+}
+
+export async function publishMemory(
+  job: Job,
+  result: Result,
+  out: string,
+  checkout: string,
+  changed?: string[],
+): Promise<void> {
+  if (result.status !== 'complete' || !['implemented', 'answered'].includes(result.outcome ?? ''))
+    throw new Error(`Memory did not complete: ${result.summary}`);
+  const changes = memoryChanges(out, job.repo);
+  if (!changes.length) return;
+  if (result.outcome !== 'implemented')
+    throw new Error('Memory wrote files without reporting implemented.');
+  if (!job.memory || git(checkout, ['rev-parse', 'HEAD']) !== job.memory)
+    throw new Error('Memory checkout must be at job.memory.');
+  const dir = join(checkout, 'memory');
+  // The base is trusted, but following a stored symlink could still escape the slice.
+  for (const path of new Set([
+    'memory',
+    'memory/MEMORY.md',
+    ...changes.flatMap((change) => [
+      `memory/${change.path.split('/')[0]}`,
+      `memory/${change.path}`,
+    ]),
+  ])) {
+    try {
+      if (lstatSync(join(checkout, path)).isSymbolicLink())
+        throw new Error(`${path}: symlink refused`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  const actions: string[] = [];
+  for (const change of changes) {
+    const file = join(dir, change.path);
+    if (change.text === null) {
+      if (existsSync(file)) {
+        rmSync(file);
+        actions.push(`remove memory/${change.path}`);
+      }
+    } else {
+      const before = existsSync(file) ? readFileSync(file, 'utf8') : null;
+      if (before === change.text) continue;
+      mkdirSync(join(file, '..'), { recursive: true });
+      writeFileSync(file, change.text);
+      actions.push(`${before === null ? 'add' : 'change'} memory/${change.path}`);
+    }
+  }
+  writeFileSync(join(dir, 'MEMORY.md'), memoryIndex(dir));
+  git(checkout, ['add', '--', 'memory']);
+  if (!git(checkout, ['diff', '--cached', '--name-only'])) return;
+  const failures = await checkMemory(dir, {
+    // Written entries must be verified even when their evidence was not changed by the PR.
+    changed:
+      changed === undefined
+        ? undefined
+        : [...new Set([...changed, ...changes.flatMap((change) => change.evidence)])],
+    read: (at) => githubReader(at, process.env.CHECK_TOKEN),
+  });
+  const output = failures.length
+    ? failures.map((f) => `${f.file}: ${f.reason}`).join('\n')
+    : 'Memory check passed.';
+  const repo = job.repo.split('/')[1]!;
+  const branch = `memory/${repo}-${job.issue.number}`;
+  const title = `memory: ${repo}#${job.issue.number}`;
+  git(checkout, ['commit', '-m', title], PIPELINE_BOT);
+  git(checkout, ['push', 'origin', `HEAD:refs/heads/${branch}`]);
+  const body = [
+    `From [${job.repo}#${job.issue.number}](https://github.com/${job.repo}/pull/${job.issue.number}).`,
+    actions.map((action) => `- ${action}`).join('\n'),
+    failures.length ? '**Memory check failed**' : '**Memory check passed**',
+    `\`\`\`text\n${output}\n\`\`\``,
+  ].join('\n\n');
+  const path = '/repos/gingur-root/pipeline/pulls';
+  const [open] = await rest<{ number: number; node_id: string; draft: boolean }[]>(
+    'GET',
+    `${path}?state=open&head=${encodeURIComponent(`gingur-root:${branch}`)}`,
+  );
+  if (open) {
+    await rest('PATCH', `${path}/${open.number}`, { title, body });
+    if (open.draft !== Boolean(failures.length))
+      await graphql(
+        failures.length
+          ? 'mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{id}}}'
+          : 'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id}}}',
+        { id: open.node_id },
+      );
+  } else
+    await rest('POST', path, {
+      title,
+      body,
+      head: branch,
+      base: 'main',
+      draft: Boolean(failures.length),
+    });
+}
+
 export async function publish(options: PublishOptions): Promise<void> {
+  if (options.failed !== undefined) {
+    const url = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+    await upsertStageComment(
+      options.repo!,
+      options.issue!,
+      'memory',
+      memoryComment(JSON.parse(options.failed), url),
+    );
+    return;
+  }
   const job = Job.parse(JSON.parse(readFileSync(join(options.in, JOB_FILE), 'utf8')));
   const stage = stageName(job.role, options.round);
   summarizeUsage(stage, options.out);
+  if (job.role === 'memory') {
+    // This stage proposes from the recorded merged-PR snapshot. The publish
+    // token writes pipeline only; the evidence token reads repository contents.
+    const v = verdict(job, job.issue.revision, options.out);
+    if ('stage' in v) throw new Error(`Memory stopped at ${v.stage}: ${v.reason}.`);
+    const changed = readFileSync(join(options.in, 'changed.txt'), 'utf8')
+      .split('\n')
+      .filter(Boolean);
+    await publishMemory(job, v.result, options.out, options.checkout!, changed);
+    return;
+  }
   const path = `/repos/${job.repo}/issues/${job.issue.number}`;
   const issue = await rest<Issue>('GET', path);
   // An approved retro triage has no build to check: render wrote it from the plan the gate approved.
