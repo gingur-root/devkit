@@ -15,7 +15,7 @@ export function memoize(read: Reader): Reader {
   };
 }
 
-export const githubReader: Reader = async (at) => {
+export const githubReader = async (at: string, token?: string): Promise<string | null> => {
   const colon = at.indexOf(':');
   const [owner = '', repo = ''] = at.slice(0, colon).split('/');
   const path = at
@@ -28,6 +28,8 @@ export const githubReader: Reader = async (at) => {
     file = await rest(
       'GET',
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`,
+      undefined,
+      token,
     );
   } catch (error) {
     if (error instanceof Error && error.message.includes(' 404 ')) return null;
