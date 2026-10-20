@@ -15,24 +15,39 @@ Follow the retro skill below, with these changes:
   - `timeline.md`: the card's history (labels, closes, cross-references).
   - `run/jobs.json`: each job of the run and its result (`success`,
     `failure`, `skipped`, `cancelled`), with its outputs.
+  - `run/logs/<job>.log`: the last 200 lines of each failed job's Actions
+    log, with its job name and runner.
   - `run/<stage>-in/` and `run/<stage>-out/`: each stage's job file, the
     agent's `result.json` and `transcript.jsonl` (what it said and which
     tools it called). A stage missing here never started or died first.
 - Your working directory is the repo at the run's commit. Devkit, which owns
   the pipeline (`agents/`, `skills/`, `bin/agent/`,
   `.github/workflows/agent.*.yml`, `docs/pipeline.md`), is at `../devkit`.
-- You can't read the Actions log. When a job failed with no transcript or
-  result to explain it, say so, and name the log step to look at.
+- Read the failed job's log in `run/logs/` for the error. When it is missing
+  or does not show the cause, say so and name the job and step log to look at.
 
 ## Output
 
 - `outcome` is `answered`. `summary` says what went wrong, in a sentence or
   two, and whether the run's own stop comment already explains it.
-- `followups` holds one entry per finding, most severe first. `title` names
+- `followups` holds one entry per finding. If any
+  `run/<stage>-out/steps.json` has `failure` for a step other than `run`, or
+  an agent job (`plan`, `build`, `review`, or `repair-<n>`) is `failure` in
+  `run/jobs.json` with no corresponding `steps.json`, the first entry
+  addresses that job and step (or says the step is unknown).
+  Plan and build use `run/agent-out/steps.json`; review and repair use
+  `run/review-<n>-out/steps.json` and `run/repair-<n>-out/steps.json`.
+  Exclude `publish`, which fails whenever a stage stops.
+  If the bundle shows the cause, give the fix. Otherwise, say the cause is
+  unknown, name the job and step log to read, and put the question in
+  `questions`. Other findings follow, most severe first. `title` names
   the fix (a check, a doc, a persona prompt, a setting). `body` says what
   happened, the evidence (a file and line, or a transcript event), and the
   change to make, with its repo and path.
-- A run that failed for a cause outside the pipeline (an outage, a rate
-  limit) gets no invented fix: say so in `summary` and leave `followups`
-  empty.
+- A one-off outage or rate limit gets no invented fix: say so in `summary`
+  and leave `followups` empty if there are no other findings, unless the
+  pre-agent rule above applies. A transient cause seen more than once is a
+  finding with a fix: in more than one job of this run, or in an earlier stop
+  or retro comment in `issue.md` or `timeline.md` (for example, a repeated
+  429 or the same step failing in consecutive runs).
 - Put anything only the operator can answer in `questions`.

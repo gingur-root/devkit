@@ -25,7 +25,7 @@ inputs:
     description: 'The commit the pack holds, from the job contract: the change is diffed against it.'
     required: true
   token:
-    description: "AGENTS_SECRETS_TOKEN. Fetches Claude's OAuth token and the role's MCP credentials; Codex uses the runner login. Empty: no credentials are fetched, Claude uses the runner login, and credentialed MCP servers fail for Claude and Codex. Stub needs no credentials."
+    description: "AGENTS_SECRETS_TOKEN. Fetches Claude's OAuth token only for an effective Claude executor, plus the role's MCP credentials; Codex uses the runner login. Empty: no credentials are fetched, Claude uses the runner login, and credentialed MCP servers fail for Claude and Codex. Stub needs no credentials."
     required: true
   readToken:
     description: 'The sealed read token from actions/agent.token, opened with `token` and passed to the agent as GH_TOKEN. Empty: no GH_TOKEN (the WSL desk).'
@@ -80,9 +80,19 @@ runs:
         name: ${{ inputs.prefix }}-in
         path: ${{ runner.temp }}/agent/in
 
+    - id: executor
+      shell: bash
+      working-directory: devkit
+      env:
+        ROLE: ${{ inputs.role }}
+        EXECUTOR: ${{ inputs.executor }}
+      run: |
+        executor=$(pnpm --silent agent executor --role "$ROLE" ${EXECUTOR:+--executor "$EXECUTOR"} --in "$RUNNER_TEMP/agent/in")
+        echo "executor=$executor" >> "$GITHUB_OUTPUT"
+
     # CLAUDE_CODE_OAUTH_TOKEN in Bitwarden `agents` (infra runbook step 15).
     - id: secrets
-      if: ${{ inputs.token != '' && inputs.executor != 'stub' && inputs.executor != 'codex' }}
+      if: ${{ inputs.token != '' && steps.executor.outputs.executor == 'claude' }}
       uses: gingur-root/devkit/actions/secrets.fetch@main
       with:
         token: ${{ inputs.token }}
@@ -158,10 +168,11 @@ runs:
         git add -A
         git diff --cached --binary "$SOURCE" >"$out/candidate.patch"
         [ -s "$out/candidate.patch" ] || rm "$out/candidate.patch"
-        # upload-artifact refuses the whole upload over one name with " : < > | * ?
+        # upload-artifact refuses the whole upload over one name with " : < > | * ? CR LF
         # (an agent's `fmt:check.log` lost review-0-out, devkit#150).
-        find "$out" -depth -name '*[":<>|*?]*' -exec sh -c \
-          'for f; do mv "$f" "$(dirname "$f")/$(basename "$f" | tr "\":<>|*?" _______)"; done' sh {} +
+        # Keep filename cleanup in sync with .github/workflows/agent.eval.yml.
+        find "$out" -depth -name $'*[":<>|*?\r\n]*' -exec bash -c \
+          'for f; do b=${f##*/}; mv "$f" "${f%/*}/${b//[$'"'"'":<>|*?\r\n'"'"']/_}"; done' bash {} +
 
     # The filename matches STEPS_FILE in bin/agent/job.ts.
     - name: Steps
@@ -173,14 +184,15 @@ runs:
         CHECKOUT: ${{ steps.checkout.outcome }}
         TOOLCHAIN: ${{ steps.toolchain.outcome }}
         JOB_IN: ${{ steps.jobIn.outcome }}
+        EXECUTOR: ${{ steps.executor.outcome }}
         SECRETS: ${{ steps.secrets.outcome }}
         TOOLS: ${{ steps.tools.outcome }}
         MCP: ${{ steps.mcp.outcome }}
         RUN: ${{ steps.run.outcome }}
       run: |
         mkdir -p "$RUNNER_TEMP/agent/out"
-        printf '{"pack":"%s","unpack":"%s","checkout":"%s","toolchain":"%s","jobIn":"%s","secrets":"%s","tools":"%s","mcp":"%s","run":"%s"}\n' \
-          "$PACK" "$UNPACK" "$CHECKOUT" "$TOOLCHAIN" "$JOB_IN" "$SECRETS" "$TOOLS" "$MCP" "$RUN" \
+        printf '{"pack":"%s","unpack":"%s","checkout":"%s","toolchain":"%s","jobIn":"%s","executor":"%s","secrets":"%s","tools":"%s","mcp":"%s","run":"%s"}\n' \
+          "$PACK" "$UNPACK" "$CHECKOUT" "$TOOLCHAIN" "$JOB_IN" "$EXECUTOR" "$SECRETS" "$TOOLS" "$MCP" "$RUN" \
           > "$RUNNER_TEMP/agent/out/steps.json"
 
     - if: ${{ always() }}
