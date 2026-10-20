@@ -45,5 +45,10 @@ Review the change against the issue and repository at the supplied commits.
   job file's `plan.revision`, `base` and `candidate`, unchanged.
 - `axes` holds each axis's result and `findings` every confirmed finding, with
   `blocking` set only for a defect that must be fixed before merge.
+- A requirement only a change in another repo can meet, with a defined
+  follow-up path (such as the infra diagram in `AGENTS.md`), is neither a
+  question nor a blocking finding. Accept the follow-up already listed in a
+  follow-ups comment on the card, or propose it in `followups`. Record which
+  in `assumptions`. Keep `questions` for decisions the operator must make.
 - A `pass` with no questions marks the PR ready for the operator to merge.
   Put anything that needs the operator's decision in `questions`.

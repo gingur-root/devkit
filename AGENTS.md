@@ -47,6 +47,14 @@ These override anything below that conflicts with them.
   rewires a part of the pipeline (a workflow, a stage, a runner, a credential)
   updates infra's `docs/architecture.excalidraw.svg` in a companion infra PR.
   How to edit it is in infra's `AGENTS.md`.
+  A run commits only to its own repo. An agent meets this rule by proposing
+  `Update infra architecture diagram for #<card>` (the card's number) in
+  `followups`, unless a follow-ups comment on the card already lists a diagram
+  follow-up for that card. The body names what changed (workflow, stage, runner
+  or credential) and the edit steps: open `docs/architecture.excalidraw.svg`
+  at excalidraw.com and export SVG with **Embed scene** on. Publish files the
+  follow-up in this repo and links it from the card. This requirement is never
+  a question or a blocking finding.
 
 ## Naming
 

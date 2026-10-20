@@ -55,3 +55,7 @@ Implement the supplied approved issue and plan in the assigned worktree.
   `implemented` when every check you can run passes. Blocking throws your
   change away.
 - The summary opens the pull request, so lead with what changed.
+- When the diff adds, removes or rewires a workflow, stage, runner or
+  credential (`.github/workflows/`, `actions/` or credential handling), propose
+  the diagram follow-up per `AGENTS.md`, unless a follow-ups comment on the
+  card already lists one for this card.
