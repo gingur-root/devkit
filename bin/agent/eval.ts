@@ -252,6 +252,7 @@ function runCase(
   const approved = {
     revision: revision(planText),
     criteria: (plan.result.criteria ?? []).map((c) => c.id),
+    checks: Object.fromEntries((plan.result.criteria ?? []).map((c) => [c.id, c.check])),
   };
   const planFiles = { [ISSUE_FILE]: issueText, [PLAN_FILE]: `${planText}\n` };
 

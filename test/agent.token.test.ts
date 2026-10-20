@@ -19,7 +19,7 @@ type Step = {
 };
 type Job = { permissions?: unknown; steps?: Step[] };
 
-const READ_ROLES = ['plan', 'build', 'review', 'repair', 'replan'];
+const READ_ROLES = ['plan', 'build', 'review', 'repair', 'replan', 'verify'];
 
 function load(url: URL): { jobs?: Record<string, Job>; runs?: { steps?: Step[] } } {
   return parse(readFileSync(url, 'utf8'));

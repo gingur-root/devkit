@@ -136,6 +136,10 @@ function harness() {
       candidate?: string;
       jobCandidate?: string;
       review?: Result;
+      checks?: Record<string, string>;
+      verifier?: Result | null;
+      verifierJob?: Partial<Job>;
+      verifierJobText?: string;
     } = {},
   ) {
     const dir = join(root, String(calls++));
@@ -152,7 +156,9 @@ function harness() {
         revision: revision(issue.title, issue.body),
         bodySeen: true,
       },
-      plan: null,
+      plan: options.checks
+        ? { revision: 'approved', criteria: Object.keys(options.checks), checks: options.checks }
+        : null,
       source: pull.head.sha,
       base: 'base',
       candidate: options.jobCandidate ?? pull.head.sha,
@@ -167,6 +173,7 @@ function harness() {
       inputs: {
         ...result.inputs,
         issue: job.issue.revision,
+        plan: job.plan?.revision ?? null,
         candidate: options.candidate ?? job.candidate,
       },
     };
@@ -181,7 +188,32 @@ function harness() {
     const output = join(dir, 'github-output');
     writeFileSync(output, '');
     vi.stubEnv('GITHUB_OUTPUT', output);
+    const verifierDir = join(dir, 'verifier');
+    if (options.verifier) {
+      mkdirSync(verifierDir);
+      const verifierJob = { ...job, role: 'verify', ...options.verifierJob };
+      writeFileSync(
+        join(verifierDir, JOB_FILE),
+        options.verifierJobText ?? JSON.stringify(verifierJob),
+      );
+      writeFileSync(
+        join(verifierDir, RESULT_FILE),
+        JSON.stringify({
+          ...options.verifier,
+          job: verifierJob.job,
+          role: 'verify',
+          inputs: {
+            ...options.verifier.inputs,
+            issue: verifierJob.issue.revision,
+            plan: verifierJob.plan?.revision ?? null,
+            candidate: options.verifier.inputs.candidate ?? verifierJob.candidate,
+          },
+        }),
+      );
+    }
     await publish({
+      verifierIn: options.verifier !== undefined ? verifierDir : undefined,
+      verifierOut: options.verifier !== undefined ? verifierDir : undefined,
       in: dir,
       out: dir,
       checkout: root,
@@ -227,6 +259,7 @@ test('publish carries repair hypotheses into the same-round review and upserts o
     candidate: 'repaired',
     ci: 'green',
     review: 'pass',
+    verify: 'skipped',
     replan: null,
     open: [],
     hypotheses: ['stub hypothesis'],
@@ -552,6 +585,155 @@ test('publication threads questions alongside findings and stops a question-only
   );
   const second = await h.stage({ ...review, findings: [] }, 1);
   assert.match(second.output, /next=stop/);
+});
+
+test('publication threads verifier failures and resolves V-A1 only after fresh passing verification', async () => {
+  const h = harness();
+  const check = { ...ready, role: 'verify', axes: null, outcome: 'verified' as const };
+  const failed = {
+    ...check,
+    evidence: ready.evidence.map((entry) => ({ ...entry, result: 'fail' as const })),
+  };
+  const first = await h.stage(ready, 0, { checks: { A1: 'agent' }, verifier: failed });
+  assert.match(first.output, /next=repair/);
+  const result = Result.parse(JSON.parse(readFileSync(join(first.dir, REVIEW_FILE), 'utf8')));
+  assert.deepEqual(
+    result.findings?.map((f) => [f.id, f.axis, f.blocking, f.criterion]),
+    [['V-A1', 'spec', true, 'A1']],
+  );
+  assert.match(h.threads[0]!.comments.nodes[0]!.body, /V-A1/);
+  assert.equal(h.threads[0]!.isResolved, false);
+  const second = await h.stage(ready, 1, { checks: { A1: 'agent' }, verifier: check });
+  assert.match(second.output, /next=ready/);
+  assert.equal(h.threads[0]!.isResolved, true);
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.verify, 'verified');
+});
+
+test('publication stops and names missing verifier IDs, without marking Ready or resolving open findings', async () => {
+  for (const verifier of [
+    undefined,
+    null,
+    { ...ready, role: 'verify', outcome: 'verified' as const, evidence: [] },
+  ]) {
+    const h = harness();
+    h.threads.push(newThread('<!-- devkit:finding V-A1 -->', 'STUB.md', 1, 1));
+    const { output } = await h.stage(ready, 0, { checks: { A1: 'agent', A2: 'agent' }, verifier });
+    assert.match(output, /next=stop/);
+    const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+    assert.match(String(comment?.body.body), /verifier.*A1, A2/);
+    assert.equal(h.threads[0]!.isResolved, false);
+    assert.ok(
+      !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+    );
+    assert.ok(vi.mocked(setStatus).mock.calls.some((args) => args[2] === 'Needs you'));
+  }
+});
+
+test('publication stops stale verifier results and posts review findings on an unchanged head', async () => {
+  for (const verifier of [
+    {
+      ...ready,
+      outcome: 'verified' as const,
+      inputs: { ...ready.inputs, candidate: 'candida' },
+    },
+    { ...ready, status: 'stale' as const, outcome: null, summary: 'Candidate superseded.' },
+  ]) {
+    for (const round of [0, 10]) {
+      const h = harness();
+      h.threads.push(newThread('<!-- devkit:finding V-A1 -->', 'STUB.md', 1, 1));
+      const { output } = await h.stage(changes, round, { checks: { A1: 'agent' }, verifier });
+      assert.match(output, /next=stop/);
+      assert.doesNotMatch(output, /head=/);
+      assert.equal(h.writes.filter((w) => w.path.endsWith('/reviews')).length, 1);
+      assert.equal(h.threads.length, 2);
+      assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding F1 -->/);
+      assert.equal(h.threads[0]!.isResolved, false);
+      const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+      assert.match(String(comment.body.body), /stopped at `verify`/);
+      assert.match(String(comment.body.body), /verifier.*A1/);
+      assert.ok(
+        String(comment.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-2)'),
+      );
+      assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+      assert.ok(
+        !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+      );
+    }
+  }
+});
+
+test('publication rejects a mismatched verifier contract', async () => {
+  for (const verifierJob of [
+    { plan: { revision: 'other', criteria: ['A1'], checks: { A1: 'agent' } } },
+    { issue: { number: 99, title: 'T', revision: revision('T', 'B'), bodySeen: true } },
+  ]) {
+    const h = harness();
+    const { output } = await h.stage(ready, 0, {
+      checks: { A1: 'agent' },
+      verifier: { ...ready, outcome: 'verified' },
+      verifierJob,
+    });
+    assert.match(output, /next=stop/);
+    assert.match(
+      String(h.writes.find((w) => w.path.endsWith('/issues/1/comments'))?.body.body),
+      /different.*issue revision or plan/,
+    );
+  }
+});
+
+test('a verifier stop retains the last judged open IDs in the loop log', async () => {
+  const h = harness();
+  const verifier = {
+    ...ready,
+    role: 'verify',
+    outcome: 'failed' as const,
+    evidence: ready.evidence.map((e) => ({ ...e, result: 'fail' as const })),
+  };
+  await h.stage(ready, 0, { checks: { A1: 'agent' }, verifier });
+  await h.stage(ready, 1, { checks: { A1: 'agent' }, verifier: null });
+  assert.deepEqual(readLoopState(h.comments[0]!.body).entries.at(-1)?.open, ['V-A1']);
+  assert.equal(h.threads[0]!.isResolved, false);
+});
+
+test('a verifier stop posts the current review findings and links their IDs without clearing prior threads', async () => {
+  for (const verifier of [null, { ...ready, outcome: 'inconclusive' as const }]) {
+    const h = harness();
+    h.threads.push(newThread('<!-- devkit:finding V-A1 -->', 'STUB.md', 1, 1));
+    const { output } = await h.stage(changes, 0, { checks: { A1: 'agent' }, verifier });
+    assert.match(output, /next=stop/);
+    assert.equal(h.writes.filter((w) => w.path.endsWith('/reviews')).length, 1);
+    assert.equal(h.threads.length, 2);
+    assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding F1 -->/);
+    assert.equal(h.threads[0]!.isResolved, false);
+    const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+    assert.match(String(comment.body.body), /verifier.*A1/);
+    assert.ok(
+      String(comment.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-2)'),
+    );
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.ok(
+      !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+    );
+  }
+});
+
+test('a malformed verifier job stops at contract and moves the card to Needs you', async () => {
+  for (const verifierJobText of ['{}', '{']) {
+    const h = harness();
+    const { output } = await h.stage(ready, 0, {
+      checks: { A1: 'agent' },
+      verifier: { ...ready, outcome: 'verified' },
+      verifierJobText,
+    });
+    assert.match(output, /next=stop/);
+    const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+    assert.match(String(comment.body.body), /stopped at `contract`/);
+    assert.match(String(comment.body.body), /verifier.*A1.*job.json/);
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.ok(
+      !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+    );
+  }
 });
 
 test('new questions get new threads past every open, resolved and current Q ID', async () => {

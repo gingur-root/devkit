@@ -107,7 +107,7 @@ test('the envelope written for a run with no result passes the schema publish ch
     objective: '',
     repo: 'o/r',
     issue: { number: 1, title: 't', revision: 'rev', bodySeen: true },
-    plan: { revision: 'plan', criteria: [] },
+    plan: { revision: 'plan', criteria: [], checks: {} },
     source: 'sha',
     base: 'sha',
     candidate: null,

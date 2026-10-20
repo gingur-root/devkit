@@ -104,6 +104,18 @@ export const ROLES = {
     maxTurns: 100,
     result: true,
   },
+  verify: {
+    executor: 'codex',
+    effort: 'medium',
+    objective:
+      'Check every agent criterion of the approved plan on the exact candidate, with evidence.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/verify.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'],
+    web: true,
+    timeoutMinutes: 30,
+    maxTurns: 100,
+    result: true,
+  },
   memory: {
     executor: 'claude',
     model: 'claude-sonnet-5-5',

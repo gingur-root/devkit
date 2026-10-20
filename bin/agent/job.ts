@@ -100,7 +100,13 @@ export const Job = z.object({
     revision: z.string(),
     bodySeen: z.boolean(),
   }),
-  plan: z.object({ revision: z.string(), criteria: z.array(z.string()) }).nullable(),
+  plan: z
+    .object({
+      revision: z.string(),
+      criteria: z.array(z.string()),
+      checks: z.record(z.string(), z.string()),
+    })
+    .nullable(),
   source: z.string(),
   base: z.string().nullable(),
   candidate: z.string().nullable(),

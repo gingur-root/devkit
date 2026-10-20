@@ -75,9 +75,9 @@ Output is one JSON object per line (`init`, `message`, `tool`, `result`,
 
 Add `.devkit/tools.json` to the target repo to declare MCP servers and required
 CLIs. Without the file, devkit uses its defaults: keyless Context7 at
-`https://mcp.context7.com/mcp` for plan, build, repair and review,
+`https://mcp.context7.com/mcp` for plan, build, repair, replan, review and verify,
 and no required CLIs. Web search follows the role's `web` setting, independently
-of MCP servers: on for plan, build, repair and review, off for retro
+of MCP servers: on for plan, build, repair, replan, review and verify, off for retro
 and hello. There is no research role.
 
 `agent render` reads the manifest from the job's trusted commit
@@ -135,7 +135,7 @@ An invalid manifest stops the run with its validation error.
 | `args`             | String array of stdio arguments; defaults to `[]`.                                                                                                |
 | `secret`           | Optional Bitwarden `agents` secret UUID. Omit it for a keyless server.                                                                            |
 | `env`              | Optional credential env name matching `^MCP_[A-Z0-9_]+$`. Defaults to `MCP_<SCREAMING_SNAKE_NAME>_TOKEN`; `docsApi` becomes `MCP_DOCS_API_TOKEN`. |
-| `roles`            | Required array of allowed roles: `hello`, `plan`, `build`, `repair`, `review`, `retro`. `[]` turns the server off.                                |
+| `roles`            | Required array of allowed roles: `hello`, `plan`, `build`, `repair`, `review`, `replan`, `verify`, `memory`, `retro`. `[]` turns the server off.  |
 | `clis`             | Required CLI names on PATH for every role; defaults to `[]`. A missing executable stops the run with `<name> is not on PATH.`                     |
 
 Repo entries add new servers or replace a default's whole config by name.

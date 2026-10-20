@@ -76,7 +76,7 @@ test('stub replans answer open threads without modifying the candidate, and spec
     objective: '',
     repo: 'o/r',
     issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
-    plan: { revision: 'plan', criteria: ['A1'] },
+    plan: { revision: 'plan', criteria: ['A1'], checks: { A1: 'ci' } },
     source: 'head',
     base: 'base',
     candidate: 'head',
@@ -123,6 +123,57 @@ test('stub replans answer open threads without modifying the candidate, and spec
       const result = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
       assert.equal(result.outcome, expected);
     }
+  } finally {
+    process.exitCode = exitCode;
+    vi.unstubAllEnvs();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('the verifier stub checks ready and unverified fixtures without changing the candidate', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'stub-verify-'));
+  const input = join(cwd, 'in');
+  const out = join(cwd, 'out');
+  mkdirSync(input);
+  mkdirSync(out);
+  const job: Job = {
+    job: 'verify-1',
+    role: 'verify',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
+    plan: { revision: 'plan', criteria: ['A1'], checks: { A1: 'agent' } },
+    source: 'head',
+    base: 'base',
+    candidate: 'head',
+    memory: null,
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+  };
+  writeFileSync(join(input, JOB_FILE), JSON.stringify(job));
+  const content = 'unrepaired candidate';
+  writeFileSync(join(cwd, 'STUB.md'), content);
+  const exitCode = process.exitCode;
+  try {
+    for (const fixture of ['ready', 'unverified']) {
+      vi.stubEnv('DEVKIT_STUB_FIXTURE', fixture);
+      await run({ role: 'verify', executor: 'stub', cwd, in: input, out });
+      const result = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
+      assert.equal(result.outcome, fixture === 'ready' ? 'verified' : 'failed');
+      assert.equal(result.evidence[0]?.criterion, 'A1');
+      assert.equal(result.evidence[0]?.result, fixture === 'ready' ? 'pass' : 'fail');
+      assert.equal(result.inputs.candidate, 'head');
+      assert.equal(readFileSync(join(cwd, 'STUB.md'), 'utf8'), content);
+    }
+    writeFileSync(
+      join(cwd, 'STUB.md'),
+      readFileSync(new URL('../fixtures/repair.md', import.meta.url)),
+    );
+    await run({ role: 'verify', executor: 'stub', cwd, in: input, out });
+    const result = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
+    assert.equal(result.outcome, 'verified');
+    assert.equal(result.evidence[0]?.result, 'pass');
   } finally {
     process.exitCode = exitCode;
     vi.unstubAllEnvs();
