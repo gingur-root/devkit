@@ -3,8 +3,9 @@
 // move the card on. A build also pushes its candidate and opens a draft PR; a
 // review posts on that PR and marks it ready when it passes, or hands its
 // findings to a repair, which pushes a fix to the same PR. The pipeline never
-// merges. A retro files its findings as one `retro` issue for the planner, and
-// that plan's approval files the issues it kept instead of building. A ready
+// merges, except memory PRs on pipeline. A retro files its findings as one
+// `retro` issue for the planner, and that plan's approval files the issues it
+// kept instead of building. A ready
 // plan with subtasks files them as sub-issues, which makes the card a story,
 // and every other stage files its follow-ups as new issues (devkit#12). Only
 // this writes GitHub, and only with the App.
@@ -22,7 +23,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import { git, gitAsOperator } from '../git.ts';
+import { git, gitAsOperator, gitBytes } from '../git.ts';
 import { check as checkMemory, frontmatter } from '../memory/check.ts';
 import { githubReader } from '../memory/reader.ts';
 import { armedContinue, readSteps } from './approval.ts';
@@ -41,7 +42,16 @@ import {
   STAGE_LABELS,
   type Status,
 } from './constants.ts';
-import { graphql, removeLabel, rest, restAll, stageComment, upsertStageComment } from './github.ts';
+import {
+  autoMerge,
+  disableAutoMerge,
+  graphql,
+  removeLabel,
+  rest,
+  restAll,
+  stageComment,
+  upsertStageComment,
+} from './github.ts';
 import {
   CANDIDATE_FILE,
   CHECKS_FILE,
@@ -1601,7 +1611,18 @@ export async function publishMemory(
     }
   }
   git(checkout, ['add', '--', 'memory']);
-  if (!git(checkout, ['diff', '--cached', '--name-only'])) return;
+  // Keep path bytes intact and list both sides of a rename before checking the slice.
+  const staged = gitBytes(checkout, [
+    'diff',
+    '--cached',
+    '--name-only',
+    '--no-renames',
+    '-z',
+  ]).toString('utf8');
+  if (!staged) return;
+  for (const path of staged.split('\0').filter(Boolean)) {
+    if (!path.startsWith('memory/')) throw new Error(`${path}: staged path outside memory/.`);
+  }
   const failures = await checkMemory(dir, {
     // Written entries must be verified even when their evidence was not changed by the PR.
     changed:
@@ -1618,19 +1639,26 @@ export async function publishMemory(
   const title = `memory: ${repo}#${job.issue.number}`;
   git(checkout, ['commit', '-m', title], PIPELINE_BOT);
   git(checkout, ['push', 'origin', `HEAD:refs/heads/${branch}`]);
+  const head = git(checkout, ['rev-parse', 'HEAD']);
   const body = [
     `From [${job.repo}#${job.issue.number}](https://github.com/${job.repo}/pull/${job.issue.number}).`,
     actions.map((action) => `- ${action}`).join('\n'),
     failures.length ? '**Memory check failed**' : '**Memory check passed**',
     `\`\`\`text\n${output}\n\`\`\``,
   ].join('\n\n');
-  const path = '/repos/gingur-root/pipeline/pulls';
-  const [open] = await rest<{ number: number; node_id: string; draft: boolean }[]>(
-    'GET',
-    `${path}?state=open&head=${encodeURIComponent(`gingur-root:${branch}`)}`,
-  );
+  const pipeline = 'gingur-root/pipeline';
+  const path = `/repos/${pipeline}/pulls`;
+  const [open] = await rest<
+    {
+      number: number;
+      node_id: string;
+      draft: boolean;
+      auto_merge: object | null;
+    }[]
+  >('GET', `${path}?state=open&head=${encodeURIComponent(`gingur-root:${branch}`)}`);
   if (open) {
     await rest('PATCH', `${path}/${open.number}`, { title, body });
+    if (failures.length && open.auto_merge) await disableAutoMerge(pipeline, open);
     if (open.draft !== Boolean(failures.length))
       await graphql(
         failures.length
@@ -1638,14 +1666,20 @@ export async function publishMemory(
           : 'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id}}}',
         { id: open.node_id },
       );
-  } else
-    await rest('POST', path, {
+    if (!failures.length) {
+      if (open.auto_merge) await disableAutoMerge(pipeline, open);
+      await autoMerge(pipeline, open, head);
+    }
+  } else {
+    const created = await rest<{ node_id: string }>('POST', path, {
       title,
       body,
       head: branch,
       base: 'main',
       draft: Boolean(failures.length),
     });
+    if (!failures.length) await autoMerge(pipeline, created, head);
+  }
 }
 
 export async function publish(options: PublishOptions): Promise<void> {

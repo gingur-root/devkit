@@ -41,7 +41,7 @@ function headers(override?: string): Record<string, string> {
   };
 }
 
-// The pipeline never merges: a clean review stops at Ready for the operator.
+// The pipeline never merges, except `autoMerge` for memory PRs on pipeline (devkit#267).
 const MERGE =
   /\/pulls\/\d+\/merge\b|\/merges\b|\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b/;
 
@@ -52,6 +52,15 @@ export async function rest<T>(
   token?: string,
 ): Promise<T> {
   if (MERGE.test(path)) throw new Error(`${method} ${path}: the pipeline never merges.`);
+  return request(method, path, body, token);
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  token?: string,
+): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     method,
     headers: headers(token),
@@ -79,12 +88,48 @@ export async function restAll<T>(path: string): Promise<T[]> {
 export async function graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   // Only the query: variables carry PR and review text, which may mention a merge.
   if (MERGE.test(query)) throw new Error('GraphQL: the pipeline never merges.');
-  const { data, errors } = await rest<{ data: T; errors?: unknown[] }>('POST', '/graphql', {
+  return mutate(query, variables);
+}
+
+async function mutate<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const { data, errors } = await request<{ data: T; errors?: unknown[] }>('POST', '/graphql', {
     query,
     variables,
   });
   if (errors?.length) throw new Error(`GraphQL: ${JSON.stringify(errors)}`);
   return data;
+}
+
+/** The only merge exception: checked memory PRs on the pipeline store. */
+export async function autoMerge(
+  repo: string,
+  pull: { node_id: string },
+  head: string,
+): Promise<void> {
+  if (repo !== 'gingur-root/pipeline')
+    throw new Error(`${repo}: auto-merge is only allowed on gingur-root/pipeline.`);
+  const input = { pullRequestId: pull.node_id, mergeMethod: 'SQUASH', expectedHeadOid: head };
+  try {
+    await mutate(
+      'mutation($input:EnablePullRequestAutoMergeInput!){enablePullRequestAutoMerge(input:$input){pullRequest{id}}}',
+      { input },
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !/clean status/i.test(error.message)) throw error;
+    await mutate(
+      'mutation($input:MergePullRequestInput!){mergePullRequest(input:$input){pullRequest{id}}}',
+      { input },
+    );
+  }
+}
+
+export async function disableAutoMerge(repo: string, pull: { node_id: string }): Promise<void> {
+  if (repo !== 'gingur-root/pipeline')
+    throw new Error(`${repo}: auto-merge is only allowed on gingur-root/pipeline.`);
+  await mutate(
+    'mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){pullRequest{id}}}',
+    { id: pull.node_id },
+  );
 }
 
 export interface Comment {

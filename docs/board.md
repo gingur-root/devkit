@@ -53,8 +53,9 @@ What Planning does on each entry:
   if the plan is ready, it moves straight to Building. If not, it asks and
   returns to Needs you.
 
-The pipeline never merges. **Merge** is Troy's own action, done through his
-token, the same as clicking Merge on GitHub.
+The pipeline never merges, except memory PRs on pipeline (see
+[Memory after a merge](pipeline.md#memory-after-a-merge)). **Merge** is Troy's
+own action, done through his token, the same as clicking Merge on GitHub.
 
 ## How a Continue becomes a build
 
