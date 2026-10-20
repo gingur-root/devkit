@@ -167,7 +167,7 @@ jobs:
   publish:
     name: Publish
     needs: [start, plan]
-    if: always() && needs.start.result == 'success'
+    if: ${{ !cancelled() && needs.start.result == 'success' }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     steps:

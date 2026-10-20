@@ -103,7 +103,7 @@ jobs:
   push:
     name: Push
     needs: repair
-    if: always() && needs.repair.result != 'skipped' && inputs.round > 0
+    if: ${{ !cancelled() && needs.repair.result != 'skipped' && inputs.round > 0 }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
