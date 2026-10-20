@@ -81,7 +81,7 @@ on:
     outputs:
       next:
         description: 'The next step: ready, repair, rerun, spec or stop.'
-        value: ${{ jobs.verdict.outputs.next || jobs.gate.outputs.next }}
+        value: ${{ jobs.verdict.outputs.next || (jobs.gate.outputs.next != 'repair' && jobs.gate.outputs.next || '') }}
       candidate:
         description: 'The reviewed commit to repair, or the current PR head to re-review.'
         value: ${{ jobs.verdict.outputs.candidate }}
