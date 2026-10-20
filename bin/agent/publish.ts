@@ -25,7 +25,6 @@ import { join } from 'node:path';
 import { git, gitAsOperator } from '../git.ts';
 import { check as checkMemory, frontmatter } from '../memory/check.ts';
 import { githubReader } from '../memory/reader.ts';
-import { render as memoryIndex } from '../memory/render.ts';
 import { armedContinue, readSteps } from './approval.ts';
 import { proposePriority, setStatus } from './board.ts';
 import {
@@ -1373,16 +1372,13 @@ export function memoryChanges(out: string, repo: string): MemoryChange[] {
     if (!inspect(folder).isDirectory()) invalid(folder, 'expected directory');
     for (const name of readdirSync(join(root, folder))) {
       const file = `${folder}/${name}`;
-      if (
-        !inspect(file).isFile() ||
-        !(name === 'INDEX.md' || /^[a-z0-9][a-z0-9._-]*\.md(\.delete)?$/.test(name))
-      )
+      if (!inspect(file).isFile() || !/^[a-z0-9][a-z0-9._-]*\.md(\.delete)?$/.test(name))
         invalid(file, 'invalid memory path');
       const text = readFileSync(join(root, file), 'utf8');
       const removed = name.endsWith('.delete');
       let evidence: string[] = [];
       if (removed && text.length) invalid(file, 'delete marker must be empty');
-      if (!removed && name !== 'INDEX.md') {
+      if (!removed) {
         const entry = frontmatter(text);
         if (typeof entry === 'string') invalid(file, entry);
         else if (!entry.evidence.length) invalid(file, 'at least one evidence item is required');
@@ -1423,7 +1419,6 @@ export async function publishMemory(
   // The base is trusted, but following a stored symlink could still escape the slice.
   for (const path of new Set([
     'memory',
-    'memory/MEMORY.md',
     ...changes.flatMap((change) => [
       `memory/${change.path.split('/')[0]}`,
       `memory/${change.path}`,
@@ -1452,7 +1447,6 @@ export async function publishMemory(
       actions.push(`${before === null ? 'add' : 'change'} memory/${change.path}`);
     }
   }
-  writeFileSync(join(dir, 'MEMORY.md'), memoryIndex(dir));
   git(checkout, ['add', '--', 'memory']);
   if (!git(checkout, ['diff', '--cached', '--name-only'])) return;
   const failures = await checkMemory(dir, {

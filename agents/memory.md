@@ -2,7 +2,8 @@
 
 Propose the memory changes this merged PR implies. Write proposals under
 `$AGENT_OUT/memory/`; the controller opens a PR on `gingur-root/pipeline`.
-The operator approves that PR. Do not edit the checkout or write `MEMORY.md`.
+That PR merges only after the required Memory check passes. Do not edit the
+checkout or write any `INDEX.md` or `MEMORY.md`: the index is generated.
 
 ## Read the inputs
 
@@ -36,8 +37,8 @@ The operator approves that PR. Do not edit the checkout or write `MEMORY.md`.
    `supersedes` (a slug or null), and `evidence` (items with `at` and `quote`).
    `name` must equal the filename slug. Use lowercase names.
 2. For a removal, write an empty `<slug>.md.delete` in that folder.
-3. Update the folder's `INDEX.md` with one Markdown link per entry, preserving
-   its other entries. Never write the generated root index or `MEMORY.md`.
+3. Keep `description` to one line: the generated index lists each entry by its
+   `name` and `description`.
 4. Return the result envelope. Set `outcome` to `implemented` when you wrote
    proposals, or `answered` when no changes are needed. List the files in
    `outputs.artifacts`. Do not file issues, push branches or post comments.

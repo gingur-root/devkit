@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, vi } from 'vite-plus/test';
 import { git } from '../git.ts';
-import { render } from '../memory/render.ts';
 import { type Job, revision } from './job.ts';
 import { PIPELINE_BOT } from './constants.ts';
 import { memoryChanges, memoryComment, publish, publishMemory } from './publish.ts';
@@ -51,8 +50,7 @@ function fixture() {
   git(root, ['init', '--bare', remote]);
   git(checkout, ['init', '-b', 'main']);
   mkdirSync(join(checkout, 'memory/_org'), { recursive: true });
-  writeFileSync(join(checkout, 'memory/_org/INDEX.md'), '# Org\n');
-  writeFileSync(join(checkout, 'memory/MEMORY.md'), render(join(checkout, 'memory')));
+  writeFileSync(join(checkout, 'memory/_org/.gitkeep'), '');
   git(checkout, ['add', '.']);
   git(checkout, ['commit', '-m', 'seed'], { name: 'Fixture', email: 'fixture@example.com' });
   git(checkout, ['remote', 'add', 'origin', remote]);
@@ -102,6 +100,7 @@ test('memory output refuses every path outside its slice and symlinks before app
     'other-repo/x.md',
     '_org/sub/x.md',
     'MEMORY.md',
+    '_org/INDEX.md',
     '_org/x.txt',
     '_org/../x.md',
   ]) {
@@ -164,7 +163,6 @@ test('valid memory becomes one pipeline PR from the pinned store, never main', a
   const f = fixture();
   try {
     f.put('_org/a.md', entry());
-    f.put('_org/INDEX.md', '- [a](a.md): A fact\n');
     await publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout);
     const posts = f.calls.filter((c) => c.method === 'POST');
     assert.equal(posts.length, 1);
@@ -181,16 +179,13 @@ test('valid memory becomes one pipeline PR from the pinned store, never main', a
   }
 });
 
-test('delete removes the entry and regenerates MEMORY.md', async () => {
+test('delete removes the entry and commits no generated index', async () => {
   const f = fixture();
   try {
     writeFileSync(join(f.checkout, 'memory/_org/a.md'), entry());
-    writeFileSync(join(f.checkout, 'memory/_org/INDEX.md'), '- [a](a.md): A fact\n');
-    writeFileSync(join(f.checkout, 'memory/MEMORY.md'), render(join(f.checkout, 'memory')));
     git(f.checkout, ['add', '.']);
     git(f.checkout, ['commit', '-m', 'entry'], { name: 'Fixture', email: 'fixture@example.com' });
     f.put('_org/a.md.delete', '');
-    f.put('_org/INDEX.md', '# Org\n');
     await publishMemory(
       { ...job, memory: git(f.checkout, ['rev-parse', 'HEAD']) },
       result,
@@ -198,10 +193,8 @@ test('delete removes the entry and regenerates MEMORY.md', async () => {
       f.checkout,
     );
     assert.equal(existsSync(join(f.checkout, 'memory/_org/a.md')), false);
-    assert.equal(
-      readFileSync(join(f.checkout, 'memory/MEMORY.md'), 'utf8'),
-      render(join(f.checkout, 'memory')),
-    );
+    assert.equal(existsSync(join(f.checkout, 'memory/MEMORY.md')), false);
+    assert.equal(existsSync(join(f.checkout, 'memory/_org/INDEX.md')), false);
   } finally {
     f.cleanup();
   }
@@ -211,9 +204,19 @@ test('empty and identical memory output open nothing', async () => {
   for (const identical of [false, true]) {
     const f = fixture();
     try {
-      if (identical) f.put('_org/INDEX.md', '# Org\n');
+      let memory = f.memory;
+      if (identical) {
+        writeFileSync(join(f.checkout, 'memory/_org/a.md'), entry());
+        git(f.checkout, ['add', '.']);
+        git(f.checkout, ['commit', '-m', 'entry'], {
+          name: 'Fixture',
+          email: 'fixture@example.com',
+        });
+        memory = git(f.checkout, ['rev-parse', 'HEAD']);
+        f.put('_org/a.md', entry());
+      }
       await publishMemory(
-        { ...job, memory: f.memory },
+        { ...job, memory },
         { ...result, outcome: identical ? 'implemented' : 'answered' },
         f.out,
         f.checkout,
@@ -230,7 +233,6 @@ test('a failed evidence check opens a draft containing the failure', async () =>
   const f = fixture();
   try {
     f.put('_org/a.md', entry('missing quote'));
-    f.put('_org/INDEX.md', '- [a](a.md): A fact\n');
     await publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout);
     const pr = f.calls.find((c) => c.method === 'POST')!;
     assert.equal(pr.body.draft, true);
@@ -248,8 +250,6 @@ test.each(['added', 'edited'])(
     try {
       if (kind === 'edited') {
         writeFileSync(join(f.checkout, 'memory/_org/a.md'), entry());
-        writeFileSync(join(f.checkout, 'memory/_org/INDEX.md'), '- [a](a.md): A fact\n');
-        writeFileSync(join(f.checkout, 'memory/MEMORY.md'), render(join(f.checkout, 'memory')));
         git(f.checkout, ['add', '.']);
         git(f.checkout, ['commit', '-m', 'entry'], {
           name: 'Fixture',
@@ -263,7 +263,6 @@ test.each(['added', 'edited'])(
           'quote: real evidence\n  - at: gingur-root/scratch:AGENTS.md\n    quote: missing quote',
         ),
       );
-      f.put('_org/INDEX.md', '- [a](a.md): A fact\n');
       await publishMemory(
         { ...job, memory: git(f.checkout, ['rev-parse', 'HEAD']) },
         result,
@@ -300,13 +299,9 @@ test('publish checks existing changed evidence and skips unrelated stored eviden
         entry('missing quote').replace('name: a', `name: ${name}`).replace('README.md', path),
       );
     }
-    const index = '- [a](a.md): A fact\n- [b](b.md): A fact\n';
-    writeFileSync(join(f.checkout, 'memory/_org/INDEX.md'), index);
-    writeFileSync(join(f.checkout, 'memory/MEMORY.md'), render(join(f.checkout, 'memory')));
     git(f.checkout, ['add', '.']);
     git(f.checkout, ['commit', '-m', 'entries'], { name: 'Fixture', email: 'fixture@example.com' });
     f.put('_org/c.md', entry().replace('name: a', 'name: c'));
-    f.put('_org/INDEX.md', `${index}- [c](c.md): A fact\n`);
     await publishMemory(
       { ...job, memory: git(f.checkout, ['rev-parse', 'HEAD']) },
       result,
@@ -375,7 +370,6 @@ test('publish binds memory to the recorded snapshot and uses only trusted change
       JSON.stringify({ ...output, inputs: { ...output.inputs, issue: 'different-snapshot' } }),
     );
     f.put('_org/a.md', entry());
-    f.put('_org/INDEX.md', '- [a](a.md): A fact\n');
     await assert.rejects(
       publish({ in: input, out: f.out, checkout: f.checkout }),
       /different job, issue revision or plan/,
@@ -443,7 +437,6 @@ test('updating an existing memory PR preserves one branch and sets the draft sta
   const f = fixture();
   try {
     f.put('_org/a.md', entry('missing quote'));
-    f.put('_org/INDEX.md', '- [a](a.md): A fact\n');
     const api = globalThis.fetch;
     const updates: { method: string; path: string; body: unknown }[] = [];
     vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {

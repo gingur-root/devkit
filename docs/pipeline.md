@@ -223,7 +223,8 @@ those files. It has no `GH_TOKEN`, web tools or Edit tool.
 The controller validates all proposed paths and requires evidence for every
 written entry before applying anything. It writes only `memory/_org/` and
 `memory/<repo>/` in a pipeline checkout at the recorded `job.memory` commit.
-It regenerates `MEMORY.md` and checks the changed evidence. A check failure
+It checks the changed evidence. Memory PRs carry entry files only: the index
+is generated from entry frontmatter, so open memory PRs never conflict on it. A check failure
 opens a draft with the check output; a passing check opens a ready PR.
 Changes go to `memory/<repo>-<pr>` on `gingur-root/pipeline`, with a PR into
 `main`. Nothing changes directly on `main`. No changes means no branch, PR

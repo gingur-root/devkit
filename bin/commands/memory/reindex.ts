@@ -2,7 +2,7 @@ import type { ParsedCommand } from '../../command.ts';
 
 export default {
   kind: 'parsed',
-  describe: 'Regenerate MEMORY.md from folder indexes',
+  describe: 'Write MEMORY.md (a local, uncommitted index) from entry frontmatter',
   configure(command) {
     command.requiredOption('--dir <dir>', 'memory directory');
   },
