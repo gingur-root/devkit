@@ -169,8 +169,8 @@ test('every render uses a separate pipeline-only contents: read token', () => {
     'agent.memory.yml#start',
     'agent.plan.yml#start',
     'agent.retro.yml#start',
-    'agent.review.yml#push',
-    'agent.review.yml#verdict',
+    'agent.round.yml#push',
+    'agent.round.yml#verdict',
   ]);
 });
 

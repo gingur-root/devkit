@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 import { git, gitBytes } from '../git.ts';
-import { EXECUTOR_ENV, type Executor, REPAIR_ROUNDS } from './constants.ts';
+import { EXECUTOR_ENV, type Executor } from './constants.ts';
 import {
   CANDIDATE_FILE,
   ISSUE_FILE,
@@ -37,6 +37,8 @@ import { ROLES, type RoleName } from './roles.ts';
 
 /** The cases' folder in the target repo. It is removed before any agent runs. */
 export const EVAL_DIR = 'eval';
+
+const EVAL_REPAIR_ROUNDS = 2;
 
 /** `eval/<case>/case.json`: what the plan should do with the issue. */
 const Case = z.object({ plan: z.enum(['ready', 'needs-input']) }).strict();
@@ -291,7 +293,7 @@ function runCase(
       score.missed = score.check === false;
       return finish(null);
     }
-    if (round >= REPAIR_ROUNDS || !repairable(review.result)) return finish(null);
+    if (round >= EVAL_REPAIR_ROUNDS || !repairable(review.result)) return finish(null);
 
     const repair = stage(
       'repair',

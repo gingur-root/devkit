@@ -353,7 +353,7 @@ test('repair maps cover every finding and support every dispute with evidence', 
 });
 
 test('the loop log round-trips its state and exposes failures and hypotheses', () => {
-  assert.deepEqual(readLoopState(null), { rounds: 2, failures: 0, entries: [] });
+  assert.deepEqual(readLoopState(null), { rounds: 10, failures: 0, entries: [] });
   const state: LoopState = {
     rounds: 2,
     failures: 2,

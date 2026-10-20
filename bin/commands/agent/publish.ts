@@ -1,3 +1,6 @@
+import { InvalidArgumentError } from 'commander';
+
+import { REPAIR_ROUNDS } from '../../agent/constants.ts';
 import type { PublishOptions } from '../../agent/publish.ts';
 import type { ParsedCommand } from '../../command.ts';
 
@@ -11,7 +14,12 @@ export default {
       .option('--out <dir>', "the agent's output directory ($AGENT_OUT)")
       .option('--checkout <dir>', "a build's target repo at the job's source, with push access")
       .option('--round <n>', "a review's repair round: 0 for the build's review", Number)
-      .option('--rounds <n>', 'the repair-round cap; default REPAIR_ROUNDS', Number)
+      .option('--rounds <n>', 'the repair-round cap; default REPAIR_ROUNDS', (value) => {
+        const rounds = Number(value);
+        if (!Number.isInteger(rounds) || rounds < 0 || rounds > REPAIR_ROUNDS)
+          throw new InvalidArgumentError(`--rounds must be an integer from 0 to ${REPAIR_ROUNDS}`);
+        return rounds;
+      })
       .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed")
       .option('--failed <json>', 'memory report: the calling jobs and results')
       .option('--repo <owner/name>', 'memory report: the merged PR repository')
