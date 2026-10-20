@@ -852,16 +852,21 @@ async function publishBuildOrPlan(
         job.role === 'repair'
           ? ((await openPull(job, branch)) ?? null)
           : await upsertPull(job, branch, v.result);
-      if (job.role === 'repair' && pull)
-        await replyChanges(job.repo, pull.number, v.result.changes ?? [], commit);
       // The review job's input.
       if (process.env.GITHUB_OUTPUT)
         appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${commit}\n`);
+      if (job.role === 'repair' && pull) {
+        try {
+          await replyChanges(job.repo, pull.number, v.result.changes ?? [], commit);
+        } catch (error) {
+          console.error('Posting repair thread replies failed; continuing to review.', error);
+        }
+      }
     } catch (error) {
       console.error(error);
       v = {
         stage: 'publish',
-        reason: 'publishing the change, PR or thread replies failed; see the run log',
+        reason: 'publishing the change or PR failed; see the run log',
       };
     }
   }
