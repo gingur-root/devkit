@@ -17,6 +17,7 @@ metadata:
 - Don't set up Gemini, Groq or OpenAI keys. Agents here use subscription logins only, never API keys.
 - The desk CPU crashes processes at random right now. If yt-dlp exits non-zero with no `HTTP Error` in its output, run the same command again.
 - The WhisperX fallback doesn't install on Linux, so a video with no captions gives frames only.
+- For screen recordings and talks, pass `--detail efficient`. The default `balanced` picks frames at scene changes, and a talking head over a terminal has few of them: on a 28-minute video it returned 14 frames bunched around two moments, where `efficient` spread 50 across the whole video.
 
 Run the bundled Python script. With the **gemini** engine (a `GEMINI_API_KEY` is configured) Google's video model watches the video and the report carries its timestamped answer for you to relay. With the **local** engine the script produces timestamped frames and a transcript; view the frames and answer from that evidence. Native captions come first; the chosen local or cloud backend is only a fallback. Transcript-only evidence cannot establish visual facts.
 
