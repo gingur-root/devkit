@@ -224,6 +224,8 @@ test('the gate binds every pass to the candidate and enforces the repair cap', (
   const gate: Gate = {
     candidate: 'new',
     head: 'new',
+    checks: {},
+    check: null,
     verified: 'new',
     review: { result: pass },
     round: 0,
@@ -415,6 +417,7 @@ test('the loop log round-trips its state and exposes failures and hypotheses', (
         candidate: 'abcdef123456',
         ci: 'red',
         review: 'changes-requested',
+        verify: null,
         replan: null,
         open: ['CI'],
         hypotheses: ['formatter failed'],
@@ -425,6 +428,7 @@ test('the loop log round-trips its state and exposes failures and hypotheses', (
         candidate: '123456abcdef',
         ci: 'green',
         review: 'changes-requested',
+        verify: null,
         replan: null,
         open: ['F1'],
         hypotheses: ['cause with --> inside'],
@@ -456,6 +460,7 @@ test('hypotheses cannot replace the loop state with an embedded marker', () => {
         candidate: 'abcdef123456',
         ci: 'red',
         review: 'changes-requested',
+        verify: null,
         replan: null,
         open: ['CI'],
         hypotheses: ['formatter failed'],
@@ -466,6 +471,7 @@ test('hypotheses cannot replace the loop state with an embedded marker', () => {
         candidate: '123456abcdef',
         ci: 'green',
         review: 'changes-requested',
+        verify: null,
         replan: null,
         open: ['F1'],
         hypotheses: [
@@ -1263,7 +1269,15 @@ test('questions with blocking findings become planner threads; questions alone s
   assert.deepEqual(result.questions, []);
   assert.equal(result.findings?.[1]?.id, 'Q1');
   assert.equal(result.findings?.[1]?.blocking, false);
-  const gate = { candidate: 'head', head: 'head', verified: 'head', round: 0, rounds: 10 };
+  const gate = {
+    checks: {},
+    check: null,
+    candidate: 'head',
+    head: 'head',
+    verified: 'head',
+    round: 0,
+    rounds: 10,
+  };
   assert.equal(nextStep({ ...gate, review: { result: review } }), 'repair');
   assert.equal(nextStep({ ...gate, review: { result: { ...review, findings: [] } } }), 'stop');
   assert.deepEqual(gated({ ...pass, questions: ['CI?'] }, 'head', '').questions, []);
@@ -1280,6 +1294,7 @@ test('spec, planner and cap stops expose the round, open threads and the suggest
         candidate: 'head',
         ci: null,
         review: null,
+        verify: null,
         replan: 'Fix the parser.',
         open: ['F1'],
         hypotheses: [],
@@ -1290,6 +1305,7 @@ test('spec, planner and cap stops expose the round, open threads and the suggest
         candidate: 'head',
         ci: null,
         review: null,
+        verify: null,
         replan: 'Use the supported API.',
         open: ['F1'],
         hypotheses: [],
@@ -1336,7 +1352,7 @@ test('replan publication replies, gates changes, preserves approval, and stops a
         revision: revision(CARD.title, CARD.body),
         bodySeen: true,
       },
-      plan: { revision: revision('approved plan'), criteria: ['A1'] },
+      plan: { revision: revision('approved plan'), criteria: ['A1'], checks: { A1: 'ci' } },
       source: 'candidate-head',
       candidate: 'candidate-head',
       base: 'original-base',

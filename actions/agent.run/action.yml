@@ -1,7 +1,7 @@
 name: 'Agent run'
 description: 'Run one agent role on the job file the controller rendered, and upload its result. Never writes to GitHub.'
 
-# Unpacks the target repo at the job's source commit (`<prefix>-repo`, packed by
+# Unpacks the target repo at the job's source commit (`pack` or `<prefix>-repo`, packed by
 # repo.pack in a job that holds the App token) into `repo/`, and checks devkit
 # out into `devkit/`, so the agent's working tree holds only the target repo. The
 # agent starts under `env -i`: with a shell it could otherwise read the job's
@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ''
   fixture:
-    description: 'The stub fixture: `ready`, `invalid`, `needs-you` or `rate-limit`.'
+    description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit` or `unverified`.'
     required: false
     default: 'ready'
   source:
@@ -35,6 +35,10 @@ inputs:
     description: 'The devkit ref to run.'
     required: false
     default: 'main'
+  pack:
+    description: 'An existing repo pack artifact to reuse. Empty: `<prefix>-repo`.'
+    required: false
+    default: ''
   prefix:
     description: "The artifacts' prefix: reads `<prefix>-in` and `<prefix>-repo`, uploads `<prefix>-out`. A run's later stages each need their own."
     required: false
@@ -46,7 +50,7 @@ runs:
     - id: pack
       uses: actions/download-artifact@v8
       with:
-        name: ${{ inputs.prefix }}-repo
+        name: ${{ inputs.pack || format('{0}-repo', inputs.prefix) }}
         path: ${{ runner.temp }}/pack
 
     # A self-hosted runner keeps the workspace between jobs.

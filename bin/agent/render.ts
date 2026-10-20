@@ -415,12 +415,13 @@ export async function render(options: RenderOptions): Promise<Job> {
     plan: approved && {
       revision: approved.contract.planRevision,
       criteria: Object.keys(approved.contract.checks),
+      checks: approved.contract.checks,
     },
     // A build works from the default branch as it is now, not the plan's older source.
     source,
     base,
     // A review checks out the candidate itself.
-    candidate: options.role === 'review' || options.role === 'replan' ? source : null,
+    candidate: ['review', 'replan', 'verify'].includes(options.role) ? source : null,
     memory: await memorySlice(options),
     // Publish reads this to hold a retro issue's plan to its triage.
     artifacts: retroPlan ? [ISSUES_FILE] : [],

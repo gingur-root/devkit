@@ -9,7 +9,8 @@
 // `followups` changes only the build, which proposes seven follow-ups, two over
 // the cap.
 // `crash` throws, `timeout` reports a timeout, and `missing` returns no result.
-// `changes` asks for repair until STUB.md matches the repair fixture; `never`
+// `changes` asks for repair until STUB.md matches the repair fixture.
+// `unverified` fails verification until repair rewrites STUB.md. `never`
 // always asks for repair; `advisory` passes with an inline advisory finding.
 
 import { appendFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
@@ -52,8 +53,8 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   }
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
   const repaired =
-    (fixture === 'changes' || fixture === 'spec') &&
-    job.role === 'review' &&
+    (((fixture === 'changes' || fixture === 'spec') && job.role === 'review') ||
+      (fixture === 'unverified' && job.role === 'verify')) &&
     existsSync(join(input.cwd, 'STUB.md')) &&
     readFileSync(join(input.cwd, 'STUB.md'), 'utf8') ===
       readFileSync(new URL('repair.md', FIXTURES), 'utf8');
@@ -89,6 +90,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   // A plan writes plan.md; a build or repair changes the checkout; a review or retro writes nothing.
   if (
     job.role !== 'review' &&
+    job.role !== 'verify' &&
     job.role !== 'retro' &&
     job.role !== 'memory' &&
     job.role !== 'replan'

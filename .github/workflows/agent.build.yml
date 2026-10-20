@@ -39,7 +39,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story` or `followups`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story`, `followups` or `unverified`.'
         type: string
         required: false
         default: 'ready'
@@ -225,6 +225,7 @@ jobs:
     outputs:
       candidate: ${{ steps.publish.outputs.candidate }}
       readToken: ${{ steps.read.outputs.sealed }}
+      criteria: ${{ steps.criteria.outputs.criteria }}
     steps:
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
@@ -289,7 +290,8 @@ jobs:
           repositories: pipeline
           permissionContents: read
 
-      - name: Render review
+      - id: criteria
+        name: Render review and verifier
         if: steps.publish.outputs.candidate != ''
         working-directory: devkit
         env:
@@ -303,7 +305,16 @@ jobs:
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role review --source "$CANDIDATE" \
             --base "$SOURCE" --app-id "$APP_ID" --out "$RUNNER_TEMP/review/in"
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role verify --source "$CANDIDATE" \
+            --base "$SOURCE" --app-id "$APP_ID" --out "$RUNNER_TEMP/verify/in"
+          echo "criteria=$(node -p 'Object.values(require(process.argv[1]).plan.checks).includes("agent")' "$RUNNER_TEMP/verify/in/job.json")" >>"$GITHUB_OUTPUT"
           cp "$RUNNER_TEMP/agent/out/candidate.patch" "$RUNNER_TEMP/review/in/"
+
+      - if: steps.publish.outputs.candidate != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: verify-0-in
+          path: ${{ runner.temp }}/verify/in
 
       - if: steps.publish.outputs.candidate != ''
         uses: actions/upload-artifact@v7
@@ -349,6 +360,7 @@ jobs:
       base: ${{ needs.start.outputs.base }}
       candidate: ${{ needs.publish.outputs.candidate }}
       readToken: ${{ needs.publish.outputs.readToken }}
+      criteria: ${{ needs.publish.outputs.criteria == 'true' }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
       PIPELINE_SECRETS_TOKEN: ${{ secrets.PIPELINE_SECRETS_TOKEN }}

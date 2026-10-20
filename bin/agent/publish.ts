@@ -89,6 +89,8 @@ export interface PublishOptions {
   rounds?: number;
   /** A review's round: the commit toolchain.verify passed on, or empty when it did not pass. */
   verified?: string;
+  verifierIn?: string;
+  verifierOut?: string;
   /** A memory run's failed jobs, encoded as the caller's toJSON(needs). */
   failed?: string;
   repo?: string;
@@ -123,6 +125,8 @@ export interface Gate {
   head: string;
   review: Verdict;
   verified: string;
+  checks: Record<string, string>;
+  check: Verdict | null;
   round: number;
   rounds: number;
 }
@@ -132,9 +136,69 @@ export function nextStep(gate: Gate): Step {
   if (gate.head !== gate.candidate || ('stage' in gate.review && gate.review.stage === 'stale'))
     return gate.round < gate.rounds ? 'rerun' : 'stop';
   if ('stage' in gate.review) return 'stop';
-  const result = gated(gate.review.result, gate.candidate || null, gate.verified);
+  const check = criterionVerdict(gate);
+  if (check.kind === 'stop')
+    return check.stage === 'stale' && gate.round < gate.rounds ? 'rerun' : 'stop';
+  const result = gated(
+    gate.review.result,
+    gate.candidate || null,
+    gate.verified,
+    check.kind === 'findings' ? check.findings : [],
+  );
   if (passes(result)) return 'ready';
   return repairable(result) && gate.round < gate.rounds ? 'repair' : 'stop';
+}
+
+/** Evidence comes from the verifier, while the IDs come from the approved plan. */
+export function criterionVerdict(
+  gate: Pick<Gate, 'checks' | 'check' | 'candidate'>,
+):
+  | { kind: 'verified' }
+  | { kind: 'findings'; findings: Finding[] }
+  | { kind: 'stop'; stage: string; reason: string } {
+  const ids = Object.keys(gate.checks).filter((id) => gate.checks[id] === 'agent');
+  if (!ids.length) return { kind: 'verified' };
+  const stop = (stage: string, reason: string) => ({
+    kind: 'stop' as const,
+    stage,
+    reason: `the verifier could not check ${ids.join(', ')}: ${reason}`,
+  });
+  if (gate.check === null) return stop('verify', 'the verifier did not run');
+  if ('stage' in gate.check) return stop(gate.check.stage, gate.check.reason);
+  const result = gate.check.result;
+  if (result.inputs.candidate !== gate.candidate)
+    return stop('stale', 'the verifier checked a different candidate');
+  const findings: Finding[] = ids.flatMap((id) => {
+    const entry = result.evidence.find((e) => e.criterion === id && e.result === 'fail');
+    return entry
+      ? [
+          {
+            id: `V-${id}`,
+            axis: 'spec',
+            blocking: true,
+            criterion: id,
+            path: null,
+            line: null,
+            evidence: entry.location,
+            scenario: entry.check,
+            impact: `Criterion ${id} fails on ${gate.candidate}.`,
+            fix: `Make ${id} pass: ${entry.expected}.`,
+          },
+        ]
+      : [];
+  });
+  if (findings.length) return { kind: 'findings', findings };
+  const missing = ids.filter((id) => {
+    const entries = result.evidence.filter((e) => e.criterion === id);
+    return !entries.length || entries.some((e) => e.result !== 'pass');
+  });
+  if (!missing.length && result.status === 'complete' && result.outcome === 'verified')
+    return { kind: 'verified' };
+  return {
+    kind: 'stop',
+    stage: 'verify',
+    reason: `the verifier could not check ${(missing.length ? missing : ids).join(', ')}: ${result.summary}`,
+  };
 }
 
 export function changedCriteria(
@@ -629,6 +693,7 @@ export interface LoopEntry {
   candidate: string;
   ci: 'green' | 'red' | null;
   review: string | null;
+  verify: string | null;
   replan: string | null;
   open: string[];
   hypotheses: string[];
@@ -649,7 +714,7 @@ export function loopComment(state: LoopState): string {
     `**Round ${round} of ${state.rounds} · ${state.failures} failures**`,
     ...state.entries.map(
       (e) =>
-        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
+        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; verify: ${e.verify ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
     ),
     `<!-- devkit:loop-state ${JSON.stringify(state).replace(/-->/g, '--\\u003e')} -->`,
   ].join('\n\n');
@@ -681,6 +746,7 @@ async function updateLoop(
     candidate: job.candidate ?? '',
     ci: null,
     review: null,
+    verify: null,
     replan: null,
     open: state.entries.at(-1)?.open ?? [],
     hypotheses: [],
@@ -798,12 +864,50 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   };
 }
 
-async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
+function readVerifier(job: Job, liveRevision: string, options: PublishOptions): Verdict | null {
+  if (
+    !Object.values(job.plan?.checks ?? {}).includes('agent') ||
+    !options.verifierIn ||
+    !options.verifierOut
+  )
+    return null;
+  const file = join(options.verifierIn, JOB_FILE);
+  if (!existsSync(file)) return { stage: 'verify', reason: 'the verifier job file is missing' };
+  const verifier = Job.parse(JSON.parse(readFileSync(file, 'utf8')));
+  if (
+    verifier.role !== 'verify' ||
+    verifier.repo !== job.repo ||
+    verifier.issue.number !== job.issue.number ||
+    verifier.issue.revision !== job.issue.revision ||
+    verifier.plan?.revision !== job.plan?.revision
+  )
+    return {
+      stage: 'contract',
+      reason: 'the verifier job is for a different role, repo, issue revision or plan',
+    };
+  if (verifier.candidate !== job.candidate)
+    return { stage: 'stale', reason: 'the verifier job is for a different candidate' };
+  return verdict(verifier, liveRevision, options.verifierOut);
+}
+
+async function publishReview(
+  job: Job,
+  v: Verdict,
+  options: PublishOptions,
+  check: Verdict | null,
+): Promise<Outcome> {
   const pull = await openPull(job, branchOf(job));
   if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
   else if (pull.head.sha !== job.candidate)
     v = { stage: 'stale', reason: 'the PR has a newer commit than the one reviewed' };
+  const criteria = criterionVerdict({
+    checks: job.plan?.checks ?? {},
+    check,
+    candidate: job.candidate ?? '',
+  });
   const step = nextStep({
+    checks: job.plan?.checks ?? {},
+    check,
     candidate: job.candidate ?? '',
     head: pull?.head.sha ?? job.candidate ?? '',
     review: v,
@@ -815,13 +919,31 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
     appendFileSync(process.env.GITHUB_OUTPUT, `next=${step}\n`);
     if (step === 'repair') appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
   }
-  const result = 'result' in v ? gated(v.result, job.candidate, options.verified ?? '') : null;
+  const result =
+    'result' in v
+      ? gated(
+          v.result,
+          job.candidate,
+          options.verified ?? '',
+          criteria.kind === 'findings' ? criteria.findings : [],
+        )
+      : null;
+  if ('result' in v && criteria.kind === 'stop')
+    v = { stage: criteria.stage, reason: criteria.reason };
   const log =
     pull &&
     (await updateLoop(job, pull, options, {
       ci: options.verified === job.candidate ? 'green' : 'red',
       review: result?.outcome ?? ('stage' in v ? v.stage : null),
-      ...(result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
+      verify: !Object.values(job.plan?.checks ?? {}).includes('agent')
+        ? 'skipped'
+        : check && 'result' in check
+          ? check.result.outcome
+          : check && 'stage' in check
+            ? check.stage
+            : 'missing',
+      ...('result' in v &&
+        result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
       step,
     }));
   if (step === 'rerun' && pull && 'stage' in v) {
@@ -863,7 +985,12 @@ export const CI_FINDING = 'CI';
  * itself (devkit#9). Otherwise it carries a blocking CI finding for the repair,
  * so a pass from an earlier or failed verify never reaches Ready.
  */
-export function gated(result: Result, candidate: string | null, verified: string): Result {
+export function gated(
+  result: Result,
+  candidate: string | null,
+  verified: string,
+  extra: Finding[] = [],
+): Result {
   const green = candidate !== null && verified === candidate;
   const finding = {
     id: CI_FINDING,
@@ -877,9 +1004,13 @@ export function gated(result: Result, candidate: string | null, verified: string
     impact: 'CI is red on this commit, so it is not safe to merge.',
     fix: 'Run the failing check from the run log locally and make it pass.',
   } as const;
-  const findings: Finding[] = [...(result.findings ?? []), ...(!green ? [finding] : [])];
+  const findings: Finding[] = [
+    ...(result.findings ?? []).filter((f) => !extra.some((check) => check.id === f.id)),
+    ...extra,
+    ...(!green ? [finding] : []),
+  ];
   if (!findings.some((f) => f.blocking) || result.questions.length === 0)
-    return green
+    return green && !extra.length
       ? result
       : {
           ...result,
@@ -1494,9 +1625,13 @@ export async function publish(options: PublishOptions): Promise<void> {
   // A ready plan a dashboard Continue started goes straight to its build (devkit#99), unless it is a story.
   const handoff =
     ready && !subtasks.length ? armedContinue(await readSteps(job.repo, job.issue.number)) : null;
+  const check =
+    job.role === 'review'
+      ? readVerifier(job, revision(issue.title, issue.body ?? ''), options)
+      : null;
   const outcome =
     job.role === 'review'
-      ? await publishReview(job, v, options)
+      ? await publishReview(job, v, options, check)
       : job.role === 'replan'
         ? await publishReplan(job, v, options)
         : await publishBuildOrPlan(
