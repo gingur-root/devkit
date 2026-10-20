@@ -89,6 +89,19 @@ export const ROLES = {
     maxTurns: 100,
     result: true,
   },
+  memory: {
+    executor: 'claude',
+    model: 'claude-sonnet-5-5',
+    effort: 'medium',
+    objective:
+      'Propose the memory changes this merged PR implies, as files for a PR on gingur-root/pipeline.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/memory.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
+    web: false,
+    timeoutMinutes: 20,
+    maxTurns: 50,
+    result: true,
+  },
   retro: {
     // devkit#39: reads a failed or Needs-you run and only suggests fixes, so it
     // gets no edit tools; publish posts its one comment.
