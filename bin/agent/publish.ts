@@ -873,7 +873,18 @@ function readVerifier(job: Job, liveRevision: string, options: PublishOptions): 
     return null;
   const file = join(options.verifierIn, JOB_FILE);
   if (!existsSync(file)) return { stage: 'verify', reason: 'the verifier job file is missing' };
-  const verifier = Job.parse(JSON.parse(readFileSync(file, 'utf8')));
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return { stage: 'contract', reason: `the verifier ${JOB_FILE} is not JSON` };
+  }
+  const parsed = Job.safeParse(json);
+  if (!parsed.success) {
+    console.error(parsed.error.message);
+    return { stage: 'contract', reason: `the verifier ${JOB_FILE} does not match the job schema` };
+  }
+  const verifier = parsed.data;
   if (
     verifier.role !== 'verify' ||
     verifier.repo !== job.repo ||
@@ -955,6 +966,18 @@ async function publishReview(
       stopped: false,
     };
   }
+  // A verifier stop must not hide review findings or clear earlier threads.
+  if ('stage' in v && v.stage !== 'stale' && result && pull && log)
+    await postReview(
+      job,
+      result,
+      pull,
+      options,
+      step,
+      log.html_url,
+      readLoopState(log.body),
+      false,
+    );
   if ('stage' in v)
     return {
       body: [
@@ -974,7 +997,16 @@ async function publishReview(
     };
   // The repair answers the gated review; result.json stays the reviewer's own.
   writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
-  return postReview(job, result!, pull!, options, step, log!.html_url, readLoopState(log!.body));
+  return postReview(
+    job,
+    result!,
+    pull!,
+    options,
+    step,
+    log!.html_url,
+    readLoopState(log!.body),
+    true,
+  );
 }
 
 /** The finding a review gets when CI did not pass on the commit it reviewed. */
@@ -1065,6 +1097,7 @@ async function postReview(
   step: Step,
   logUrl: string,
   state: LoopState,
+  resolve: boolean,
 ): Promise<Outcome> {
   const round = options.round ?? 0;
   const rounds = options.rounds ?? REPAIR_ROUNDS;
@@ -1087,7 +1120,7 @@ async function postReview(
     });
   for (const { thread, finding } of actions.reply)
     await replyThread(thread.node, findingText(finding));
-  if (result.outcome === 'pass' || result.outcome === 'changes-requested')
+  if (resolve && (result.outcome === 'pass' || result.outcome === 'changes-requested'))
     for (const thread of actions.resolve)
       await graphql('mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}', {
         id: thread.node,

@@ -130,6 +130,7 @@ function harness() {
       checks?: Record<string, string>;
       verifier?: Result | null;
       verifierJob?: Partial<Job>;
+      verifierJobText?: string;
     } = {},
   ) {
     const dir = join(root, String(calls++));
@@ -180,7 +181,10 @@ function harness() {
     if (options.verifier) {
       mkdirSync(verifierDir);
       const verifierJob = { ...job, role: 'verify', ...options.verifierJob };
-      writeFileSync(join(verifierDir, JOB_FILE), JSON.stringify(verifierJob));
+      writeFileSync(
+        join(verifierDir, JOB_FILE),
+        options.verifierJobText ?? JSON.stringify(verifierJob),
+      );
       writeFileSync(
         join(verifierDir, RESULT_FILE),
         JSON.stringify({
@@ -621,4 +625,45 @@ test('a verifier stop retains the last judged open IDs in the loop log', async (
   await h.stage(ready, 1, { checks: { A1: 'agent' }, verifier: null });
   assert.deepEqual(readLoopState(h.comments[0]!.body).entries.at(-1)?.open, ['V-A1']);
   assert.equal(h.threads[0]!.isResolved, false);
+});
+
+test('a verifier stop posts the current review findings and links their IDs without clearing prior threads', async () => {
+  for (const verifier of [null, { ...ready, outcome: 'inconclusive' as const }]) {
+    const h = harness();
+    h.threads.push(newThread('<!-- devkit:finding V-A1 -->', 'STUB.md', 1, 1));
+    const { output } = await h.stage(changes, 0, { checks: { A1: 'agent' }, verifier });
+    assert.match(output, /next=stop/);
+    assert.equal(h.writes.filter((w) => w.path.endsWith('/reviews')).length, 1);
+    assert.equal(h.threads.length, 2);
+    assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding F1 -->/);
+    assert.equal(h.threads[0]!.isResolved, false);
+    const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+    assert.match(String(comment.body.body), /verifier.*A1/);
+    assert.ok(
+      String(comment.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-2)'),
+    );
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.ok(
+      !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+    );
+  }
+});
+
+test('a malformed verifier job stops at contract and moves the card to Needs you', async () => {
+  for (const verifierJobText of ['{}', '{']) {
+    const h = harness();
+    const { output } = await h.stage(ready, 0, {
+      checks: { A1: 'agent' },
+      verifier: { ...ready, outcome: 'verified' },
+      verifierJobText,
+    });
+    assert.match(output, /next=stop/);
+    const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+    assert.match(String(comment.body.body), /stopped at `contract`/);
+    assert.match(String(comment.body.body), /verifier.*A1.*job.json/);
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.ok(
+      !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+    );
+  }
 });
