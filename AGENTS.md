@@ -26,6 +26,12 @@ These override anything below that conflicts with them.
   says where it stopped on its card, or says "unknown" rather than guessing,
   and moves it to Needs you. A merged change that isn't running yet counts
   too: say when a merge is not live (devkit#113, #157, #164).
+- **Checks are honest.** A plan's checks must be runnable by the stage
+  that owns them. A check that needs live access goes to CI or is named
+  as an operator or post-merge check. A check compares against a real
+  reference (the base commit's output, the env the caller really builds),
+  never the candidate's own output or inputs the builder made up
+  (devkit#220, #169, #189).
 - **A gate binds to what it judged.** Plan approval, critique and review hold
   only for the plan revision, the issue text the stage actually saw, and the
   commits it checked. Any change makes the result stale (devkit#168).
@@ -47,6 +53,14 @@ These override anything below that conflicts with them.
   rewires a part of the pipeline (a workflow, a stage, a runner, a credential)
   updates infra's `docs/architecture.excalidraw.svg` in a companion infra PR.
   How to edit it is in infra's `AGENTS.md`.
+  A run commits only to its own repo. An agent meets this rule by proposing
+  `Update infra architecture diagram for #<card>` (the card's number) in
+  `followups`, unless a follow-ups comment on the card already lists a diagram
+  follow-up for that card. The body names what changed (workflow, stage, runner
+  or credential) and the edit steps: open `docs/architecture.excalidraw.svg`
+  at excalidraw.com and export SVG with **Embed scene** on. Publish files the
+  follow-up in this repo and links it from the card. This requirement is never
+  a question or a blocking finding.
 
 ## Naming
 

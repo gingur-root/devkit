@@ -71,7 +71,7 @@ test('a rerun skips repair and publish but prepares the input candidate for revi
   assert.ok(admits(jobs.push.if));
   assert.ok(
     jobs.push.if.endsWith(
-      "&& inputs.round > 0 && (needs.repair.result != 'skipped' || inputs.rerun)",
+      "&& inputs.round > 0 && (needs.repair.result != 'skipped' || inputs.rerun) }}",
     ),
   );
   assert.equal(
@@ -149,6 +149,21 @@ function workflowJobs(): [string, Record<string, Job>][] {
         .jobs ?? {},
     ]);
 }
+
+test('cancelled runs skip publishing agent output', () => {
+  const jobsByWorkflow = new Map(workflowJobs());
+  for (const [file, id] of [
+    ['agent.build.yml', 'publish'],
+    ['agent.plan.yml', 'publish'],
+    ['agent.round.yml', 'push'],
+  ] as const) {
+    const condition = jobsByWorkflow.get(file)?.[id]?.if;
+    const where = `${file}#${id}`;
+    assert.ok(typeof condition === 'string', `${where} needs a condition`);
+    assert.match(condition, /!cancelled\(\)/, where);
+    assert.doesNotMatch(condition, /always\(\)/, where);
+  }
+});
 
 const STATUS_FN = /\b(always|cancelled|failure)\(\)/;
 

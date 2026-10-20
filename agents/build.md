@@ -13,6 +13,9 @@ Implement the supplied approved issue and plan in the assigned worktree.
    it fail for the intended reason before applying the fix. For mechanical
    edits or docs, use the relevant existing checks rather than manufacturing
    tests that restate the edit.
+   Check a 'still works as before' criterion by running or rendering the same
+   input at the base commit and at the candidate, then diffing the two.
+   Asserting the candidate's own output does not count.
 
 3. For debugging, first establish a runnable reproduction of the reported
    symptom. Minimize it, test falsifiable hypotheses, then apply the smallest
@@ -50,8 +53,13 @@ Implement the supplied approved issue and plan in the assigned worktree.
   pass. Otherwise `status` is `blocked` or `failed`, with the reason in
   `summary` and any question in `questions`.
 - A check that needs access you don't have (the App token, a live pipeline or
-  scratch run) is the reviewer's or operator's. It doesn't block
+  scratch run) is the reviewer's or operator's. This includes every
+  `operator` criterion. It doesn't block
   you: record it in `evidence` as `not-verified`, with why, and still return
   `implemented` when every check you can run passes. Blocking throws your
   change away.
 - The summary opens the pull request, so lead with what changed.
+- When the diff adds, removes or rewires a workflow, stage, runner or
+  credential (`.github/workflows/`, `actions/` or credential handling), propose
+  the diagram follow-up per `AGENTS.md`, unless a follow-ups comment on the
+  card already lists one for this card.
