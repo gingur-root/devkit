@@ -14,6 +14,7 @@ import {
   CANDIDATE_FILE,
   JOB_FILE,
   type Job,
+  marker,
   RESULT_FILE,
   REVIEW_FILE,
   THREADS_FILE,
@@ -195,6 +196,7 @@ function harness(
       rounds?: number;
       candidate?: string;
       jobCandidate?: string;
+      source?: string;
       review?: Result;
       checks?: Record<string, string>;
       verifier?: Result | null;
@@ -220,7 +222,7 @@ function harness(
       plan: options.checks
         ? { revision: 'approved', criteria: Object.keys(options.checks), checks: options.checks }
         : null,
-      source: pull.head.sha,
+      source: options.source ?? pull.head.sha,
       base: 'base',
       candidate: options.jobCandidate ?? pull.head.sha,
       memory: null,
@@ -324,6 +326,7 @@ test('publish carries repair hypotheses into the same-round review and upserts o
   assert.deepEqual(state.entries[1], {
     round: 1,
     candidate: 'repaired',
+    failure: null,
     ci: 'green',
     review: 'pass',
     verify: 'skipped',
@@ -1096,4 +1099,76 @@ test('missing research artifacts stop at validation and still remove the label',
   assert.match(h.researchComments[0]!.body!, /add `agent:research`/);
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
   assert.ok(h.writes.some((w) => w.path.endsWith('/labels/agent%3Aresearch')));
+});
+
+test('a repair drops its patch and reviews the newer PR head without replies or a push', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const before = h.writes.length;
+  const result = await h.stage(
+    { ...repair, changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }] },
+    1,
+    { review: changes, source: 'older-head' },
+  );
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+  assert.equal(result.output, 'candidate=candidate\n');
+  assert.equal(h.threads[0]!.comments.nodes.length, 1);
+  const state = readLoopState(h.comments[0]!.body);
+  assert.equal(state.entries.at(-1)?.candidate, 'candidate');
+  assert.equal(state.entries.at(-1)?.step, null);
+  assert.equal(state.entries.at(-1)?.failure, null);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Building');
+  const body = h.writes.slice(before).find((w) => w.path.endsWith('/issues/1/comments'))?.body.body;
+  assert.ok(String(body).startsWith(marker('repair')));
+  assert.match(String(body), /repair.*dropped/i);
+  assert.match(String(body), /`candida`/);
+});
+
+test('review and repair log failure classes and clear them on a successful same-round write', async () => {
+  const h = harness();
+  await h.stage(
+    { ...ready, status: 'failed', outcome: null, failure: { class: 'rate_limit', resetsAt: null } },
+    6,
+  );
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'rate_limit');
+  assert.match(h.comments[0]!.body!, /stopped: rate_limit/);
+  await h.stage(changes, 6);
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, null);
+  await h.stage(
+    {
+      ...repair,
+      status: 'failed',
+      outcome: null,
+      failure: { class: 'overloaded', resetsAt: null },
+    },
+    6,
+  );
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'overloaded');
+  await h.stage(
+    { ...repair, changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }] },
+    6,
+    { review: changes },
+  );
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, null);
+});
+
+test('a verifier failure is logged when the reviewer has no failure class', async () => {
+  const h = harness();
+  await h.stage(ready, 6, {
+    checks: { A1: 'agent' },
+    verifier: {
+      ...ready,
+      role: 'verify',
+      status: 'failed',
+      outcome: null,
+      failure: { class: 'timeout', resetsAt: null },
+    },
+  });
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'timeout');
+  await h.stage({ ...ready, failure: { class: 'server_error', resetsAt: null } }, 6, {
+    checks: { A1: 'agent' },
+    verifier: { ...ready, role: 'verify', failure: { class: 'timeout', resetsAt: null } },
+  });
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'server_error');
 });

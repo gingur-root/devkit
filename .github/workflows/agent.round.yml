@@ -121,7 +121,7 @@ jobs:
   gate:
     name: Gate
     needs: replan
-    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun
+    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
@@ -350,6 +350,7 @@ jobs:
             --base "$BASE" --app-id "$APP_ID" --out "$RUNNER_TEMP/verify/in"
           echo "criteria=$(node -p 'Object.values(require(process.argv[1]).plan.checks).includes("agent")' "$RUNNER_TEMP/verify/in/job.json")" >>"$GITHUB_OUTPUT"
           git -C "$GITHUB_WORKSPACE/repo" fetch --depth=1 origin "$BASE"
+          git -C "$GITHUB_WORKSPACE/repo" fetch --depth=1 origin "$CANDIDATE"
           git -C "$GITHUB_WORKSPACE/repo" diff --binary "$BASE" "$CANDIDATE" >"$RUNNER_TEMP/review/in/candidate.patch"
 
       - if: steps.publish.outputs.candidate != '' || inputs.rerun
