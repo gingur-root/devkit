@@ -11,7 +11,7 @@ import { setStatus } from './board.ts';
 import { PIPELINE_BOT } from './constants.ts';
 import { type Comment } from './github.ts';
 import { CANDIDATE_FILE, JOB_FILE, type Job, RESULT_FILE, REVIEW_FILE, revision } from './job.ts';
-import { publish, readLoopState } from './publish.ts';
+import { loopComment, publish, readLoopState } from './publish.ts';
 import { Result } from './result.ts';
 
 vi.mock('./board.ts', () => ({ setStatus: vi.fn(), proposePriority: vi.fn() }));
@@ -96,7 +96,7 @@ function harness() {
         id: comments.length + 10,
         html_url: `${pull.html_url}#issuecomment-${comments.length + 10}`,
         body: body.body,
-        user: { type: 'Bot', id: 3 },
+        user: { type: 'Bot', id: PIPELINE_BOT.id },
       };
       comments.push(comment);
       result = comment;
@@ -216,6 +216,7 @@ test('publish carries repair hypotheses into the same-round review and upserts o
     candidate: 'repaired',
     ci: 'green',
     review: 'pass',
+    replan: null,
     open: [],
     hypotheses: ['stub hypothesis'],
     step: 'ready',
@@ -470,4 +471,38 @@ test('a review stage failure names its round and links the existing open thread 
   assert.ok(String(stop.body.body).includes(h.comments[0]!.html_url));
   assert.ok(!writes.some((w) => w.path.endsWith('/reviews')));
   assert.equal(h.threads[0]!.isResolved, false);
+});
+
+test('the cap publication links open threads and includes the latest planner suggestion', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const state = readLoopState(h.comments[0]!.body);
+  state.entries[0]!.replan = 'Use the supported API.';
+  h.comments[0]!.body = loopComment(state);
+  const capped = await h.stage(changes, 10, { rounds: 10 });
+  assert.match(capped.output, /next=stop/);
+  const body = String(
+    h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!.body.body,
+  );
+  assert.match(body, /hasn't converged after 10 rounds/);
+  assert.match(body, /Agents' suggestion: Use the supported API/);
+  assert.match(body, /round 10/);
+  assert.match(body, /\[F1\]\(https:\/\/github.com\/o\/r\/pull\/2#discussion-1\)/);
+});
+
+test('publication threads questions alongside findings and stops a question-only review', async () => {
+  const h = harness();
+  const review = { ...changes, questions: ['Which API?'] };
+  const first = await h.stage(review, 0);
+  assert.match(first.output, /next=repair/);
+  assert.equal(h.threads.length, 2);
+  assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding Q1 -->/);
+  const gatedReview = JSON.parse(readFileSync(join(first.dir, REVIEW_FILE), 'utf8'));
+  assert.deepEqual(gatedReview.questions, []);
+  assert.deepEqual(
+    gatedReview.findings.map((f: { id: string }) => f.id),
+    ['F1', 'Q1'],
+  );
+  const second = await h.stage({ ...review, findings: [] }, 1);
+  assert.match(second.output, /next=stop/);
 });

@@ -19,7 +19,7 @@ type Step = {
 };
 type Job = { permissions?: unknown; steps?: Step[] };
 
-const READ_ROLES = ['plan', 'build', 'review', 'repair'];
+const READ_ROLES = ['plan', 'build', 'review', 'repair', 'replan'];
 
 function load(url: URL): { jobs?: Record<string, Job>; runs?: { steps?: Step[] } } {
   return parse(readFileSync(url, 'utf8'));
@@ -169,6 +169,7 @@ test('every render uses a separate pipeline-only contents: read token', () => {
     'agent.memory.yml#start',
     'agent.plan.yml#start',
     'agent.retro.yml#start',
+    'agent.round.yml#gate',
     'agent.round.yml#push',
     'agent.round.yml#verdict',
   ]);

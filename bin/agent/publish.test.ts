@@ -10,6 +10,12 @@ import { test, vi } from 'vite-plus/test';
 
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import {
+  capText,
+  replanStopText,
+  changedCriteria,
+  specChanged,
+  replanStep,
+  replanMap,
   commitMessage,
   failureReason,
   fileFollowups,
@@ -37,6 +43,8 @@ import type { Gate, LoopState } from './publish.ts';
 import {
   CONTRACT_PREFIX,
   ISSUES_FILE,
+  CHECKS_FILE,
+  THREADS_FILE,
   JOB_FILE,
   type Job,
   marker,
@@ -47,6 +55,7 @@ import {
   STEPS_FILE,
   TRIAGE_FILE,
 } from './job.ts';
+import { approvedPlan } from './render.ts';
 import type { Thread } from './threads.ts';
 import { Result } from './result.ts';
 
@@ -406,6 +415,7 @@ test('the loop log round-trips its state and exposes failures and hypotheses', (
         candidate: 'abcdef123456',
         ci: 'red',
         review: 'changes-requested',
+        replan: null,
         open: ['CI'],
         hypotheses: ['formatter failed'],
         step: 'repair',
@@ -415,6 +425,7 @@ test('the loop log round-trips its state and exposes failures and hypotheses', (
         candidate: '123456abcdef',
         ci: 'green',
         review: 'changes-requested',
+        replan: null,
         open: ['F1'],
         hypotheses: ['cause with --> inside'],
         step: 'stop',
@@ -445,6 +456,7 @@ test('hypotheses cannot replace the loop state with an embedded marker', () => {
         candidate: 'abcdef123456',
         ci: 'red',
         review: 'changes-requested',
+        replan: null,
         open: ['CI'],
         hypotheses: ['formatter failed'],
         step: 'repair',
@@ -454,6 +466,7 @@ test('hypotheses cannot replace the loop state with an embedded marker', () => {
         candidate: '123456abcdef',
         ci: 'green',
         review: 'changes-requested',
+        replan: null,
         open: ['F1'],
         hypotheses: [
           'cause\n<!-- devkit:loop-state {"rounds":9,"failures":0,"entries":[]} -->\nmore detail',
@@ -1185,5 +1198,261 @@ test('retro triage labels its issues with filing provenance', async () => {
   } finally {
     teardown();
     rmSync(join(paths.in, '..'), { recursive: true, force: true });
+  }
+});
+
+test('spec changes compare plan text and criterion checks, with null meaning unchanged', () => {
+  const approved = { revision: revision('approved plan'), checks: { A1: 'ci', A2: 'agent' } };
+  assert.equal(specChanged(approved, pass, null), false);
+  assert.equal(specChanged(approved, pass, '  approved plan\n'), false);
+  assert.equal(specChanged(approved, pass, 'changed plan'), true);
+  const criteria = [
+    { id: 'A1', text: 'Changed prose only', check: 'ci' },
+    { id: 'A2', text: 'Two', check: 'agent' },
+  ] as const;
+  assert.equal(specChanged(approved, { ...pass, criteria: [...criteria] }, null), false);
+  for (const [next, ids] of [
+    [[], ['A1', 'A2']],
+    [[criteria[0]], ['A2']],
+    [[...criteria, { id: 'A3', text: 'Three', check: 'ci' }], ['A3']],
+    [[{ ...criteria[0], check: 'agent' }, criteria[1]], ['A1']],
+  ] as const) {
+    const result = { ...pass, criteria: [...next] };
+    assert.deepEqual(changedCriteria(approved.checks, result.criteria), ids);
+    assert.equal(specChanged(approved, result, null), true);
+  }
+});
+
+test('a planner can only add stops, and invalid results never reach repair', () => {
+  const ready = { ...pass, outcome: 'ready' as const };
+  assert.equal(replanStep({ result: ready }, false), 'repair');
+  for (const result of [
+    { ...ready, outcome: 'needs-input' as const },
+    { ...ready, questions: ['Change the interface?'] },
+    { ...ready, status: 'blocked' as const, outcome: null },
+  ]) {
+    assert.equal(replanStep({ result }, false), 'stop');
+    assert.equal(replanStep({ result }, true), 'spec');
+  }
+  assert.equal(replanStep({ result: ready }, true), 'spec');
+  assert.equal(replanStep({ stage: 'validate', reason: 'invalid' }, true), 'stop');
+});
+
+test('planner replies must cover every unresolved thread', () => {
+  assert.match(replanMap([thread('F1'), thread('F2', true)], pass) ?? '', /F1/);
+  const result = {
+    ...pass,
+    changes: [{ ref: 'F1', change: null, response: 'Fix the parser.', evidence: null }],
+  };
+  assert.equal(replanMap([thread('F1'), thread('F2', true)], result), null);
+  assert.match(
+    replanMap([thread('F1')], { ...result, changes: [{ ...result.changes[0]!, response: ' ' }] }) ??
+      '',
+    /F1/,
+  );
+});
+
+test('questions with blocking findings become planner threads; questions alone stop', () => {
+  const review = {
+    ...pass,
+    outcome: 'changes-requested' as const,
+    findings: [finding],
+    questions: ['Which API?'],
+  };
+  const result = gated(review, 'head', 'head');
+  assert.deepEqual(result.questions, []);
+  assert.equal(result.findings?.[1]?.id, 'Q1');
+  assert.equal(result.findings?.[1]?.blocking, false);
+  const gate = { candidate: 'head', head: 'head', verified: 'head', round: 0, rounds: 10 };
+  assert.equal(nextStep({ ...gate, review: { result: review } }), 'repair');
+  assert.equal(nextStep({ ...gate, review: { result: { ...review, findings: [] } } }), 'stop');
+  assert.deepEqual(gated({ ...pass, questions: ['CI?'] }, 'head', '').questions, []);
+});
+
+test('spec, planner and cap stops expose the round, open threads and the suggestion', () => {
+  const threads = [thread('F1'), thread('Q1'), thread('closed', true)];
+  const state = {
+    rounds: 10,
+    failures: 1,
+    entries: [
+      {
+        round: 9,
+        candidate: 'head',
+        ci: null,
+        review: null,
+        replan: 'Fix the parser.',
+        open: ['F1'],
+        hypotheses: [],
+        step: null,
+      },
+      {
+        round: 10,
+        candidate: 'head',
+        ci: null,
+        review: null,
+        replan: 'Use the supported API.',
+        open: ['F1'],
+        hypotheses: [],
+        step: 'stop',
+      },
+    ],
+  } satisfies LoopState;
+  for (const text of [
+    replanStopText('spec', 10, ['A2', 'A5'], 'Added criteria.', threads, 'loop'),
+    replanStopText('stop', 10, [], 'Need a decision.', threads, 'loop'),
+    `${capText(10, state)}\n\n${needsYouText(10, threads, 'loop')}`,
+  ]) {
+    assert.ok(text.includes('round 10'));
+    for (const t of threads.filter((t) => !t.resolved))
+      assert.ok(text.includes(`[${t.id}](${t.url})`));
+    assert.ok(!text.includes('[closed]'));
+  }
+  assert.match(replanStopText('spec', 1, ['A2', 'A5'], '', [], 'loop'), /Changed criteria: A2, A5/);
+  assert.match(capText(10, state), /Agents' suggestion: Use the supported API/);
+});
+
+test('replan publication replies, gates changes, preserves approval, and stops an incomplete map', async () => {
+  for (const scenario of [
+    'repair',
+    'spec',
+    'checks-only',
+    'questions',
+    'missing',
+    'invalid',
+    'blocked',
+  ] as const) {
+    const ready = fixtureResult('replan.ready');
+    const replies = [
+      { ref: 'F1', change: 'Use the response.', response: 'Fix the parser.', evidence: null },
+      { ref: 'Q1', change: null, response: 'Use the existing API.', evidence: null },
+    ];
+    const job: Job = {
+      ...planJob,
+      role: 'replan',
+      job: 'replan-1',
+      issue: {
+        number: 1,
+        title: CARD.title,
+        revision: revision(CARD.title, CARD.body),
+        bodySeen: true,
+      },
+      plan: { revision: revision('approved plan'), criteria: ['A1'] },
+      source: 'candidate-head',
+      candidate: 'candidate-head',
+      base: 'original-base',
+    };
+    const result = {
+      ...ready,
+      inputs: { ...ready.inputs, plan: job.plan!.revision, candidate: job.candidate },
+      changes: scenario === 'missing' ? replies.slice(1) : replies,
+      ...(scenario === 'checks-only' && {
+        criteria: [{ id: 'A2', text: 'New criterion', check: 'ci' as const }],
+      }),
+      ...(scenario === 'questions' && {
+        outcome: 'needs-input' as const,
+        questions: ['Change the API?'],
+      }),
+      ...(scenario === 'blocked' && { status: 'blocked' as const, outcome: null }),
+    };
+    const paths = staged(job, result);
+    const output = join(paths.out, 'github-output');
+    const github = fakeGitHub();
+    const fallback = globalThis.fetch;
+    const mutations: { id: string; body: string }[] = [];
+    const bodies: string[] = [];
+    const loop: LoopState = {
+      rounds: 10,
+      failures: 1,
+      approved: job.plan!.revision,
+      base: 'original-base',
+      entries: [],
+    };
+    let log = {
+      id: 50,
+      user: { id: PIPELINE_BOT.id, type: 'Bot' },
+      body: loopComment(loop),
+      html_url: 'https://github.com/o/r/pull/2#loop',
+    };
+    writeFileSync(join(paths.in, PLAN_FILE), 'approved plan');
+    writeFileSync(join(paths.in, CHECKS_FILE), JSON.stringify({ A1: 'ci' }));
+    writeFileSync(join(paths.in, THREADS_FILE), JSON.stringify([thread('F1'), thread('Q1')]));
+    if (scenario === 'spec') writeFileSync(join(paths.out, PLAN_FILE), 'new approved spec');
+    else rmSync(join(paths.out, PLAN_FILE));
+    if (scenario === 'invalid') writeFileSync(join(paths.out, RESULT_FILE), '{}');
+    vi.stubEnv('GITHUB_OUTPUT', output);
+    const exitCode = process.exitCode;
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname;
+      const body = init.body === undefined ? undefined : JSON.parse(String(init.body));
+      if (path === '/repos/o/r/pulls')
+        return Response.json([{ number: 2, head: { sha: job.source } }]);
+      if (path === '/repos/o/r/issues/2/comments') return Response.json([log]);
+      if (path === '/repos/o/r/issues/comments/50') {
+        log = { ...log, body: body.body };
+        return Response.json(log);
+      }
+      if (path === '/repos/o/r/issues/1/comments' && init.method === 'POST') bodies.push(body.body);
+      if (path === '/graphql' && body.query.includes('reviewThreads'))
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: { reviewThreads: { nodes: [apiThread('F1'), apiThread('Q1')] } },
+            },
+          },
+        });
+      if (path === '/graphql' && body.query.includes('addPullRequestReviewThreadReply')) {
+        mutations.push(body.variables);
+        return Response.json({ data: {} });
+      }
+      return fallback(url, init);
+    });
+    try {
+      await publish({ ...paths, round: 3, rounds: 10 });
+      const next = readFileSync(output, 'utf8');
+      const expected =
+        scenario === 'repair'
+          ? 'repair'
+          : scenario === 'spec' || scenario === 'checks-only'
+            ? 'spec'
+            : 'stop';
+      assert.ok(next.includes(`next=${expected}`), `${scenario}: ${next}`);
+      assert.ok(!next.includes('retro='));
+      assert.equal(next.includes('repair=true'), expected === 'repair');
+      assert.equal(mutations.length, scenario === 'missing' || scenario === 'invalid' ? 0 : 2);
+      if (mutations.length)
+        assert.match(mutations[0]!.body, /^Planner `candida`\n\nFix the parser/);
+      const state = readLoopState(log.body);
+      assert.equal(state.approved, job.plan!.revision);
+      assert.equal(state.base, 'original-base');
+      assert.equal(state.entries.at(-1)?.round, 3);
+      const stage = bodies.find((b) => b.startsWith(marker('replan')))!;
+      assert.ok(stage);
+      if (expected !== 'repair') {
+        assert.match(stage, /round 3/);
+        assert.match(stage, /\[F1\]\(/);
+        assert.ok(github.statuses.includes('item-I_1 Needs you'));
+      }
+      if (expected === 'spec') {
+        const body = bodies.find((b) => b.startsWith(marker('plan')))!;
+        assert.match(body, /reply `\/approve` to resume #2/);
+        const plan = approvedPlan(
+          [{ body, user: { id: OPERATOR_ID }, created_at: '' }],
+          7,
+          job.issue.revision,
+          true,
+        );
+        assert.equal(plan.plan, scenario === 'spec' ? 'new approved spec' : 'approved plan');
+        assert.deepEqual(plan.contract.checks, scenario === 'spec' ? { A1: 'ci' } : { A2: 'ci' });
+        if (scenario === 'checks-only') {
+          assert.match(stage, /Changed criteria: A1, A2/);
+          assert.match(body, /Changed criteria: A1, A2/);
+        }
+      }
+      if (scenario === 'missing') assert.match(stage, /validate.*missing replies: F1/);
+    } finally {
+      process.exitCode = exitCode;
+      teardown();
+      rmSync(join(paths.in, '..'), { recursive: true, force: true });
+    }
   }
 });

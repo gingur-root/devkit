@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { OPERATOR_ID } from './constants.ts';
+import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import { Triage } from './result.ts';
 
 export const JOB_FILE = 'job.json';
@@ -30,6 +30,8 @@ export const TRANSCRIPT_FILE = 'transcript.jsonl';
 /** The review a repair answers, CI's finding included (devkit#9). */
 export const REVIEW_FILE = 'review.json';
 export const THREADS_FILE = 'threads.json';
+export const CHECKS_FILE = 'checks.json';
+export const RESUME_FILE = 'resume.json';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
 /** Each agent.run step's outcome, written even when setup fails. */
@@ -63,7 +65,8 @@ export function isStageComment(
   role: string,
 ): boolean {
   return (
-    (comment.user?.type === 'Bot' || comment.user?.id === OPERATOR_ID) &&
+    (comment.user?.id === OPERATOR_ID ||
+      (role === 'loop' ? comment.user?.id === PIPELINE_BOT.id : comment.user?.type === 'Bot')) &&
     !!comment.body?.startsWith(marker(role))
   );
 }

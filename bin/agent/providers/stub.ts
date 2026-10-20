@@ -16,7 +16,7 @@ import { appendFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path';
 
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
-import { JOB_FILE, Job, PLAN_FILE, REVIEW_FILE } from '../job.ts';
+import { JOB_FILE, Job, PLAN_FILE, REVIEW_FILE, THREADS_FILE } from '../job.ts';
 import { agentEnv, type RunInput, type RunOutput } from './shared.ts';
 
 const FIXTURES = new URL('../fixtures/', import.meta.url);
@@ -52,12 +52,15 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   }
   const job = Job.parse(JSON.parse(readFileSync(join(input.in, JOB_FILE), 'utf8')));
   const repaired =
-    fixture === 'changes' &&
+    (fixture === 'changes' || fixture === 'spec') &&
     job.role === 'review' &&
     existsSync(join(input.cwd, 'STUB.md')) &&
     readFileSync(join(input.cwd, 'STUB.md'), 'utf8') ===
       readFileSync(new URL('repair.md', FIXTURES), 'utf8');
-  const own = new URL(`${job.role}.${repaired ? 'ready' : fixture}.json`, FIXTURES);
+  const own = new URL(
+    `${job.role}.${repaired ? 'ready' : fixture === 'spec' && job.role === 'review' ? 'changes' : fixture}.json`,
+    FIXTURES,
+  );
   const file = existsSync(own) ? own : new URL(`${job.role}.ready.json`, FIXTURES);
   const result = JSON.parse(readFileSync(file, 'utf8'));
   const reviewFile = join(input.in, REVIEW_FILE);
@@ -70,8 +73,26 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
       evidence: null,
     }));
   }
+  if (job.role === 'replan') {
+    const threads = JSON.parse(readFileSync(join(input.in, THREADS_FILE), 'utf8'));
+    result.changes = threads
+      .filter((t: { resolved: boolean }) => !t.resolved)
+      .map((t: { id: string }) => ({
+        ref: t.id,
+        change: null,
+        response: 'Apply the recommended fix on this thread.',
+        evidence: null,
+      }));
+    if (fixture === 'spec')
+      copyFileSync(new URL('replan.spec.md', FIXTURES), join(input.out, PLAN_FILE));
+  }
   // A plan writes plan.md; a build or repair changes the checkout; a review or retro writes nothing.
-  if (job.role !== 'review' && job.role !== 'retro' && job.role !== 'memory') {
+  if (
+    job.role !== 'review' &&
+    job.role !== 'retro' &&
+    job.role !== 'memory' &&
+    job.role !== 'replan'
+  ) {
     const target = job.role === 'plan' ? join(input.out, PLAN_FILE) : join(input.cwd, 'STUB.md');
     const ownText = new URL(`${job.role}.${fixture}.md`, FIXTURES);
     copyFileSync(existsSync(ownText) ? ownText : new URL(`${job.role}.md`, FIXTURES), target);

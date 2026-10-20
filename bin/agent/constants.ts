@@ -78,6 +78,7 @@ export const STUB_FIXTURES = [
   'changes',
   'never',
   'advisory',
+  'spec',
 ] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
@@ -122,6 +123,7 @@ export const STAGE_LABELS = {
   build: 'agent:build',
   review: 'agent:build',
   repair: 'agent:build',
+  replan: 'agent:build',
 } as const;
 
 /**

@@ -1,0 +1,36 @@
+{
+  "job": "",
+  "role": "replan",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "ready",
+  "summary": "Stub planner: apply the recommended fixes without changing the approved spec.",
+  "evidence": [],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": false,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Repair the open findings.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null
+}
