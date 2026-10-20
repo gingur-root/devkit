@@ -31,6 +31,10 @@ inputs:
     description: 'read or write.'
     required: false
     default: ''
+  permissionActions:
+    description: 'read or write.'
+    required: false
+    default: ''
   permissionIssues:
     description: 'read or write.'
     required: false
@@ -76,6 +80,7 @@ runs:
         repositories: ${{ inputs.allRepositories != 'true' && (inputs.repositories || github.event.repository.name) || '' }}
         skip-token-revoke: ${{ inputs.revoke != 'true' }}
         permission-contents: ${{ inputs.permissionContents }}
+        permission-actions: ${{ inputs.permissionActions }}
         permission-issues: ${{ inputs.permissionIssues }}
         permission-pull-requests: ${{ inputs.permissionPullRequests }}
         permission-organization-projects: ${{ inputs.permissionOrganizationProjects }}

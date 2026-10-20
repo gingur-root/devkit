@@ -196,9 +196,9 @@ tracked in devkit#277; infra's own memory caller is devkit#261.
 
 When a plan or build run fails, or a review leaves the card in **Needs you**,
 the same run ends with a retro (`agent.retro.yml`). Claude reads the issue
-thread, the card's history, each job's result and each agent's transcript,
-and lists what went wrong with the fix for each finding (a check, a doc, a
-persona prompt, a setting). Every finding then goes through plan, so a fix
+thread, the card's history, each job's result, the failed jobs' log tails and
+each agent's transcript, and lists what went wrong with the fix for each
+finding (a check, a doc, a persona prompt, a setting). Every finding then goes through plan, so a fix
 lands instead of sitting in a comment (devkit#115):
 
 1. The retro files all its findings as one new issue, labelled `retro`, and
