@@ -104,10 +104,23 @@ same time `toolchain.verify` runs the repo's own checks (format, lint,
 typecheck, test, build) on that same commit, so an enrolled repo needs every
 script it runs.
 
-The controller posts one `COMMENT` review. Findings on added or context lines
-in `candidate.patch` appear inline, prefixed with their ID, blocking or
-advisory flag, and axis. Findings outside the diff stay in the review body.
-Advisory findings allow an otherwise clean review to pass.
+The controller posts one `COMMENT` review and one resolvable thread per finding.
+Each thread starts with `<!-- devkit:finding <ID> -->`, followed by the ID,
+blocking or advisory flag, axis, evidence and fix. Findings on added or context
+lines in `candidate.patch` appear inline. Other findings on a changed file get
+a file-level thread. A finding outside the patch gets a file-level thread on
+the first changed file, with its real location in the body. Only an empty
+patch leaves findings in the review body. Advisory findings allow an otherwise
+clean review to pass.
+
+Review and repair jobs read `threads.json`, which holds App-authored marked
+threads (open and resolved) and their operator or App replies. Comments from
+other authors are excluded. The reviewer reuses an open finding's ID when it
+still stands, omits fixed IDs, asks nothing and puts the recommended fix in
+`fix`. The controller replies to continuing findings, resolves IDs no longer
+raised as blocking, and creates threads only for new IDs. A finding that
+becomes advisory gets a reply and is resolved. A finding whose ID matches only
+a resolved thread gets a new thread.
 
 - **Pass** (every axis passes, no blocking finding, no question, and CI green
   on the reviewed commit): the PR is marked ready for review and the card
@@ -117,15 +130,18 @@ Advisory findings allow an otherwise clean review to pass.
 - **Changes requested, nothing to ask you:** Codex fixes the findings and
   pushes a new commit to the same PR, then Claude reviews the whole change
   again. The card stays in **Building** meanwhile, and the issue gets a
-  **Repair** comment with what Codex changed. This repeats up to 10 rounds by
+  **Repair** comment with what Codex changed. After a successful push, each
+  `changes[]` entry is also posted on its open finding thread with the commit
+  SHA and its change or evidenced response. The next review resolves fixed
+  threads. This repeats up to 10 rounds by
   default (`rounds` in `agent.build.yml`, capped by `REPAIR_ROUNDS` in
   `bin/agent/constants.ts`). A repair must map every
   supplied finding ID in `changes[].ref`. A dispute needs non-empty
   `evidence`; an incomplete map stops at `validate` before a push.
 - **Anything else** (a question for you, an inconclusive review, findings left
   after the round cap, or a repair that changed nothing): the review comment says
-  the PR needs your call, lists open blocking IDs, and links the PR's loop
-  log. The card moves to **Needs you**.
+  the PR needs your call, names the round, links each open finding thread,
+  and links the PR's loop log. The card moves to **Needs you**.
 - **Stale review:** the next round reviews the current PR head without a
   repair or a push. The card stays in **Building**, and the issue comment
   names the commit being re-reviewed and the next round. Reruns count toward
@@ -307,7 +323,10 @@ on a scratch issue.
    `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
    `fixture` picks the stub's result (`bin/agent/constants.ts`
    `STUB_FIXTURES`): `ready` by default, `story` for a plan with two subtasks,
-   `followups` for a build that proposes seven follow-ups.
+   `followups` for a build that proposes seven follow-ups, `changes` for a
+   blocking F1 thread repaired and resolved in round 1, and `advisory` for a
+   passing review with an advisory thread. For `changes`, check that the PR
+   has one F1 thread, resolved after round 1, with the repair's reply.
    To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 
 3. Delete the pipeline branch when you are done.

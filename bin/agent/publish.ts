@@ -64,6 +64,15 @@ import {
   TRIAGE_FILE,
   usage,
 } from './job.ts';
+import {
+  branchOf,
+  findingMarker,
+  openPull,
+  readThreads,
+  replyThread,
+  type Pull,
+  type Thread,
+} from './threads.ts';
 import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
 
@@ -94,13 +103,6 @@ interface Issue {
   labels: { name: string }[];
   created_at: string;
   user: { id: number } | null;
-}
-
-interface Pull {
-  number: number;
-  html_url: string;
-  node_id: string;
-  head: { sha: string };
 }
 
 /** What a stage publishes: the issue comment, the card's Status, and whether it stopped. */
@@ -367,19 +369,6 @@ export function commitMessage(job: Pick<Job, 'role' | 'issue'>): string {
   return `${subject}\n\n${OPERATOR_COAUTHOR}`;
 }
 
-function branchOf(job: Job): string {
-  return `agent/issue-${job.issue.number}`;
-}
-
-async function openPull(job: Job, branch: string): Promise<Pull | undefined> {
-  const owner = job.repo.slice(0, job.repo.indexOf('/'));
-  const [open] = await rest<Pull[]>(
-    'GET',
-    `/repos/${job.repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`,
-  );
-  return open;
-}
-
 /** The branch's open PR with this body, opened as a draft when there is none. */
 async function upsertPull(job: Job, branch: string, result: Result): Promise<Pull> {
   const body = [
@@ -466,15 +455,19 @@ export function reviewComments(
   findings: Finding[],
 ): {
   inline: { path: string; line: number; side: 'RIGHT'; body: string }[];
+  file: { path: string; body: string }[];
   body: Finding[];
 } {
+  const paths = new Set<string>();
   const lines = new Set<string>();
   let path = '';
   let right = 0;
   let remaining = 0;
   for (const line of patch.split('\n')) {
     if (line.startsWith('diff --git ')) {
-      path = '';
+      const header = /^diff --git (?:"(?:\\.|[^"])*"|.*?) ("(?:\\.|[^"])*"|b\/.*)$/.exec(line);
+      path = header ? patchPath(header[1]!).replace(/^b\//, '') : '';
+      if (path) paths.add(path);
       remaining = 0;
     } else if (remaining > 0) {
       if (line.startsWith('+') || line.startsWith(' ')) {
@@ -483,7 +476,10 @@ export function reviewComments(
       }
     } else if (line.startsWith('+++ ')) {
       const name = line.slice(4).split('\t')[0]!;
-      path = patchPath(name).replace(/^b\//, '');
+      if (name !== '/dev/null') {
+        path = patchPath(name).replace(/^b\//, '');
+        paths.add(path);
+      }
     } else {
       const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
       if (hunk) {
@@ -493,6 +489,7 @@ export function reviewComments(
     }
   }
   const inline: ReturnType<typeof reviewComments>['inline'] = [];
+  const file: ReturnType<typeof reviewComments>['file'] = [];
   const body: Finding[] = [];
   for (const f of findings) {
     if (f.path && f.line !== null && lines.has(`${f.path}:${f.line}`))
@@ -500,11 +497,60 @@ export function reviewComments(
         path: f.path,
         line: f.line,
         side: 'RIGHT',
-        body: `**${f.id}** ${f.blocking ? 'blocking' : 'advisory'} · ${f.axis}\n\n${f.scenario} ${f.impact}\n\nEvidence: ${f.evidence}\n\nFix: ${f.fix}`,
+        body: findingText(f),
       });
-    else body.push(f);
+    else {
+      const anchor = f.path && paths.has(f.path) ? f.path : paths.values().next().value;
+      if (anchor) file.push({ path: anchor, body: findingText(f, anchor !== f.path) });
+      else body.push(f);
+    }
   }
-  return { inline, body };
+  return { inline, file, body };
+}
+
+function findingText(f: Finding, location = false): string {
+  const where = location
+    ? `${f.path ? `\`${f.path}${f.line !== null ? `:${f.line}` : ''}\`` : 'no location'}\n\n`
+    : '';
+  return `${findingMarker(f.id)}\n\n${where}**${f.id}** ${f.blocking ? 'blocking' : 'advisory'} · ${f.axis}\n\n${f.scenario} ${f.impact}\n\nEvidence: ${f.evidence}\n\nFix: ${f.fix}`;
+}
+
+export function threadActions(
+  open: Thread[],
+  findings: Finding[],
+): {
+  resolve: Thread[];
+  reply: { thread: Thread; finding: Finding }[];
+  create: Finding[];
+} {
+  const threads = open.filter((thread) => !thread.resolved);
+  return {
+    resolve: threads.filter((thread) => !findings.some((f) => f.id === thread.id && f.blocking)),
+    reply: threads.flatMap((thread) => {
+      const finding = findings.find((f) => f.id === thread.id);
+      return finding ? [{ thread, finding }] : [];
+    }),
+    create: findings.filter((f) => !threads.some((thread) => thread.id === f.id)),
+  };
+}
+
+export async function replyChanges(
+  repo: string,
+  pull: number,
+  changes: NonNullable<Result['changes']>,
+  commit: string,
+): Promise<void> {
+  const threads = await readThreads(repo, pull);
+  for (const change of changes) {
+    const thread = threads.find((thread) => !thread.resolved && thread.id === change.ref);
+    if (thread)
+      await replyThread(
+        thread.node,
+        [`Repair \`${commit.slice(0, 7)}\``, change.change ?? change.response, change.evidence]
+          .filter(Boolean)
+          .join('\n\n'),
+      );
+  }
 }
 
 export function repairMap(review: Result, repair: Result): string | null {
@@ -585,13 +631,11 @@ async function updateLoop(
   return upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
 }
 
-export function needsYouText(result: Result, logUrl: string): string {
-  const ids = (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id);
-  return needsYouLinks(ids, logUrl);
-}
-
-function needsYouLinks(ids: string[], logUrl: string): string {
-  return `Open blocking findings: ${ids.join(', ') || 'none'}.\n\n[Loop log](${logUrl})`;
+export function needsYouText(round: number, threads: Thread[], logUrl: string): string {
+  const links = threads
+    .filter((thread) => !thread.resolved)
+    .map((thread) => `[${thread.id}](${thread.url})`);
+  return `Stopped in round ${round}. Open threads: ${links.join(', ') || 'none'}.\n\n[Loop log](${logUrl})`;
 }
 
 async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
@@ -633,7 +677,13 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
     return {
       body: [
         stopped(job.role, v),
-        log && needsYouLinks(readLoopState(log.body).entries.at(-1)?.open ?? [], log.html_url),
+        log
+          ? needsYouText(
+              options.round ?? 0,
+              await readThreads(job.repo, pull!.number),
+              log.html_url,
+            )
+          : `Stopped in round ${options.round ?? 0}. No open PR or review threads.`,
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -697,9 +747,10 @@ async function postReview(
 ): Promise<Outcome> {
   const round = options.round ?? 0;
   const rounds = options.rounds ?? REPAIR_ROUNDS;
+  const actions = threadActions(await readThreads(job.repo, pull.number), result.findings ?? []);
   const comments = reviewComments(
     readFileSync(join(options.in, CANDIDATE_FILE), 'utf8'),
-    result.findings ?? [],
+    actions.create,
   );
   await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/reviews`, {
     commit_id: pull.head.sha,
@@ -707,6 +758,18 @@ async function postReview(
     event: 'COMMENT',
     comments: comments.inline,
   });
+  for (const comment of comments.file)
+    await rest('POST', `/repos/${job.repo}/pulls/${pull.number}/comments`, {
+      commit_id: pull.head.sha,
+      subject_type: 'file',
+      ...comment,
+    });
+  for (const { thread, finding } of actions.reply)
+    await replyThread(thread.node, findingText(finding));
+  for (const thread of actions.resolve)
+    await graphql('mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}', {
+      id: thread.node,
+    });
   const ok = step === 'ready';
   const repair = step === 'repair';
   if (ok)
@@ -732,7 +795,7 @@ async function postReview(
       head,
       result.summary,
       numbered(result.questions),
-      step === 'stop' && needsYouText(result, logUrl),
+      step === 'stop' && needsYouText(round, await readThreads(job.repo, pull.number), logUrl),
     ]
       .filter(Boolean)
       .join('\n\n'),
@@ -779,6 +842,8 @@ async function publishBuildOrPlan(
         job.role === 'repair'
           ? ((await openPull(job, branch)) ?? null)
           : await upsertPull(job, branch, v.result);
+      if (job.role === 'repair' && pull)
+        await replyChanges(job.repo, pull.number, v.result.changes ?? [], commit);
       // The review job's input.
       if (process.env.GITHUB_OUTPUT)
         appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${commit}\n`);
@@ -786,7 +851,7 @@ async function publishBuildOrPlan(
       console.error(error);
       v = {
         stage: 'publish',
-        reason: 'pushing the change or opening its PR failed; see the run log',
+        reason: 'publishing the change, PR or thread replies failed; see the run log',
       };
     }
   }

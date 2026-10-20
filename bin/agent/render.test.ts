@@ -249,7 +249,7 @@ test('render snapshots only the trusted manifest and propagates non-404 failures
         dispatcher: OPERATOR_ID,
         out,
       });
-      assert.equal(requests.at(-1), `/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`);
+      assert.ok(requests.includes(`/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`));
       assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
       assert.equal(job.base ?? job.source, base ?? source);
     }
@@ -892,6 +892,96 @@ test('memory renders trusted PR text, paginated patches, and the merge commit wi
       assert.ok(!existsSync(join(out, 'tools.json')));
       vi.unstubAllGlobals();
       vi.unstubAllEnvs();
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+test('review and repair render only App-marked threads and trusted replies; no PR removes stale input', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-threads-'));
+  let hasPull = true;
+  const author = (databaseId: number) => ({ login: 'same-login', databaseId });
+  const first = {
+    body: '<!-- devkit:finding F1 -->\n\nFinding',
+    url: 'https://github.com/o/r/pull/2#discussion-1',
+    author: author(PIPELINE_BOT.id),
+  };
+  const node = {
+    id: 'T1',
+    isResolved: false,
+    path: 'a.ts',
+    line: 4,
+    comments: {
+      nodes: [
+        first,
+        { ...first, body: 'Repair reply' },
+        { ...first, body: 'Operator reply', author: author(OPERATOR_ID) },
+        { ...first, body: 'Untrusted reply', author: author(1) },
+        { ...first, body: 'Deleted author', author: null },
+      ],
+    },
+  };
+  const nodes = [
+    node,
+    { ...node, id: 'T2', isResolved: true },
+    { ...node, comments: { nodes: [{ ...first, body: 'Unmarked' }] } },
+    { ...node, comments: { nodes: [{ ...first, author: author(1) }] } },
+    { ...node, comments: { nodes: [{ ...first, author: author(OPERATOR_ID) }] } },
+    { ...node, comments: { nodes: [{ ...first, author: null }] } },
+  ];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('MEMORY_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const request = new URL(url);
+    if (request.pathname === '/graphql') {
+      const { variables } = JSON.parse(String(init.body));
+      assert.deepEqual(variables, { owner: 'o', name: 'r', pull: 2 });
+      return Response.json({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } });
+    }
+    if (request.pathname === '/repos/o/r/pulls') {
+      assert.equal(request.searchParams.get('head'), 'o:agent/issue-1');
+      return Response.json(hasPull ? [{ number: 2 }] : []);
+    }
+    if (request.pathname.endsWith('/commits/main')) return Response.json({ sha: 'mem' });
+    if (request.pathname === '/repos/o/r/issues/1')
+      return Response.json({
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      });
+    if (request.pathname === '/repos/o/r/issues/1/comments') return Response.json([comment()]);
+    return new Response('{}', { status: 404 });
+  });
+  try {
+    for (const role of ['review', 'repair'] as const) {
+      const options = { repo: 'o/r', issue: 1, role, source: 'abc', appId: APP, out };
+      const job = await render(options);
+      const rendered = JSON.parse(readFileSync(join(out, 'threads.json'), 'utf8'));
+      assert.deepEqual(
+        rendered,
+        [false, true].map((resolved, i) => ({
+          id: 'F1',
+          node: `T${i + 1}`,
+          resolved,
+          path: 'a.ts',
+          line: 4,
+          url: first.url,
+          comments: ['<!-- devkit:finding F1 -->\n\nFinding', 'Repair reply', 'Operator reply'].map(
+            (body) => ({ author: 'same-login', body }),
+          ),
+        })),
+      );
+      assert.ok(job.artifacts.includes('threads.json'));
+      hasPull = false;
+      const noPull = await render(options);
+      assert.equal(existsSync(join(out, 'threads.json')), false);
+      assert.ok(!noPull.artifacts.includes('threads.json'));
+      hasPull = true;
     }
   } finally {
     rmSync(out, { recursive: true, force: true });
