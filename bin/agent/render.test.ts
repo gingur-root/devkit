@@ -19,7 +19,15 @@ import { test, vi } from 'vite-plus/test';
 import renderCommand from '../commands/agent/render.ts';
 import { render as memoryIndex } from '../memory/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
-import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
+import {
+  CONTRACT_PREFIX,
+  Job,
+  marker,
+  PLAN_END,
+  PLAN_START,
+  revision,
+  TRIAGE_FILE,
+} from './job.ts';
 import { loopComment, readLoopState, type LoopState } from './publish.ts';
 import { approvedPlan, changedFiles, issueSnapshot, openIssues, render } from './render.ts';
 
@@ -1383,6 +1391,7 @@ test('build records base drift and requests criticism only without a matching pa
   const output = join(out, 'github-output');
   let source = 'abc';
   let criticism: unknown = null;
+  let triage: unknown = null;
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubEnv('GITHUB_OUTPUT', output);
   vi.stubGlobal('fetch', async (url: string) => {
@@ -1398,22 +1407,32 @@ test('build records base drift and requests criticism only without a matching pa
         labels: [],
       });
     if (path.endsWith('/comments'))
-      return Response.json([comment(PLAN, { critique: true, source, criticism })]);
+      return Response.json([comment(PLAN, { critique: true, source, criticism, triage })]);
     return Response.json([]);
   });
   try {
-    for (const [planSource, record, moved, request] of [
-      ['old', null, true, true],
-      ['abc', null, false, true],
+    for (const [planSource, record, moved, request, items] of [
+      ['old', null, true, true, null],
+      ['abc', null, false, true, null],
       [
         'abc',
         { outcome: 'pass', planRevision: revision(PLAN), issueRevision: ISSUE, source: 'abc' },
         false,
         false,
+        null,
+      ],
+      ['old', null, true, false, []],
+      [
+        'abc',
+        null,
+        false,
+        false,
+        [{ title: 'Fix', body: 'b', link: null, start: 'plan', priority: 'P2' }],
       ],
     ] as const) {
       source = planSource;
       criticism = record;
+      triage = items;
       writeFileSync(output, '');
       const job = await render({
         repo: 'o/r',
@@ -1426,6 +1445,8 @@ test('build records base drift and requests criticism only without a matching pa
       });
       assert.equal(job.baseMoved, moved);
       assert.equal(readFileSync(output, 'utf8').includes('critique=true'), request);
+      if (items !== null)
+        assert.deepEqual(JSON.parse(readFileSync(join(out, TRIAGE_FILE), 'utf8')), items);
     }
   } finally {
     rmSync(out, { recursive: true, force: true });

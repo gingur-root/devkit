@@ -214,7 +214,8 @@ export function openIssues(issues: Issue[]): string {
 
 /** Text between two markers in a comment, or null. */
 function between(body: string, start: string, end: string): string | null {
-  const from = body.indexOf(start);
+  // Controller markers follow all agent-written text in the published comment.
+  const from = body.lastIndexOf(start);
   const to = body.indexOf(end, from + start.length);
   return from < 0 || to < 0 ? null : body.slice(from + start.length, to);
 }
@@ -553,6 +554,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   if (options.role === 'build' && approved && !existsSync(join(options.out, RESUME_FILE))) {
     job.baseMoved = approved.contract.source !== base;
     if (
+      approved.contract.triage === null &&
       !criticismPasses(approved.contract, approved.contract.planRevision, issueRevision, base!) &&
       process.env.GITHUB_OUTPUT
     )

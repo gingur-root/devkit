@@ -496,10 +496,15 @@ async function publishCriticism(job: Job, issue: Issue, options: PublishOptions)
     )
       throw new Error('The plan or issue changed while criticism ran.');
     const contract = { ...approved.contract, criticism: assessment.criticism };
-    const body = comment.body!.replace(
-      /^<!-- devkit:contract [^\r\n]* -->/m,
-      () => `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
-    );
+    const start = comment.body!.lastIndexOf(CONTRACT_PREFIX);
+    const body =
+      comment.body!.slice(0, start) +
+      comment
+        .body!.slice(start)
+        .replace(
+          /^<!-- devkit:contract [^\r\n]* -->/,
+          () => `${CONTRACT_PREFIX}${JSON.stringify(contract)} -->`,
+        );
     await rest('PATCH', `/repos/${job.repo}/issues/comments/${comment.id}`, { body });
   } catch (error) {
     assessment = {
@@ -542,6 +547,8 @@ export function planComment(
     : ' (written without the issue body, which someone else wrote)';
   const criticismBlocked =
     result.outcome === 'ready' &&
+    !story.length &&
+    result.triage === null &&
     result.critique === true &&
     assessment?.criticism.outcome !== 'pass';
   const head = criticismBlocked
