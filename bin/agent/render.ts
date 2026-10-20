@@ -445,7 +445,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   const story = options.role === 'build' && subtasks > 0;
   // A retro reads whatever the run left, ready plan or not.
   let approved: ReturnType<typeof approvedPlan> | null = null;
-  if (options.role !== 'plan' && options.role !== 'retro') {
+  if (options.role !== 'plan' && options.role !== 'retro' && options.role !== 'research') {
     try {
       if (options.role === 'build' && options.dispatcher !== OPERATOR_ID) {
         // No actor fails closed: it is neither the operator nor the App.

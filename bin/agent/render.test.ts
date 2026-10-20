@@ -30,7 +30,7 @@ const PLAN = '## Criteria\n\n- **A1:** it works.';
 const memoryEntry = (name: string, description: string) =>
   `---\nname: ${name}\ndescription: ${description}\ntype: decision\ndate: 2026-10-20\nsource: fixture\nsupersedes: null\nevidence: []\n---\n\n${description}.\n`;
 
-function memoryFixture() {
+function memoryFixture(hasPlan = true) {
   const files = new Map([
     ['_org/a.md', memoryEntry('a', 'Org fact')],
     ['r/b.md', memoryEntry('b', 'Repo fact')],
@@ -79,7 +79,7 @@ function memoryFixture() {
         user: { id: OPERATOR_ID },
         labels: [],
       },
-      '/repos/o/r/issues/1/comments': [comment()],
+      '/repos/o/r/issues/1/comments': hasPlan ? [comment()] : [],
     };
     return Response.json(routes[path] ?? []);
   });
@@ -94,6 +94,7 @@ test('every role renders only org and repo Markdown at one memory SHA with the r
   try {
     for (const role of [
       'plan',
+      'research',
       'build',
       'review',
       'repair',
@@ -1369,5 +1370,28 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
     rmSync(out, { recursive: true, force: true });
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  }
+});
+
+test('research renders without an approved plan', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-research-'));
+  memoryFixture(false);
+  try {
+    const job = await render({
+      repo: 'o/r',
+      issue: 1,
+      role: 'research',
+      source: 'abc',
+      appId: APP,
+      out,
+    });
+    assert.equal(job.plan, null);
+    assert.equal(job.base, null);
+    assert.equal(job.candidate, null);
+    assert.match(readFileSync(join(out, 'issue.md'), 'utf8'), /Body/);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    rmSync(out, { recursive: true, force: true });
   }
 });

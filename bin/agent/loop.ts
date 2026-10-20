@@ -32,7 +32,7 @@ export interface Card {
 
 /** The run this tick ends: its stage, issue and each job's result. Absent on a `ready-for-agent` tick. */
 export interface Ran {
-  role: 'plan' | 'build';
+  role: 'plan' | 'build' | 'research';
   issue: number;
   jobs: Record<string, { result: string }>;
 }
@@ -50,7 +50,11 @@ export interface Decision {
 const ENDED = ['failure', 'cancelled'];
 
 /** The column a run holds its card in. A plan that hands off leaves it in Building for the build. */
-const RUNNING: Record<Ran['role'], Status> = { plan: 'Planning', build: 'Building' };
+const RUNNING: Record<Ran['role'], Status> = {
+  plan: 'Planning',
+  build: 'Building',
+  research: 'Planning',
+};
 
 /**
  * The next step for each card: a card the run left in its own column (Planning

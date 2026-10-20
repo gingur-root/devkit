@@ -104,3 +104,21 @@ test('never starts a card past Ask', () => {
     assert.deepEqual(decide([card(1, status)]).actions, []);
   assert.deepEqual(decide([card(1, 'Ask', [])]).actions, []);
 });
+
+test('research left in Planning or carrying its label goes to Needs you', () => {
+  for (const left of [card(1, 'Planning', []), card(1, 'Ask', ['agent:research'])]) {
+    assert.deepEqual(
+      decide([left], { role: 'research', issue: 1, jobs: { research: { result: 'failure' } } })
+        .actions,
+      [
+        {
+          kind: 'stalled',
+          issue: 1,
+          role: 'research',
+          stage: 'research',
+          reason: 'the run ended (`failure`) before it published',
+        },
+      ],
+    );
+  }
+});

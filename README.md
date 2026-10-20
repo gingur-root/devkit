@@ -18,6 +18,7 @@ gingur-root/devkit#1.
 | `configs/`                                                   | The Vite+ preset (lint, fmt, staged) and tsconfig, via the `exports` map.                               |
 | `bin/`                                                       | `devkit agent …`. Lint, format and hooks are `vp`.                                                      |
 | `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                                     |
+| `.github/workflows/agent.research.yml`                       | Research cards: `agent:research` → cited report comment or draft docs PR.                               |
 | `.github/workflows/agent.build.yml`                          | The build stage: `/approve` (or `agent:build`) on a ready plan → draft PR on `agent/issue-<n>` → Ready. |
 | `agents/`, `skills/`                                         | Role instructions and per-role skills; a repo overrides or adds them under `.devkit/`.                  |
 
@@ -77,8 +78,8 @@ Add `.devkit/tools.json` to the target repo to declare MCP servers and required
 CLIs. Without the file, devkit uses its defaults: keyless Context7 at
 `https://mcp.context7.com/mcp` for plan, build, repair, replan, review and verify,
 and no required CLIs. Web search follows the role's `web` setting, independently
-of MCP servers: on for plan, build, repair, replan, review and verify, off for retro
-and hello. There is no research role.
+of MCP servers: on for plan, research, build, repair, replan, review and verify;
+off for retro and hello.
 
 `agent render` reads the manifest from the job's trusted commit
 (`job.base ?? job.source`) and writes it as `tools.json` in the job directory.

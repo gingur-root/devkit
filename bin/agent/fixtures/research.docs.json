@@ -1,0 +1,47 @@
+{
+  "job": "",
+  "role": "research",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": ["research.md"]
+  },
+  "status": "complete",
+  "outcome": "answered",
+  "summary": "Stub research: the question is answered with a cited source.",
+  "evidence": [
+    {
+      "criterion": null,
+      "check": "Read the source",
+      "expected": "A source for the answer",
+      "observed": "Source cited in research.md",
+      "exit": 0,
+      "location": "https://docs.github.com/en/rest",
+      "result": "pass"
+    }
+  ],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": true,
+  "assumptions": [],
+  "questions": [],
+  "next": "Read the report.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null,
+  "merge": null
+}

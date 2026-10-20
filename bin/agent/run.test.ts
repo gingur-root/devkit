@@ -36,7 +36,15 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
     // Only roles that write docs or instructions get Simple English.
     assert.match(instructions('build', ROLES.build, overrides), /# Simple English/);
     assert.doesNotMatch(instructions('review', ROLES.review, overrides), /# Simple English/);
-    for (const role of ['plan', 'build', 'repair', 'review', 'replan', 'retro'] as const)
+    for (const role of [
+      'plan',
+      'build',
+      'repair',
+      'review',
+      'replan',
+      'retro',
+      'research',
+    ] as const)
       assert.match(instructions(role, ROLES[role], overrides), /# Plain English/);
     for (const role of ['build', 'repair'] as const)
       assert.match(instructions(role, ROLES[role], overrides), /# Simple English/);
@@ -138,4 +146,14 @@ test('the envelope written for a run with no result passes the schema publish ch
     failure: { class: 'rate_limit', resetsAt: null },
   });
   assert.equal(Result.parse(limited).failure?.class, 'rate_limit');
+});
+
+test('research loads its role instructions and uses the approved model and tools', () => {
+  assert.match(instructions('research', ROLES.research, undefined), /# Research/);
+  assert.equal(ROLES.research.executor, 'claude');
+  assert.equal(ROLES.research.model, 'claude-opus-5-5');
+  assert.equal(ROLES.research.effort, 'medium');
+  assert.equal(ROLES.research.web, true);
+  assert.equal(ROLES.research.result, true);
+  assert.deepEqual(ROLES.research.tools, ['Bash', 'Read', 'Glob', 'Grep', 'Write']);
 });

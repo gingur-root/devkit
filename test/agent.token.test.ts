@@ -19,7 +19,7 @@ type Step = {
 };
 type Job = { permissions?: unknown; steps?: Step[] };
 
-const READ_ROLES = ['plan', 'build', 'review', 'repair', 'replan', 'verify'];
+const READ_ROLES = ['plan', 'build', 'review', 'repair', 'replan', 'verify', 'research'];
 
 function load(url: URL): { jobs?: Record<string, Job>; runs?: { steps?: Step[] } } {
   return parse(readFileSync(url, 'utf8'));
@@ -55,6 +55,7 @@ const uses = (step: Step, action: string) => step.uses?.includes(`/actions/${act
 
 test('controllers that read PRs and update PR comments hold pull-request write access', () => {
   const writers = new Set([
+    'agent.research.yml#publish',
     'agent.build.yml#start',
     'agent.build.yml#publish',
     'agent.round.yml#gate',
@@ -185,6 +186,7 @@ test('every render uses a separate pipeline-only contents: read token', () => {
     'agent.build.yml#start',
     'agent.memory.yml#start',
     'agent.plan.yml#start',
+    'agent.research.yml#start',
     'agent.retro.yml#start',
     'agent.round.yml#gate',
     'agent.round.yml#push',
@@ -227,4 +229,13 @@ test('memory agent has no GitHub token and the controller alone writes the memor
     permissionContents: 'write',
     permissionPullRequests: 'write',
   });
+});
+
+test('research publish grants contents and PR write without workflows write', () => {
+  const job = load(new URL('agent.research.yml', workflows)).jobs!.publish!;
+  const app = job.steps!.find((step) => step.id === 'app')!;
+  assert.equal(app.with!.permissionContents, 'write');
+  assert.equal(app.with!.permissionIssues, 'write');
+  assert.equal(app.with!.permissionOrganizationProjects, 'write');
+  assert.ok(!('permissionWorkflows' in app.with!));
 });

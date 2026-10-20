@@ -1,0 +1,37 @@
+{
+  "job": "",
+  "role": "research",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": ["research.md"]
+  },
+  "status": "complete",
+  "outcome": "inconclusive",
+  "summary": "Stub research: the source is unavailable.",
+  "evidence": [],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": false,
+  "assumptions": [],
+  "questions": ["Which source should be checked?"],
+  "next": "Supply the missing source.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null,
+  "merge": null
+}

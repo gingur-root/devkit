@@ -67,6 +67,7 @@ import {
   PLAN_START,
   type PlanContract,
   RESULT_FILE,
+  RESEARCH_FILE,
   REVIEW_FILE,
   revision,
   STEPS_FILE,
@@ -319,6 +320,15 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   if (result.status === 'complete' && job.role === 'plan' && !existsSync(join(out, PLAN_FILE))) {
     return { stage: 'validate', reason: `the agent wrote no ${PLAN_FILE}` };
   }
+  if (result.status === 'complete' && job.role === 'research') {
+    if (!existsSync(join(out, RESEARCH_FILE)))
+      return { stage: 'validate', reason: `the agent wrote no ${RESEARCH_FILE}` };
+    if (
+      result.outcome === 'answered' &&
+      !result.evidence.some((e) => URL.parse(e.location)?.protocol === 'https:')
+    )
+      return { stage: 'validate', reason: 'answered research has no HTTPS evidence location' };
+  }
   // Only a retro issue's plan triages, and its build files that triage instead of building.
   const retroPlan = job.role === 'plan' && job.artifacts.includes(ISSUES_FILE);
   if (result.triage !== null && !retroPlan)
@@ -378,7 +388,7 @@ export function failureReason(failure: Failure, summary: string): string {
 }
 
 function retry(role: string): string {
-  if (role === 'plan') return `add \`${STAGE_LABELS.plan}\``;
+  if (role === 'plan' || role === 'research') return `add \`${STAGE_LABELS[role]}\``;
   return 'reply `/approve`';
 }
 
@@ -1247,6 +1257,73 @@ export function readyToBuild(result: Result): boolean {
   );
 }
 
+async function researchPull(job: Job, result: Result, text: string): Promise<Pull> {
+  const branch = branchOf(job);
+  const repo = `/repos/${job.repo}`;
+  try {
+    await rest('GET', `${repo}/git/ref/heads/${branch}`);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes(' 404 ')) throw error;
+    await rest('POST', `${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: job.source });
+  }
+  const path = `${repo}/contents/docs/research/${job.issue.number}.md`;
+  let sha: string | undefined;
+  try {
+    sha = (await rest<{ sha: string }>('GET', `${path}?ref=${encodeURIComponent(branch)}`)).sha;
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes(' 404 ')) throw error;
+  }
+  await rest('PUT', path, {
+    message: `docs(research): ${job.issue.title}\n\n${OPERATOR_COAUTHOR}`,
+    content: Buffer.from(text).toString('base64'),
+    branch,
+    ...(sha ? { sha } : {}),
+  });
+  return upsertPull(job, branch, result);
+}
+
+async function publishResearch(job: Job, v: Verdict, out: string): Promise<Outcome> {
+  if ('stage' in v) return { body: stopped(job.role, v), status: 'Needs you', stopped: true };
+  const result = v.result;
+  const text = readFileSync(join(out, RESEARCH_FILE), 'utf8');
+  let pull: Pull | null = null;
+  if (result.outcome === 'answered' && result.docs) {
+    try {
+      pull = await researchPull(job, result, text);
+    } catch (error) {
+      return {
+        body: stopped(job.role, {
+          stage: 'publish',
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+        status: 'Needs you',
+        stopped: true,
+      };
+    }
+  }
+  const body = [
+    marker(job.role),
+    `**Research: ${result.outcome}**`,
+    result.summary,
+    pull && `Draft PR: ${pull.html_url}`,
+    numbered(result.questions),
+    result.next,
+    text,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  // Leave room for the mention and follow-up notice added by publish.
+  const limit = 60000;
+  return {
+    body:
+      body.length > limit
+        ? `${body.slice(0, limit)}\n\nReport truncated; the full research.md is in the run artifact.`
+        : body,
+    status: pull ? 'Ready' : 'Needs you',
+    stopped: false,
+  };
+}
+
 async function publishBuildOrPlan(
   job: Job,
   issue: Issue,
@@ -1800,18 +1877,20 @@ export async function publish(options: PublishOptions): Promise<void> {
   const outcome =
     job.role === 'review'
       ? await publishReview(job, v, options, check)
-      : job.role === 'replan'
-        ? await publishReplan(job, v, options)
-        : await publishBuildOrPlan(
-            job,
-            issue,
-            v,
-            options.out,
-            options.checkout,
-            handoff,
-            subtasks,
-            options,
-          );
+      : job.role === 'research'
+        ? await publishResearch(job, v, options.out)
+        : job.role === 'replan'
+          ? await publishReplan(job, v, options)
+          : await publishBuildOrPlan(
+              job,
+              issue,
+              v,
+              options.out,
+              options.checkout,
+              handoff,
+              subtasks,
+              options,
+            );
   const { status, stopped } = outcome;
   const followups = 'result' in v ? (v.result.followups ?? []) : [];
   const body = [outcome.body, followupLine(followups.length)].filter(Boolean).join('\n\n');
