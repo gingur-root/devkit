@@ -93,7 +93,7 @@ jobs:
           node --input-type=module -e '
             import {readFileSync, appendFileSync} from "node:fs";
             const job = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/agent/in/job.json", "utf8"));
-            appendFileSync(process.env.GITHUB_OUTPUT, `source=${job.source}\nmemory=${job.memory ?? ""}\n`);
+            appendFileSync(process.env.GITHUB_OUTPUT, "source=" + job.source + "\nmemory=" + (job.memory ?? "") + "\n");
           '
       - uses: actions/checkout@v6
         if: steps.render.outputs.memory != ''
