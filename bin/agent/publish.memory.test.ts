@@ -215,6 +215,94 @@ test('a failed evidence check opens a draft containing the failure', async () =>
   }
 });
 
+test.each(['added', 'edited'])(
+  '%s entries check every quote outside the merged PR changed files',
+  async (kind) => {
+    const f = fixture();
+    try {
+      if (kind === 'edited') {
+        writeFileSync(join(f.checkout, 'memory/_org/a.md'), entry());
+        writeFileSync(join(f.checkout, 'memory/_org/INDEX.md'), '- [a](a.md): A fact\n');
+        writeFileSync(join(f.checkout, 'memory/MEMORY.md'), render(join(f.checkout, 'memory')));
+        git(f.checkout, ['add', '.']);
+        git(f.checkout, ['commit', '-m', 'entry'], {
+          name: 'Fixture',
+          email: 'fixture@example.com',
+        });
+      }
+      f.put(
+        '_org/a.md',
+        entry().replace(
+          'quote: real evidence',
+          'quote: real evidence\n  - at: gingur-root/scratch:AGENTS.md\n    quote: missing quote',
+        ),
+      );
+      f.put('_org/INDEX.md', '- [a](a.md): A fact\n');
+      await publishMemory(
+        { ...job, memory: git(f.checkout, ['rev-parse', 'HEAD']) },
+        result,
+        f.out,
+        f.checkout,
+        ['gingur-root/scratch:src/other.ts'],
+      );
+      const pr = f.calls.find((call) => call.method === 'POST')!;
+      assert.equal(pr.body.draft, true);
+      assert.match(String(pr.body.body), /Memory check failed/);
+      assert.match(String(pr.body.body), /quote not found in gingur-root\/scratch:AGENTS.md/);
+      assert.deepEqual(
+        f.calls.filter((call) => call.path.includes('/contents/')).map((call) => call.path),
+        [
+          '/repos/gingur-root/scratch/contents/README.md',
+          '/repos/gingur-root/scratch/contents/AGENTS.md',
+        ],
+      );
+    } finally {
+      f.cleanup();
+    }
+  },
+);
+
+test('publish checks existing changed evidence and skips unrelated stored evidence', async () => {
+  const f = fixture();
+  try {
+    for (const [name, path] of [
+      ['a', 'src/other.ts'],
+      ['b', 'unrelated.ts'],
+    ] as const) {
+      writeFileSync(
+        join(f.checkout, `memory/_org/${name}.md`),
+        entry('missing quote').replace('name: a', `name: ${name}`).replace('README.md', path),
+      );
+    }
+    const index = '- [a](a.md): A fact\n- [b](b.md): A fact\n';
+    writeFileSync(join(f.checkout, 'memory/_org/INDEX.md'), index);
+    writeFileSync(join(f.checkout, 'memory/MEMORY.md'), render(join(f.checkout, 'memory')));
+    git(f.checkout, ['add', '.']);
+    git(f.checkout, ['commit', '-m', 'entries'], { name: 'Fixture', email: 'fixture@example.com' });
+    f.put('_org/c.md', entry().replace('name: a', 'name: c'));
+    f.put('_org/INDEX.md', `${index}- [c](c.md): A fact\n`);
+    await publishMemory(
+      { ...job, memory: git(f.checkout, ['rev-parse', 'HEAD']) },
+      result,
+      f.out,
+      f.checkout,
+      ['gingur-root/scratch:src/other.ts'],
+    );
+    const pr = f.calls.find((call) => call.method === 'POST')!;
+    assert.equal(pr.body.draft, true);
+    assert.match(String(pr.body.body), /quote not found in gingur-root\/scratch:src\/other.ts/);
+    assert.deepEqual(
+      f.calls.filter((call) => call.path.includes('/contents/')).map((call) => call.path),
+      [
+        '/repos/gingur-root/scratch/contents/src/other.ts',
+        '/repos/gingur-root/scratch/contents/README.md',
+      ],
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('entries without evidence refuse the whole output before writes', async () => {
   const f = fixture();
   try {

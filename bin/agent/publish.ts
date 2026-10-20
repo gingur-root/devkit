@@ -1018,6 +1018,7 @@ function summarizeUsage(stage: string, out: string): void {
 export interface MemoryChange {
   path: string;
   text: string | null;
+  evidence: string[];
 }
 
 /** Validate the whole proposal before any file in the store is touched. */
@@ -1047,16 +1048,18 @@ export function memoryChanges(out: string, repo: string): MemoryChange[] {
         invalid(file, 'invalid memory path');
       const text = readFileSync(join(root, file), 'utf8');
       const removed = name.endsWith('.delete');
+      let evidence: string[] = [];
       if (removed && text.length) invalid(file, 'delete marker must be empty');
       if (!removed && name !== 'INDEX.md') {
         const entry = frontmatter(text);
         if (typeof entry === 'string') invalid(file, entry);
         else if (!entry.evidence.length) invalid(file, 'at least one evidence item is required');
+        else evidence = entry.evidence.map(({ at }) => at);
       }
       const path = removed ? file.slice(0, -7) : file;
       if (changes.some((change) => change.path === path))
         invalid(file, 'conflicting writes and deletes');
-      changes.push({ path, text: removed ? null : text });
+      changes.push({ path, text: removed ? null : text, evidence });
     }
   }
   return changes;
@@ -1121,7 +1124,11 @@ export async function publishMemory(
   git(checkout, ['add', '--', 'memory']);
   if (!git(checkout, ['diff', '--cached', '--name-only'])) return;
   const failures = await checkMemory(dir, {
-    changed,
+    // Written entries must be verified even when their evidence was not changed by the PR.
+    changed:
+      changed === undefined
+        ? undefined
+        : [...new Set([...changed, ...changes.flatMap((change) => change.evidence)])],
     read: (at) => githubReader(at, process.env.CHECK_TOKEN),
   });
   const output = failures.length
