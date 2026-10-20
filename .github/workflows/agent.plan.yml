@@ -92,11 +92,20 @@ jobs:
         run: pnpm agent react --repo "$REPO" --issue "$ISSUE" ${COMMENT:+--comment "$COMMENT"}
 
       # A dispatched run plans from the head of the default branch (render's default).
+      - id: memory
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
       - id: render
         name: Render
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           SOURCE: ${{ inputs.issue == '' && github.sha || '' }}

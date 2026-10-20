@@ -9,7 +9,14 @@ import { parse } from 'yaml';
 const root = new URL('../', import.meta.url);
 const workflows = new URL('.github/workflows/', root);
 
-type Step = { uses?: string; with?: Record<string, unknown> };
+type Step = {
+  id?: string;
+  if?: string;
+  uses?: string;
+  run?: string;
+  env?: Record<string, string>;
+  with?: Record<string, unknown>;
+};
 type Job = { permissions?: unknown; steps?: Step[] };
 
 const READ_ROLES = ['plan', 'build', 'review', 'repair'];
@@ -100,4 +107,49 @@ test('every agent.token call seals with the agents token', () => {
       },
       where,
     );
+});
+
+test('every render uses a separate pipeline-only contents: read token', () => {
+  const seen: string[] = [];
+  for (const [where, job] of workflowJobs()) {
+    const steps = job.steps ?? [];
+    const renders = steps.filter((step) => step.run?.includes('agent render'));
+    for (const render of renders) {
+      seen.push(where);
+      const mints = steps.filter((step) => step.id === 'memory');
+      assert.equal(mints.length, 1, where);
+      const mint = mints[0]!;
+      assert.equal(mint.uses, 'gingur-root/devkit/actions/app.token@main', where);
+      assert.deepEqual(
+        mint.with,
+        {
+          appId: '${{ inputs.appId }}',
+          token: '${{ secrets.PIPELINE_SECRETS_TOKEN }}',
+          repositories: 'pipeline',
+          permissionContents: 'read',
+        },
+        where,
+      );
+      assert.ok(steps.indexOf(mint) < steps.indexOf(render), where);
+      assert.equal(mint.if, render.if, where);
+      assert.equal(render.env?.MEMORY_TOKEN, '${{ steps.memory.outputs.token }}', where);
+    }
+    for (const step of steps) {
+      if (!uses(step, 'app.token') || step.id === 'memory') continue;
+      assert.ok(
+        !String(step.with?.repositories ?? '')
+          .split(/[\s,]+/)
+          .includes('pipeline'),
+        where,
+      );
+    }
+  }
+  assert.deepEqual(seen.sort(), [
+    'agent.build.yml#publish',
+    'agent.build.yml#start',
+    'agent.plan.yml#start',
+    'agent.retro.yml#start',
+    'agent.review.yml#push',
+    'agent.review.yml#verdict',
+  ]);
 });

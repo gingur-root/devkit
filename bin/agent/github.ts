@@ -33,9 +33,9 @@ function ghToken(): string {
   return token;
 }
 
-function headers(): Record<string, string> {
+function headers(override?: string): Record<string, string> {
   return {
-    authorization: `Bearer ${ghToken()}`,
+    authorization: `Bearer ${override ?? ghToken()}`,
     accept: 'application/vnd.github+json',
     'x-github-api-version': '2022-11-28',
   };
@@ -45,11 +45,16 @@ function headers(): Record<string, string> {
 const MERGE =
   /\/pulls\/\d+\/merge\b|\/merges\b|\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b/;
 
-export async function rest<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function rest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  token?: string,
+): Promise<T> {
   if (MERGE.test(path)) throw new Error(`${method} ${path}: the pipeline never merges.`);
   const response = await fetch(`${API}${path}`, {
     method,
-    headers: headers(),
+    headers: headers(token),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {

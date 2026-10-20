@@ -61,6 +61,7 @@ test('the envelope written for a run with no result passes the schema publish ch
     source: 'sha',
     base: 'sha',
     candidate: null,
+    memory: null,
     artifacts: [],
     operations: [],
     attemptLimit: null,

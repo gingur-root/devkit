@@ -30,6 +30,7 @@ for (const [fixture, failureClass, reason] of [
       source: 'abc',
       base: null,
       candidate: null,
+      memory: null,
       artifacts: [],
       operations: [],
       attemptLimit: null,

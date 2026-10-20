@@ -14,6 +14,8 @@ export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
 /** The MCP manifest from the job's trusted commit. */
 export const TOOLS_FILE = 'tools.json';
+/** The org and target repo's slice of pipeline memory. */
+export const MEMORY_DIR = 'memory';
 /** A retro issue's plan: the repo's open issues, which it may link findings to. */
 export const ISSUES_FILE = 'issues.md';
 /** A retro issue's approved triage, which the build files instead of building. */
@@ -92,6 +94,7 @@ export const Job = z.object({
   source: z.string(),
   base: z.string().nullable(),
   candidate: z.string().nullable(),
+  memory: z.string().nullable().default(null),
   artifacts: z.array(z.string()),
   operations: z.array(z.string()),
   attemptLimit: z.number().int().nullable(),

@@ -189,6 +189,7 @@ function runCase(
       source,
       base: null,
       candidate: null,
+      memory: null,
       artifacts: [],
       operations: [],
       attemptLimit: null,

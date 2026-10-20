@@ -60,6 +60,7 @@ function stage(role: 'plan' | 'review', manifest: unknown) {
     source: 'candidate',
     base: role === 'review' ? 'base' : null,
     candidate: role === 'review' ? 'candidate' : null,
+    memory: null,
     artifacts: [],
     operations: [],
     attemptLimit: null,

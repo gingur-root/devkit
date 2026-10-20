@@ -6,6 +6,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { render as memoryIndex } from '../memory/render.ts';
 import { readSteps, refuseStart } from './approval.ts';
 import {
   filedByPipeline,
@@ -21,6 +22,7 @@ import {
   ISSUE_FILE,
   ISSUES_FILE,
   JOB_FILE,
+  MEMORY_DIR,
   TIMELINE_FILE,
   TOOLS_FILE,
   type Job,
@@ -34,6 +36,51 @@ import {
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
 import { MANIFEST_PATH } from './tools.ts';
+
+const MEMORY_REPO = 'gingur-root/pipeline';
+
+/** Fetch the slice from one main commit, using the separate read-only token. */
+async function memorySlice(options: RenderOptions): Promise<string | null> {
+  const path = `/repos/${MEMORY_REPO}`;
+  const token = process.env.MEMORY_TOKEN;
+  // A missing repo or wrong-scoped token must fail, not look like an absent store.
+  const { sha } = await rest<{ sha: string }>('GET', `${path}/commits/main`, undefined, token);
+  const dir = join(options.out, MEMORY_DIR);
+  rmSync(dir, { recursive: true, force: true });
+  const contents = `${path}/contents/${MEMORY_DIR}`;
+  const ref = `?ref=${encodeURIComponent(sha)}`;
+  const store = await rest('GET', `${contents}${ref}`, undefined, token).catch((error: Error) => {
+    if (!error.message.includes(' 404 ')) throw error;
+    return null;
+  });
+  if (store === null) return null;
+  mkdirSync(dir, { recursive: true });
+  for (const folder of new Set(['_org', options.repo.split('/')[1]!])) {
+    const folderPath = `${contents}/${encodeURIComponent(folder)}`;
+    const files = await rest<{ name: string; type: string }[]>(
+      'GET',
+      `${folderPath}${ref}`,
+      undefined,
+      token,
+    ).catch((error: Error) => {
+      if (!error.message.includes(' 404 ')) throw error;
+      return null;
+    });
+    if (files === null) continue;
+    mkdirSync(join(dir, folder), { recursive: true });
+    for (const file of files.filter((file) => file.type === 'file' && file.name.endsWith('.md'))) {
+      const { content } = await rest<{ content: string }>(
+        'GET',
+        `${folderPath}/${encodeURIComponent(file.name)}${ref}`,
+        undefined,
+        token,
+      );
+      writeFileSync(join(dir, folder, file.name), Buffer.from(content, 'base64'));
+    }
+  }
+  writeFileSync(join(dir, 'INDEX.md'), memoryIndex(dir));
+  return sha;
+}
 
 interface Authored {
   body: string | null;
@@ -262,6 +309,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     base,
     // A review checks out the candidate itself.
     candidate: options.role === 'review' ? source : null,
+    memory: await memorySlice(options),
     // Publish reads this to hold a retro issue's plan to its triage.
     artifacts: retroPlan ? [ISSUES_FILE] : [],
     operations: [],

@@ -87,6 +87,13 @@ A candidate's manifest cannot change configs or credential requests. A manifest
 change takes effect after it merges. Local and eval runs without `tools.json`
 in the job directory use the defaults.
 
+For every role, `agent render` also copies `memory/_org/` and the target repo's
+folder from `gingur-root/pipeline` at one `main` commit into the job directory's
+`memory/`, with a joined `INDEX.md`. `job.memory` records that commit, or is null
+until `pipeline/memory/` exists. Each render step uses a separate `MEMORY_TOKEN`
+scoped to `pipeline` with only `contents: read`. Desk runs use the usual GitHub
+credential when `MEMORY_TOKEN` is unset.
+
 ```json
 {
   "mcpServers": {

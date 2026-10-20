@@ -116,11 +116,20 @@ jobs:
 
       # Render first: with no ready plan it fails, leaving the card alone, after it
       # says why on the issue and removes the label.
+      - id: memory
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
       - id: render
         name: Render
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           # A dispatched run builds on the head of the default branch (render's
@@ -251,11 +260,21 @@ jobs:
             --checkout "$GITHUB_WORKSPACE/repo"
 
       # The review's job: the pushed commit, and the build's patch as its diff.
+      - id: memory
+        if: steps.publish.outputs.candidate != ''
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
       - name: Render review
         if: steps.publish.outputs.candidate != ''
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           SOURCE: ${{ needs.start.outputs.source }}
