@@ -21,6 +21,7 @@ test('every role passes its turn cap to Claude', () => {
   const defaults = {
     hello: 10,
     plan: 100,
+    research: 100,
     replan: 100,
     critique: 100,
     build: 200,

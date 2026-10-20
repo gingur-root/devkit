@@ -17,7 +17,7 @@ import { appendFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path';
 
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
-import { JOB_FILE, Job, PLAN_FILE, REVIEW_FILE, THREADS_FILE } from '../job.ts';
+import { JOB_FILE, Job, PLAN_FILE, RESEARCH_FILE, REVIEW_FILE, THREADS_FILE } from '../job.ts';
 import { agentEnv, type RunInput, type RunOutput } from './shared.ts';
 
 const FIXTURES = new URL('../fixtures/', import.meta.url);
@@ -87,7 +87,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     if (fixture === 'spec')
       copyFileSync(new URL('replan.spec.md', FIXTURES), join(input.out, PLAN_FILE));
   }
-  // A plan writes plan.md; a build or repair changes the checkout; a review or retro writes nothing.
+  // A plan or research writes its report; a build or repair changes the checkout; a review or retro writes nothing.
   if (
     job.role !== 'critique' &&
     job.role !== 'review' &&
@@ -96,7 +96,12 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     job.role !== 'memory' &&
     job.role !== 'replan'
   ) {
-    const target = job.role === 'plan' ? join(input.out, PLAN_FILE) : join(input.cwd, 'STUB.md');
+    const target =
+      job.role === 'plan'
+        ? join(input.out, PLAN_FILE)
+        : job.role === 'research'
+          ? join(input.out, RESEARCH_FILE)
+          : join(input.cwd, 'STUB.md');
     const ownText = new URL(`${job.role}.${fixture}.md`, FIXTURES);
     copyFileSync(existsSync(ownText) ? ownText : new URL(`${job.role}.md`, FIXTURES), target);
     // Every never-pass repair must produce a new candidate to reach the cap.

@@ -32,6 +32,7 @@ import {
   TIMELINE_FILE,
   THREADS_FILE,
   TOOLS_FILE,
+  ROLES_FILE,
   type Job,
   marker,
   PLAN_END,
@@ -434,7 +435,7 @@ async function renderMemory(options: RenderOptions): Promise<Job> {
   );
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   // Memory needs no repository tool manifest or plan from an earlier stage.
-  for (const file of [TOOLS_FILE, PLAN_FILE, TRIAGE_FILE])
+  for (const file of [TOOLS_FILE, ROLES_FILE, PLAN_FILE, TRIAGE_FILE])
     rmSync(join(options.out, file), { force: true });
   return job;
 }
@@ -459,7 +460,7 @@ export async function render(options: RenderOptions): Promise<Job> {
   const story = options.role === 'build' && subtasks > 0;
   // A retro reads whatever the run left, ready plan or not.
   let approved: ReturnType<typeof approvedPlan> | null = null;
-  if (options.role !== 'plan' && options.role !== 'retro') {
+  if (options.role !== 'plan' && options.role !== 'retro' && options.role !== 'research') {
     try {
       if (options.role === 'build' && options.dispatcher !== OPERATOR_ID) {
         // No actor fails closed: it is neither the operator nor the App.
@@ -574,6 +575,9 @@ export async function render(options: RenderOptions): Promise<Job> {
   // After the resume, which can move job.base to the loop's recorded base.
   const ref = job.base ?? source;
   const manifest = await trustedFile(options.repo, MANIFEST_PATH, ref);
+  const roles = await trustedFile(options.repo, `.devkit/${ROLES_FILE}`, ref);
+  if (roles) writeFileSync(join(options.out, ROLES_FILE), roles);
+  else rmSync(join(options.out, ROLES_FILE), { force: true });
   const overrides = join(options.out, OVERRIDES_DIR);
   rmSync(overrides, { recursive: true, force: true });
   for (const path of new Set([

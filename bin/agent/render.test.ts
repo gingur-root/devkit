@@ -38,7 +38,7 @@ const PLAN = '## Criteria\n\n- **A1:** it works.';
 const memoryEntry = (name: string, description: string) =>
   `---\nname: ${name}\ndescription: ${description}\ntype: decision\ndate: 2026-10-20\nsource: fixture\nsupersedes: null\nevidence: []\n---\n\n${description}.\n`;
 
-function memoryFixture() {
+function memoryFixture(hasPlan = true) {
   const files = new Map([
     ['_org/a.md', memoryEntry('a', 'Org fact')],
     ['r/b.md', memoryEntry('b', 'Repo fact')],
@@ -87,7 +87,7 @@ function memoryFixture() {
         user: { id: OPERATOR_ID },
         labels: [],
       },
-      '/repos/o/r/issues/1/comments': [comment()],
+      '/repos/o/r/issues/1/comments': hasPlan ? [comment()] : [],
     };
     return Response.json(routes[path] ?? []);
   });
@@ -103,6 +103,7 @@ test('every role renders only org and repo Markdown at one memory SHA with the r
     for (const role of [
       'plan',
       'critique',
+      'research',
       'build',
       'review',
       'repair',
@@ -220,6 +221,7 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
   const text = '{invalid-manifest';
   const files = new Map([
     ['tools.json', text],
+    ['roles.json', '{"plan":{"executor":"stub"}}'],
     ['agents/worker.md', 'TRUSTED WORKER'],
     ['agents/contract.md', 'TRUSTED CONTRACT'],
     ['agents/plan.md', 'TRUSTED PLAN'],
@@ -296,6 +298,7 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
       writeFileSync(join(out, 'overrides/skills/stale/SKILL.md'), 'STALE');
       const job = await render({ ...options, role, source, base, dispatcher: OPERATOR_ID });
       assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
+      assert.equal(readFileSync(join(out, 'roles.json'), 'utf8'), files.get('roles.json'));
       assert.equal(job.base ?? job.source, base ?? source);
       assert.deepEqual(job.plan?.checks ?? null, role === 'plan' ? null : { A1: 'ci' });
       if (role === 'verify') {
@@ -320,6 +323,7 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
           .sort(),
         [
           'tools.json',
+          'roles.json',
           ...roleFiles[role].map((name) => `agents/${name}.md`),
           'skills',
           'skills/x/SKILL.md',
@@ -331,9 +335,16 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
     missing = true;
     await render(options);
     assert.equal(existsSync(join(out, 'tools.json')), false);
+    assert.equal(existsSync(join(out, 'roles.json')), false);
     assert.equal(existsSync(join(out, 'overrides')), false);
     missing = false;
-    for (const path of ['tools.json', 'agents/worker.md', 'skills', 'skills/x/SKILL.md']) {
+    for (const path of [
+      'tools.json',
+      'roles.json',
+      'agents/worker.md',
+      'skills',
+      'skills/x/SKILL.md',
+    ]) {
       failures.set(path, 403);
       await assert.rejects(render(options), /403.*fixture API failure/);
       failures.clear();
@@ -1136,6 +1147,7 @@ test('memory renders trusted PR text, paginated patches, and the merge commit wi
           ]);
         throw new Error(`Unexpected request ${path}`);
       });
+      writeFileSync(join(out, 'roles.json'), '{"memory":{"executor":"stub"}}');
       const job = await render({
         repo: 'gingur-root/r',
         issue: 12,
@@ -1164,6 +1176,7 @@ test('memory renders trusted PR text, paginated patches, and the merge commit wi
       assert.ok(readFileSync(join(out, 'changed.txt'), 'utf8').includes('gingur-root/r:old.ts'));
       assert.ok(!existsSync(join(out, 'plan.md')));
       assert.ok(!existsSync(join(out, 'tools.json')));
+      assert.ok(!existsSync(join(out, 'roles.json')));
       vi.unstubAllGlobals();
       vi.unstubAllEnvs();
     }
@@ -1452,5 +1465,28 @@ test('build records base drift and requests criticism only without a matching pa
     rmSync(out, { recursive: true, force: true });
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  }
+});
+
+test('research renders without an approved plan', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-research-'));
+  memoryFixture(false);
+  try {
+    const job = await render({
+      repo: 'o/r',
+      issue: 1,
+      role: 'research',
+      source: 'abc',
+      appId: APP,
+      out,
+    });
+    assert.equal(job.plan, null);
+    assert.equal(job.base, null);
+    assert.equal(job.candidate, null);
+    assert.match(readFileSync(join(out, 'issue.md'), 'utf8'), /Body/);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    rmSync(out, { recursive: true, force: true });
   }
 });

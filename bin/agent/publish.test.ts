@@ -3,6 +3,7 @@
 // retry must never file them twice.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1628,5 +1629,88 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       teardown();
       rmSync(join(paths.in, '..'), { recursive: true, force: true });
     }
+  }
+});
+
+test('research requires its report and an HTTPS source; the validate CLI uses the same gate', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'research-validation-'));
+  const job: Job = { ...planJob, role: 'research' };
+  const result: Result = {
+    ...pass,
+    job: job.job,
+    role: job.role,
+    inputs: { ...pass.inputs, issue: job.issue.revision },
+    outcome: 'answered',
+    docs: false,
+    evidence: [
+      {
+        criterion: null,
+        check: 'Read source',
+        expected: 'Facts',
+        observed: 'Facts',
+        exit: 0,
+        location: 'https://x',
+        result: 'pass',
+      },
+    ],
+  };
+  writeFileSync(join(dir, JOB_FILE), JSON.stringify(job));
+  const cli = () =>
+    spawnSync(
+      process.execPath,
+      ['bin/devkit.mjs', 'agent', 'validate', '--in', dir, '--out', dir],
+      { encoding: 'utf8' },
+    );
+  try {
+    writeFileSync(join(dir, RESULT_FILE), JSON.stringify(result));
+    assert.deepEqual(verdict(job, 'rev', dir), {
+      stage: 'validate',
+      reason: 'the agent wrote no research.md',
+    });
+    assert.equal(cli().status, 1);
+    writeFileSync(join(dir, 'research.md'), '# Research');
+    for (const location of ['http://x', 'src/a.ts', 'https://x']) {
+      const value = { ...result, evidence: [{ ...result.evidence[0]!, location }] };
+      writeFileSync(join(dir, RESULT_FILE), JSON.stringify(value));
+      const checked = verdict(job, 'rev', dir);
+      const command = cli();
+      if (location === 'https://x') {
+        assert.ok('result' in checked);
+        assert.equal(command.status, 0, command.stderr);
+      } else {
+        assert.deepEqual(checked, {
+          stage: 'validate',
+          reason: 'answered research has no HTTPS evidence location',
+        });
+        assert.equal(command.status, 1);
+        assert.match(command.stderr, /HTTPS evidence/);
+      }
+    }
+    for (const outcome of [
+      'ready',
+      'needs-input',
+      'pass',
+      'changes-requested',
+      'implemented',
+      'verified',
+      'failed',
+      null,
+    ]) {
+      writeFileSync(join(dir, RESULT_FILE), JSON.stringify({ ...result, outcome }));
+      assert.deepEqual(verdict(job, 'rev', dir), {
+        stage: 'validate',
+        reason: 'complete research must be answered or inconclusive',
+      });
+      const command = cli();
+      assert.equal(command.status, 1);
+      assert.match(command.stderr, /answered or inconclusive/);
+    }
+    writeFileSync(
+      join(dir, RESULT_FILE),
+      JSON.stringify({ ...result, outcome: 'inconclusive', evidence: [] }),
+    );
+    assert.ok('result' in verdict(job, 'rev', dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

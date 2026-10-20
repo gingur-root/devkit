@@ -18,6 +18,7 @@ gingur-root/devkit#1.
 | `configs/`                                                   | The Vite+ preset (lint, fmt, staged) and tsconfig, via the `exports` map.                               |
 | `bin/`                                                       | `devkit agent …`. Lint, format and hooks are `vp`.                                                      |
 | `.github/workflows/agent.plan.yml`, `actions/agent.run`      | The plan stage: `agent:plan` or `/plan` → plan comment → Needs you.                                     |
+| `.github/workflows/agent.research.yml`                       | Research cards: `agent:research` → cited report comment or draft docs PR.                               |
 | `.github/workflows/agent.build.yml`                          | The build stage: `/approve` (or `agent:build`) on a ready plan → draft PR on `agent/issue-<n>` → Ready. |
 | `agents/`, `skills/`                                         | Role instructions and per-role skills; a repo overrides or adds them under `.devkit/`.                  |
 
@@ -77,8 +78,8 @@ Add `.devkit/tools.json` to the target repo to declare MCP servers and required
 CLIs. Without the file, devkit uses its defaults: keyless Context7 at
 `https://mcp.context7.com/mcp` for plan, build, repair, replan, review and verify,
 and no required CLIs. Web search follows the role's `web` setting, independently
-of MCP servers: on for plan, build, repair, replan, review and verify, off for retro
-and hello. There is no research role.
+of MCP servers: on for plan, research, build, repair, replan, review and verify;
+off for retro and hello.
 
 `agent render` reads the manifest from the job's trusted commit
 (`job.base ?? job.source`) and writes it as `tools.json` in the job directory.
@@ -86,6 +87,23 @@ Plan and build use the default branch; review and repair use the build's base.
 A candidate's manifest cannot change configs or credential requests. A manifest
 change takes effect after it merges. Local and eval runs without `tools.json`
 in the job directory use the defaults.
+
+Add `.devkit/roles.json` to set a role's `executor`, `model` or `effort`:
+
+```json
+{ "build": { "executor": "claude", "model": "claude-opus-5-5", "effort": "high" } }
+```
+
+Each role entry is optional, as are its fields. `executor` is `claude`, `codex`
+or `stub`; `model` is a nonempty string or `null` for the account default;
+`effort` is `low`, `medium` or `high`. Unknown roles and fields stop the run.
+Settings apply over `ROLES` in `bin/agent/roles.ts`, then `--executor` wins.
+Changing executor drops the previous model unless the file sets one; a later
+flag that changes executor drops even that model. Render reads the file from
+the same trusted commit as `tools.json` and writes `roles.json` in the job
+directory. Run reads only that snapshot through `--in`, never the candidate
+checkout. Changes take effect after merge; without a snapshot, role defaults
+and the flag apply.
 
 Instruction and skill overrides under `.devkit/` come from the same trusted
 commit. `agent render` copies the role's instruction files and each skill's

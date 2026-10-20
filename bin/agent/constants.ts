@@ -82,6 +82,8 @@ export const STUB_FIXTURES = [
   'unverified',
   'critique',
   'critique-pass',
+  'docs',
+  'inconclusive',
 ] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 
@@ -122,6 +124,7 @@ export type Priority = (typeof PRIORITIES)[number];
 
 /** The label that starts each stage; the pipeline removes it when the run ends. Review and repair run inside the build's run. */
 export const STAGE_LABELS = {
+  research: 'agent:research',
   plan: 'agent:plan',
   build: 'agent:build',
   review: 'agent:build',

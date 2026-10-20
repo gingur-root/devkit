@@ -20,6 +20,79 @@ test('credential selection uses the effective executor, including role defaults 
   assert.equal(resolveRole({ role: 'plan', executor: 'stub' }).executor, 'stub');
 });
 
+test('the job snapshot maps executor, model and effort before the executor flag', () => {
+  const input = mkdtempSync(join(tmpdir(), 'devkit-roles-'));
+  const options = { role: 'plan', in: input } as const;
+  const mapping = (value: unknown) =>
+    writeFileSync(join(input, 'roles.json'), JSON.stringify(value));
+  try {
+    mapping({ plan: { executor: 'stub' } });
+    assert.equal(resolveRole(options).executor, 'stub');
+    assert.equal(resolveRole(options).model, undefined);
+    assert.equal(resolveRole({ ...options, executor: 'codex' }).executor, 'codex');
+    assert.equal(resolveRole({ ...options, executor: 'codex' }).model, undefined);
+    assert.equal(resolveRole({ role: 'build', in: input }).executor, 'codex');
+
+    mapping({ build: { executor: 'claude', model: 'm', effort: 'low' } });
+    const build = resolveRole({ role: 'build', in: input });
+    assert.equal(build.executor, 'claude');
+    assert.equal(build.model, 'm');
+    assert.equal(build.effort, 'low');
+    assert.equal(resolveRole({ role: 'build', in: input, executor: 'claude' }).model, 'm');
+    assert.equal(resolveRole({ role: 'build', in: input, executor: 'codex' }).model, undefined);
+
+    mapping({ plan: { effort: 'high' } });
+    assert.equal(resolveRole(options).model, 'claude-opus-5-5');
+    assert.equal(resolveRole(options).effort, 'high');
+    mapping({ plan: { executor: 'claude' } });
+    assert.equal(resolveRole(options).model, 'claude-opus-5-5');
+    mapping({ plan: { model: null } });
+    assert.equal(resolveRole(options).model, undefined);
+    assert.equal(ROLES.plan.model, 'claude-opus-5-5');
+  } finally {
+    rmSync(input, { recursive: true, force: true });
+  }
+});
+
+test('invalid role snapshots fail even when the flag overrides their executor', () => {
+  const input = mkdtempSync(join(tmpdir(), 'devkit-roles-invalid-'));
+  try {
+    for (const value of [
+      { nope: {} },
+      { plan: { x: 1 } },
+      { plan: { executor: 'nope' } },
+      { plan: { effort: 'nope' } },
+      { plan: { model: '' } },
+    ]) {
+      writeFileSync(join(input, 'roles.json'), JSON.stringify(value));
+      assert.throws(() => resolveRole({ role: 'plan', in: input, executor: 'stub' }));
+    }
+    writeFileSync(join(input, 'roles.json'), '{invalid');
+    assert.throws(() => resolveRole({ role: 'plan', in: input }), SyntaxError);
+  } finally {
+    rmSync(input, { recursive: true, force: true });
+  }
+});
+
+test('candidate roles.json files never select the executor', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devkit-roles-candidate-'));
+  const cwd = join(root, 'candidate');
+  const input = join(root, 'in');
+  try {
+    mkdirSync(join(cwd, '.devkit'), { recursive: true });
+    mkdirSync(input);
+    for (const file of ['roles.json', '.devkit/roles.json'])
+      writeFileSync(join(cwd, file), '{"plan":{"executor":"stub"}}');
+    for (const inDir of [undefined, input]) {
+      const role = resolveRole({ role: 'plan', cwd, in: inDir });
+      assert.equal(role.executor, 'claude');
+      assert.equal(role.model, 'claude-opus-5-5');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function repoSkill(overrides: string, name: string, roles: string, body: string): void {
   mkdirSync(join(overrides, 'skills', name), { recursive: true });
   writeFileSync(
@@ -44,6 +117,7 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
       'review',
       'replan',
       'retro',
+      'research',
     ] as const)
       assert.match(instructions(role, ROLES[role], overrides), /# Plain English/);
     for (const role of ['build', 'repair'] as const)
@@ -147,4 +221,14 @@ test('the envelope written for a run with no result passes the schema publish ch
     failure: { class: 'rate_limit', resetsAt: null },
   });
   assert.equal(Result.parse(limited).failure?.class, 'rate_limit');
+});
+
+test('research loads its role instructions and uses the approved model and tools', () => {
+  assert.match(instructions('research', ROLES.research, undefined), /# Research/);
+  assert.equal(ROLES.research.executor, 'claude');
+  assert.equal(ROLES.research.model, 'claude-opus-5-5');
+  assert.equal(ROLES.research.effort, 'medium');
+  assert.equal(ROLES.research.web, true);
+  assert.equal(ROLES.research.result, true);
+  assert.deepEqual(ROLES.research.tools, ['Bash', 'Read', 'Glob', 'Grep', 'Write']);
 });

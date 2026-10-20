@@ -15,8 +15,11 @@ export const DIFF_FILE = 'pr.diff';
 export const CHANGED_FILE = 'changed.txt';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
+export const RESEARCH_FILE = 'research.md';
 /** The MCP manifest from the job's trusted commit. */
 export const TOOLS_FILE = 'tools.json';
+/** The repo's role mapping from the job's trusted commit. */
+export const ROLES_FILE = 'roles.json';
 /** The repo's `.devkit/` agents and skills from the job's trusted commit. */
 export const OVERRIDES_DIR = 'overrides';
 /** The org and target repo's slice of pipeline memory. */

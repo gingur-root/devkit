@@ -23,11 +23,12 @@ export const PIPELINE_WORKFLOW = 'agents.yml';
 // infra keeps its own caller (its .github/workflows/agents.yml).
 const SKIPPED_REPOS: readonly string[] = ['infra', PIPELINE_REPO];
 
-export const DISPATCH_STAGES = ['plan', 'build', 'loop', 'memory'] as const;
+export const DISPATCH_STAGES = ['plan', 'build', 'loop', 'memory', 'research'] as const;
 export type DispatchStage = (typeof DISPATCH_STAGES)[number];
 
-// Troy's labels. agent:research is admitted too, but no stage handles it yet.
+// Troy's labels.
 const OPERATOR_LABELS: Record<string, DispatchStage> = {
+  [STAGE_LABELS.research]: 'research',
   [STAGE_LABELS.plan]: 'plan',
   [STAGE_LABELS.build]: 'build',
   [READY_LABEL]: 'loop',

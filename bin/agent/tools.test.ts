@@ -184,7 +184,7 @@ test('the schema parses defaults and rejects invalid repo manifests', () => {
     { mcpServers: { x: { url: 'https://example.com', command: 'x', roles: [] } } },
     { mcpServers: { x: { roles: [] } } },
     { mcpServers: { x: { url: 'https://example.com', secret: 'bad', roles: [] } } },
-    { mcpServers: { x: { url: 'https://example.com', roles: ['research'] } } },
+    { mcpServers: { x: { url: 'https://example.com', roles: ['unknown-role'] } } },
     { mcpServers: { x: { url: 'bad', roles: [] } } },
     { mcpServers: { x: { command: '', roles: [] } } },
     { mcpServers: { x: { command: 'x', roles: [], extra: true } } },

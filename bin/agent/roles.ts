@@ -1,4 +1,6 @@
-import type { Effort, Executor } from './constants.ts';
+import { z } from 'zod';
+
+import { EFFORTS, EXECUTORS, type Effort, type Executor } from './constants.ts';
 
 export interface Role {
   executor: Executor;
@@ -45,6 +47,18 @@ export const ROLES = {
     objective:
       'Plan the issue: acceptance criteria with IDs, how each is checked, and the open questions.',
     instructions: ['agents/worker.md', 'agents/contract.md', 'agents/plan.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
+    web: true,
+    timeoutMinutes: 30,
+    maxTurns: 100,
+    result: true,
+  },
+  research: {
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'medium',
+    objective: 'Answer the research question with cited sources and identify any missing evidence.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/research.md'],
     tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
     web: true,
     timeoutMinutes: 30,
@@ -159,3 +173,13 @@ export const ROLES = {
 } as const satisfies Record<string, Role>;
 
 export type RoleName = keyof typeof ROLES;
+
+export const RoleOverrides = z.partialRecord(
+  z.enum(Object.keys(ROLES) as RoleName[]),
+  z.strictObject({
+    executor: z.enum(EXECUTORS).optional(),
+    model: z.string().min(1).nullable().optional(),
+    effort: z.enum(EFFORTS).optional(),
+  }),
+);
+export type RoleOverrides = z.infer<typeof RoleOverrides>;

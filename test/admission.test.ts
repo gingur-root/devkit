@@ -174,6 +174,7 @@ test('cancelled runs skip publishing agent output', () => {
   for (const [file, id] of [
     ['agent.build.yml', 'publish'],
     ['agent.plan.yml', 'publish'],
+    ['agent.research.yml', 'publish'],
     ['agent.round.yml', 'push'],
   ] as const) {
     const condition = jobsByWorkflow.get(file)?.[id]?.if;

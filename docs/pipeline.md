@@ -24,13 +24,14 @@ keeps its own caller, which runs the same plan and build workflows.
 
 ## The flow
 
-| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                                                                       | Board card       |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                                                                                | Ask              |
-| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer.                    | Planning         |
-| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                                         | Needs you        |
-| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                                      | Building → Ready |
-| 5. Review / merge  | Merge a denied PR when its Needs you comment asks. Otherwise answer its findings.                                                                                                   | Claude reviews and replans; Codex repairs. Passing PRs merge when the deny gate allows; others need you. Repairs and stale reruns share a 10-round cap. | Done / Needs you |
+| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                                                                                               | Board card                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                                                                                                        | Ask                                               |
+| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer.                                            | Planning                                          |
+| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                                                                 | Needs you                                         |
+| Research           | Add `agent:research` to an issue with a research question.                                                                                                                          | Posts `research.md` as a cited comment, or opens a draft docs PR when the request asks for a saved document. Inconclusive answers name the missing evidence. Removes the label. | Planning → Needs you (comment) or Ready (docs PR) |
+| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                                                              | Building → Ready                                  |
+| 5. Review / merge  | Merge a denied PR when its Needs you comment asks. Otherwise answer its findings.                                                                                                   | Claude reviews and replans; Codex repairs. Passing PRs merge when the deny gate allows; others need you. Repairs and stale reruns share a 10-round cap.                         | Done / Needs you                                  |
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
@@ -389,6 +390,19 @@ secrets: they live in the `agents` environment, which only `main` may use.
 
 ## Repo persona and skills
 
+A repo sets each role's executor, model and effort in `.devkit/roles.json`
+([format and precedence](../README.md#agent-tools)). `agent render` copies it
+from `job.base ?? job.source` to `roles.json` in the job directory; `agent run`
+and `agent executor` read it only through `--in`. Review and repair use the
+build's base, so a candidate cannot change its own reviewer. Changes take
+effect after merge.
+
+`actions/agent.run` fetches the Claude token only when a token input is supplied
+and the effective executor is `claude`: `--executor` first, then `roles.json`,
+then `ROLES`. A repo mapping a role to Claude therefore gets the Claude token
+without an executor input override. With an empty token input, Claude uses
+the runner login.
+
 A repo replaces any role file by committing the
 same path under `.devkit/` (e.g. `.devkit/agents/build.md`). A skill is
 `skills/<name>/SKILL.md` with a `roles: plan, build` frontmatter line; a
@@ -450,9 +464,10 @@ on a scratch issue.
      -f stage=plan -f repo=scratch -f issue=<n> -f executor=stub -f fixture=<name>
    ```
 
-   `stage` is `plan` or `build`. Leave out `executor` to run the real agents.
+   `stage` is `plan`, `build` or `research`. Leave out `executor` to run the real agents.
    `fixture` picks the stub's result (`bin/agent/constants.ts`
-   `STUB_FIXTURES`): `ready` by default, `story` for a plan with two subtasks,
+   `STUB_FIXTURES`): research uses `ready` for a cited comment, `docs` for a draft
+   docs PR, and `inconclusive` for missing evidence. Other stages use `ready` by default, `story` for a plan with two subtasks,
    `followups` for a build that proposes seven follow-ups, `changes` for a
    blocking F1 thread repaired and resolved in round 1, and `advisory` for a
    passing review with an advisory thread. For `changes`, check that the PR

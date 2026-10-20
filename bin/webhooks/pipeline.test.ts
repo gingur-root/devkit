@@ -42,6 +42,7 @@ test("Troy's labels and commands start their stage, carrying him as the actor", 
     actor: OPERATOR_ID,
   });
   assert.equal(stage(labeled('agent:build')), 'build');
+  assert.equal(stage(labeled('agent:research')), 'research');
   assert.equal(stage(labeled('ready-for-agent')), 'loop');
   assert.equal(stage(commented('/plan please')), 'plan');
   assert.equal(stage(commented('/approve')), 'build');
@@ -51,10 +52,11 @@ test('the App starts only its hand-offs, and nobody else starts anything', () =>
   assert.deepEqual(dispatchFor(labeled('agent:build', PIPELINE_BOT.id))?.actor, PIPELINE_BOT.id);
   assert.equal(stage(labeled('agent:plan', PIPELINE_BOT.id)), 'plan');
   assert.equal(stage(labeled('ready-for-agent', PIPELINE_BOT.id)), null);
+  assert.equal(stage(labeled('agent:research', PIPELINE_BOT.id)), null);
   assert.equal(stage(labeled('agent:filed', PIPELINE_BOT.id)), null);
   assert.equal(stage(labeled('agent:filed')), null);
   assert.equal(stage(commented('/approve', PIPELINE_BOT.id)), null);
-  for (const label of ['agent:plan', 'agent:build', 'ready-for-agent']) {
+  for (const label of ['agent:plan', 'agent:build', 'agent:research', 'ready-for-agent']) {
     assert.equal(stage(labeled(label, STRANGER)), null, label);
   }
   assert.equal(stage(commented('/approve', STRANGER)), null);
@@ -62,7 +64,7 @@ test('the App starts only its hand-offs, and nobody else starts anything', () =>
 
 test('nothing starts from other events, other actions, PRs, other orgs or skipped repos', () => {
   assert.equal(stage(labeled('bug')), null);
-  assert.equal(stage(labeled('agent:research')), null);
+
   assert.equal(stage(commented('/revise')), null);
   assert.equal(stage(commented('please /approve')), null);
   assert.equal(stage(commented('/approve', OPERATOR_ID, { number: 5, pull_request: {} })), null);
