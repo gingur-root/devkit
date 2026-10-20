@@ -28,11 +28,20 @@ Follow the retro skill below, with these changes:
 
 - `outcome` is `answered`. `summary` says what went wrong, in a sentence or
   two, and whether the run's own stop comment already explains it.
-- `followups` holds one entry per finding, most severe first. `title` names
+- `followups` holds one entry per finding. If any
+  `run/<stage>-out/steps.json` has `failure` for a step other than `run`, or
+  a `failure` job in `run/jobs.json` has no `run/<stage>-out/`, the first entry
+  addresses that job and step (or says the step is unknown).
+  If the bundle shows the cause, give the fix. Otherwise, say the cause is
+  unknown, name the job and step log to read, and put the question in
+  `questions`. Other findings follow, most severe first. `title` names
   the fix (a check, a doc, a persona prompt, a setting). `body` says what
   happened, the evidence (a file and line, or a transcript event), and the
   change to make, with its repo and path.
-- A run that failed for a cause outside the pipeline (an outage, a rate
-  limit) gets no invented fix: say so in `summary` and leave `followups`
-  empty.
+- A one-off outage or rate limit gets no invented fix: say so in `summary`
+  and leave `followups` empty if there are no other findings, unless the
+  pre-agent rule above applies. A transient cause seen more than once is a
+  finding with a fix: in more than one job of this run, or in an earlier stop
+  or retro comment in `issue.md` or `timeline.md` (for example, a repeated
+  429 or the same step failing in consecutive runs).
 - Put anything only the operator can answer in `questions`.
