@@ -53,6 +53,18 @@ export const ROLES = {
     maxTurns: 100,
     result: true,
   },
+  research: {
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'medium',
+    objective: 'Answer the research question with cited sources and identify any missing evidence.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/research.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
+    web: true,
+    timeoutMinutes: 30,
+    maxTurns: 100,
+    result: true,
+  },
   replan: {
     executor: 'claude',
     model: 'claude-opus-5-5',

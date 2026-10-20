@@ -5,7 +5,7 @@ import type { ParsedCommand } from '../../command.ts';
 interface LoopOptions {
   repo: string;
   issue?: number;
-  role?: 'plan' | 'build';
+  role?: 'plan' | 'build' | 'research';
   jobs?: string;
   dryRun?: boolean;
 }
@@ -18,7 +18,13 @@ export default {
     command
       .requiredOption('--repo <owner/name>', 'repository')
       .option('--issue <number>', 'the issue the ending run worked on', Number)
-      .addOption(new Option('--role <role>', "the ending run's stage").choices(['plan', 'build']))
+      .addOption(
+        new Option('--role <role>', "the ending run's stage").choices([
+          'plan',
+          'build',
+          'research',
+        ]),
+      )
       .option('--jobs <json>', "the ending run's `toJSON(needs)`")
       .option('--dry-run', 'print the decisions without acting on them');
   },

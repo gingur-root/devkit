@@ -180,3 +180,47 @@ test('the verifier stub checks ready and unverified fixtures without changing th
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+for (const fixture of ['ready', 'docs', 'inconclusive']) {
+  test(`research stub ${fixture} writes a report that passes verdict`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'research-stub-'));
+    const input = join(cwd, 'in');
+    const out = join(cwd, 'out');
+    mkdirSync(input);
+    mkdirSync(out);
+    const job: Job = {
+      job: 'research-1',
+      role: 'research',
+      objective: '',
+      repo: 'o/r',
+      issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
+      plan: null,
+      source: 'abc',
+      base: null,
+      candidate: null,
+      memory: null,
+      artifacts: [],
+      operations: [],
+      attemptLimit: null,
+    };
+    writeFileSync(join(input, JOB_FILE), JSON.stringify(job));
+    const exitCode = process.exitCode;
+    vi.stubEnv('DEVKIT_STUB_FIXTURE', fixture);
+    try {
+      await run({ role: 'research', executor: 'stub', cwd, in: input, out });
+      const checked = verdict(job, 'rev', out);
+      assert.ok('result' in checked, JSON.stringify(checked));
+      assert.equal(
+        checked.result.outcome,
+        fixture === 'inconclusive' ? 'inconclusive' : 'answered',
+      );
+      assert.equal(checked.result.docs, fixture === 'docs');
+      assert.match(readFileSync(join(out, 'research.md'), 'utf8'), /Research/);
+      assert.equal(existsSync(join(cwd, 'STUB.md')), false);
+    } finally {
+      process.exitCode = exitCode;
+      vi.unstubAllEnvs();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+}
