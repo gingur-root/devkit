@@ -86,10 +86,24 @@ test('agent.token mints only contents: read, on all repos, unrevoked', () => {
   });
 });
 
-test('only agent.token mints an all-repos or unrevoked App token', () => {
+test('only sealed agent tokens and memory evidence readers reach all repos', () => {
   for (const [where, step] of allSteps()) {
     if (!uses(step, 'app.token') || where === 'actions/agent.token') continue;
-    assert.ok(!('allRepositories' in (step.with ?? {})), `${where} sets allRepositories`);
+    if (
+      ['agent.memory.yml#start', 'agent.memory.yml#publish'].includes(where) &&
+      step.id === 'check'
+    ) {
+      assert.deepEqual(
+        step.with,
+        {
+          appId: '${{ inputs.appId }}',
+          token: '${{ secrets.PIPELINE_SECRETS_TOKEN }}',
+          allRepositories: 'true',
+          permissionContents: 'read',
+        },
+        where,
+      );
+    } else assert.ok(!('allRepositories' in (step.with ?? {})), `${where} sets allRepositories`);
     assert.ok(!('revoke' in (step.with ?? {})), `${where} sets revoke`);
   }
 });
@@ -135,7 +149,12 @@ test('every render uses a separate pipeline-only contents: read token', () => {
       assert.equal(render.env?.MEMORY_TOKEN, '${{ steps.memory.outputs.token }}', where);
     }
     for (const step of steps) {
-      if (!uses(step, 'app.token') || step.id === 'memory') continue;
+      if (
+        !uses(step, 'app.token') ||
+        step.id === 'memory' ||
+        (where === 'agent.memory.yml#publish' && step.id === 'app')
+      )
+        continue;
       assert.ok(
         !String(step.with?.repositories ?? '')
           .split(/[\s,]+/)
@@ -147,9 +166,47 @@ test('every render uses a separate pipeline-only contents: read token', () => {
   assert.deepEqual(seen.sort(), [
     'agent.build.yml#publish',
     'agent.build.yml#start',
+    'agent.memory.yml#start',
     'agent.plan.yml#start',
     'agent.retro.yml#start',
     'agent.review.yml#push',
     'agent.review.yml#verdict',
   ]);
+});
+
+test('memory agent has no GitHub token and the controller alone writes the memory repo', () => {
+  const workflow = load(new URL('agent.memory.yml', workflows)).jobs!;
+  const agent = workflow.memory!;
+  assert.deepEqual(agent.permissions, { contents: 'read' });
+  for (const banned of [
+    'PIPELINE_SECRETS_TOKEN',
+    'app.token',
+    'agent.token',
+    'readToken',
+    'GH_TOKEN',
+  ])
+    assert.ok(!JSON.stringify(agent).includes(banned), banned);
+  const run = agent.steps!.find((step) => uses(step, 'agent.run'))!;
+  assert.equal(run.with!.role, 'memory');
+  for (const id of ['start', 'publish', 'report']) {
+    const checkout = workflow[id]!.steps!.find(
+      (step) =>
+        step.uses === 'actions/checkout@v6' && step.with?.repository === 'gingur-root/devkit',
+    )!;
+    assert.equal(checkout.with!.ref, '${{ inputs.devkitRef }}');
+  }
+  const publish = workflow.publish!.steps!;
+  const store = publish.find(
+    (step) =>
+      step.uses === 'actions/checkout@v6' && step.with?.repository === 'gingur-root/pipeline',
+  )!;
+  assert.equal(store.with!.ref, '${{ needs.start.outputs.memory }}');
+  const token = publish.find((step) => step.id === 'app')!;
+  assert.deepEqual(token.with, {
+    appId: '${{ inputs.appId }}',
+    token: '${{ secrets.PIPELINE_SECRETS_TOKEN }}',
+    repositories: 'pipeline',
+    permissionContents: 'write',
+    permissionPullRequests: 'write',
+  });
 });

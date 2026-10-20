@@ -1,0 +1,233 @@
+name: Memory
+
+# Runs trusted devkit code. The merged repository and agent output are data.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+      appId:
+        type: string
+        required: true
+      repo:
+        description: 'The merged PR repository in gingur-root.'
+        type: string
+        required: true
+      issue:
+        description: 'The merged PR number.'
+        type: string
+        required: true
+      devkitRef:
+        description: 'Trusted devkit ref; the central caller sets main.'
+        type: string
+        default: main
+      executor:
+        type: string
+        default: ''
+      fixture:
+        type: string
+        default: ready
+    secrets:
+      AGENTS_SECRETS_TOKEN:
+        required: false
+      PIPELINE_SECRETS_TOKEN:
+        required: true
+
+permissions: {}
+
+jobs:
+  start:
+    name: Start
+    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    outputs:
+      source: ${{ steps.render.outputs.source }}
+      memory: ${{ steps.render.outputs.memory }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: ${{ inputs.repo }}
+          permissionContents: read
+          permissionIssues: read
+          permissionPullRequests: read
+      - id: memory
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+      - id: check
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          allRepositories: 'true'
+          permissionContents: read
+      - name: Render
+        id: render
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
+          REPO: gingur-root/${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          APP_ID: ${{ inputs.appId }}
+        run: |
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role memory \
+            --app-id "$APP_ID" --out "$RUNNER_TEMP/agent/in"
+          node --input-type=module -e '
+            import {readFileSync, appendFileSync} from "node:fs";
+            const job = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/agent/in/job.json", "utf8"));
+            appendFileSync(process.env.GITHUB_OUTPUT, "source=" + job.source + "\nmemory=" + (job.memory ?? "") + "\n");
+          '
+      - uses: actions/checkout@v6
+        if: steps.render.outputs.memory != ''
+        with:
+          repository: gingur-root/pipeline
+          ref: ${{ steps.render.outputs.memory }}
+          token: ${{ steps.memory.outputs.token }}
+          path: memory-store
+          persist-credentials: false
+      - name: Check affected memory
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.check.outputs.token }}
+          MEMORY_REF: ${{ steps.render.outputs.memory }}
+        run: |
+          if [ -z "$MEMORY_REF" ]; then
+            printf 'no memory store\n' > "$RUNNER_TEMP/agent/in/check.txt"
+          else
+            mapfile -t changed < "$RUNNER_TEMP/agent/in/changed.txt"
+            node bin/devkit.mjs memory check --dir "$GITHUB_WORKSPACE/memory-store/memory" \
+              --changed "${changed[@]}" > "$RUNNER_TEMP/agent/in/check.txt" 2>&1 || true
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: memory-in
+          path: ${{ runner.temp }}/agent/in
+      - uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.render.outputs.source }}
+          token: ${{ steps.app.outputs.token }}
+          name: memory-repo
+
+  memory:
+    name: Memory
+    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
+    needs: start
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    permissions:
+      contents: read
+    steps:
+      # No readToken: this role has no GH_TOKEN.
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: memory
+          prefix: memory
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          source: ${{ needs.start.outputs.source }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          devkitRef: ${{ inputs.devkitRef }}
+
+  publish:
+    name: Publish
+    if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
+    needs: [start, memory]
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+      - uses: actions/download-artifact@v8
+        with:
+          name: memory-in
+          path: ${{ runner.temp }}/agent/in
+      - uses: actions/download-artifact@v8
+        with:
+          name: memory-out
+          path: ${{ runner.temp }}/agent/out
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: write
+          permissionPullRequests: write
+      - id: check
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          allRepositories: 'true'
+          permissionContents: read
+      - uses: actions/checkout@v6
+        if: needs.start.outputs.memory != ''
+        with:
+          repository: gingur-root/pipeline
+          ref: ${{ needs.start.outputs.memory }}
+          token: ${{ steps.app.outputs.token }}
+          path: memory-store
+      - name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CHECK_TOKEN: ${{ steps.check.outputs.token }}
+        run: pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" --checkout "$GITHUB_WORKSPACE/memory-store"
+
+  report:
+    name: Report
+    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+    needs: [start, memory, publish]
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: ${{ inputs.repo }}
+          permissionIssues: write
+      - name: Report failure
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: gingur-root/${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          JOBS: ${{ toJSON(needs) }}
+        run: pnpm agent publish --repo "$REPO" --issue "$ISSUE" --failed "$JOBS"
