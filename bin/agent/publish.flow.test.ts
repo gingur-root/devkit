@@ -67,6 +67,7 @@ function harness() {
     let result: unknown;
     if (init.method === 'GET' && path.endsWith('/issues/1')) result = issue;
     else if (init.method === 'GET' && path.endsWith('/pulls')) result = [pull];
+    else if (init.method === 'GET' && path.endsWith('/reactions')) result = [];
     else if (init.method === 'GET' && path.endsWith('/comments')) {
       result = path.includes('/issues/2/') ? comments : [];
     } else if (path === '/graphql') {
@@ -419,6 +420,38 @@ test('review publish replies on continuing IDs, resolves advisory IDs, and posts
   assert.ok(String(stop.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-1)'));
   assert.ok(String(stop.body.body).includes('[F3](https://github.com/o/r/pull/2#discussion-3)'));
   assert.ok(!String(stop.body.body).includes('[F2]('));
+});
+
+test('an inconclusive review retains open threads while still posting replies and new findings', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const inconclusive = { ...ready, outcome: 'inconclusive' as const };
+  const empty = await h.stage(inconclusive, 1);
+  assert.match(empty.output, /next=stop/);
+  assert.equal(h.threads[0]!.isResolved, false);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  const stop = h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!;
+  assert.ok(String(stop.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-1)'));
+
+  const f1 = changes.findings![0]!;
+  await h.stage(
+    {
+      ...inconclusive,
+      findings: [
+        { ...f1, blocking: false },
+        { ...f1, id: 'F2' },
+      ],
+    },
+    2,
+  );
+  assert.equal(h.threads.length, 2);
+  assert.deepEqual(
+    h.threads.map((t) => t.isResolved),
+    [false, false],
+  );
+  assert.equal(h.threads[0]!.comments.nodes.length, 2, 'reply on the existing F1 thread');
+  assert.match(h.threads[0]!.comments.nodes[1]!.body, /\*\*F1\*\* advisory/);
+  assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding F2 -->/);
 });
 
 test('a review stage failure names its round and links the existing open thread and loop log', async () => {

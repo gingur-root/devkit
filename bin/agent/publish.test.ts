@@ -324,6 +324,7 @@ test('only RIGHT-side diff lines receive inline comments', () => {
     comments.file.map(({ path }) => path),
     ['STUB.md', 'STUB.md', 'STUB.md', 'deleted.md'],
   );
+  assert.match(comments.file[0]!.body, /^<!-- devkit:finding F3 -->\n\n`STUB.md:10`/);
   assert.match(comments.file[1]!.body, /^<!-- devkit:finding F4 -->\n\n`absent.md:2`/);
   assert.match(comments.file[2]!.body, /^<!-- devkit:finding F5 -->\n\nno location/);
   assert.deepEqual(comments.body, []);

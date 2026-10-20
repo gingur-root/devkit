@@ -382,6 +382,7 @@ Review the change against the issue and repository at the supplied commits.
 
 Read `threads.json` when present for earlier findings and discussion. Reuse an
 open thread's finding ID when it still stands; leave out the ID when it is fixed.
+Give a new finding an ID not used by any thread in `threads.json`.
 Ask the operator nothing. Leave `questions` empty and put the recommended
 correction in each finding's `fix`.
 

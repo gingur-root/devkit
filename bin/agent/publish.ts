@@ -501,7 +501,8 @@ export function reviewComments(
       });
     else {
       const anchor = f.path && paths.has(f.path) ? f.path : paths.values().next().value;
-      if (anchor) file.push({ path: anchor, body: findingText(f, anchor !== f.path) });
+      if (anchor)
+        file.push({ path: anchor, body: findingText(f, anchor !== f.path || f.line !== null) });
       else body.push(f);
     }
   }
@@ -766,10 +767,11 @@ async function postReview(
     });
   for (const { thread, finding } of actions.reply)
     await replyThread(thread.node, findingText(finding));
-  for (const thread of actions.resolve)
-    await graphql('mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}', {
-      id: thread.node,
-    });
+  if (result.outcome === 'pass' || result.outcome === 'changes-requested')
+    for (const thread of actions.resolve)
+      await graphql('mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}', {
+        id: thread.node,
+      });
   const ok = step === 'ready';
   const repair = step === 'repair';
   if (ok)
