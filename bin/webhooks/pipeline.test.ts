@@ -125,3 +125,51 @@ test("a run's 👀 goes on the comment that started it, else on the issue, and a
     vi.unstubAllEnvs();
   }
 });
+
+const merged = (sender = OPERATOR_ID, extra = {}) => ({
+  id: 'merge',
+  event: 'pull_request',
+  payload: {
+    action: 'closed',
+    repository,
+    sender: { id: sender },
+    pull_request: { number: 12, merged: true },
+    ...extra,
+  },
+});
+
+test('only a trusted merge starts memory, and skipped repositories cannot loop', () => {
+  for (const sender of [OPERATOR_ID, PIPELINE_BOT.id])
+    assert.deepEqual(dispatchFor(merged(sender)), {
+      stage: 'memory',
+      repo: 'scratch',
+      issue: 12,
+      actor: sender,
+    });
+  for (const extra of [
+    { action: 'opened' },
+    { pull_request: { number: 12, merged: false } },
+    { repository: { ...repository, name: 'pipeline' } },
+    { repository: { ...repository, name: 'infra' } },
+  ])
+    assert.equal(dispatchFor(merged(OPERATOR_ID, extra)), null);
+  assert.equal(dispatchFor(merged(STRANGER)), null);
+});
+
+test('a memory dispatch gets no receipt', async () => {
+  const calls: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('PIPELINE_APP_KEY', '');
+  vi.stubGlobal('fetch', async (url: string) => {
+    calls.push(url);
+    return new Response(null, { status: 204 });
+  });
+  try {
+    await pipelineHandler()(merged());
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!, /dispatches$/);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
