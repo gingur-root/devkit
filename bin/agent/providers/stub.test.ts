@@ -55,6 +55,7 @@ for (const [fixture, failureClass, reason] of [
       assert.equal(events[0].fixture, fixture);
       assert.deepEqual(verdict(job, 'rev', out), {
         stage: 'plan',
+        failure: failureClass,
         reason: `\`${failureClass}\`: ${result.summary.replace(/\.$/, '')}`,
       });
     } finally {

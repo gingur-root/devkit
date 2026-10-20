@@ -12,6 +12,7 @@ import { test, vi } from 'vite-plus/test';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import {
   capText,
+  restoreHeading,
   replanStopText,
   changedCriteria,
   specChanged,
@@ -1481,6 +1482,7 @@ test('replan publication replies, gates changes, preserves approval, and stops a
     'missing',
     'invalid',
     'blocked',
+    'overloaded',
   ] as const) {
     const ready = fixtureResult('replan.ready');
     const replies = [
@@ -1515,6 +1517,9 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       }),
       ...(scenario === 'inconclusive' && { outcome: 'inconclusive' as const }),
       ...(scenario === 'blocked' && { status: 'blocked' as const, outcome: null }),
+      ...(scenario === 'overloaded' && {
+        failure: { class: 'overloaded' as const, resetsAt: null },
+      }),
     };
     const paths = staged(job, result);
     const output = join(paths.out, 'github-output');
@@ -1586,7 +1591,7 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       assert.equal(next.includes('repair=true'), expected === 'repair');
       assert.equal(
         mutations.length,
-        ['missing', 'invalid', 'moved', 'moved-cap'].includes(scenario) ? 0 : 2,
+        ['missing', 'invalid', 'moved', 'moved-cap', 'overloaded'].includes(scenario) ? 0 : 2,
       );
       if (mutations.length)
         assert.match(mutations[0]!.body, /^Planner `candida`\n\nFix the parser/);
@@ -1594,6 +1599,7 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       assert.equal(state.approved, job.plan!.revision);
       assert.equal(state.base, 'original-base');
       assert.equal(state.entries.at(-1)?.round, 3);
+      assert.equal(state.entries.at(-1)?.failure, scenario === 'overloaded' ? 'overloaded' : null);
       const stage = bodies.find((b) => b.startsWith(marker('replan')))!;
       assert.ok(stage);
       if (expected === 'rerun') {
@@ -1624,6 +1630,15 @@ test('replan publication replies, gates changes, preserves approval, and stops a
         }
       }
       if (scenario === 'missing') assert.match(stage, /validate.*missing replies: F1/);
+      if (scenario === 'overloaded') {
+        assert.match(log.body, /stopped: overloaded/);
+        const file = join(paths.out, RESULT_FILE);
+        const retry = JSON.parse(readFileSync(file, 'utf8'));
+        writeFileSync(file, JSON.stringify({ ...retry, failure: null }));
+        process.exitCode = exitCode;
+        await publish({ ...paths, round: 3, rounds: 10 });
+        assert.equal(readLoopState(log.body).entries.at(-1)?.failure, null);
+      }
     } finally {
       process.exitCode = exitCode;
       teardown();
@@ -1712,5 +1727,36 @@ test('research requires its report and an HTTPS source; the validate CLI uses th
     assert.ok('result' in verdict(job, 'rev', dir));
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('restoring a spec heading preserves the approved plan and its contract', () => {
+  const out = mkdtempSync(join(tmpdir(), 'restore-heading-'));
+  try {
+    writeFileSync(
+      join(out, PLAN_FILE),
+      'The unchanged plan.\n\n**Plan: changed in review round 9: reply `/approve` to resume #99**\n\nChanged criteria: example in the plan.',
+    );
+    for (const bodySeen of [true, false]) {
+      const job = { ...planJob, issue: { ...planJob.issue, bodySeen } };
+      const original = planComment(job, fixtureResult('plan.ready'), out, null, [], true);
+      const changed = original.replace(
+        /\*\*Plan:.*?\*\*/,
+        '**Plan: changed in review round 4: reply `/approve` to resume #2**\n\nChanged criteria: A1, A2.',
+      );
+      assert.equal(restoreHeading(changed, bodySeen), original);
+      assert.equal(restoreHeading(original, bodySeen), original);
+      assert.deepEqual(
+        approvedPlan(
+          [{ body: restoreHeading(changed, bodySeen), user: { id: OPERATOR_ID } }],
+          7,
+          'rev',
+          bodySeen,
+        ),
+        approvedPlan([{ body: original, user: { id: OPERATOR_ID } }], 7, 'rev', bodySeen),
+      );
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
   }
 });
