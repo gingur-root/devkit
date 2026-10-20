@@ -87,6 +87,13 @@ A candidate's manifest cannot change configs or credential requests. A manifest
 change takes effect after it merges. Local and eval runs without `tools.json`
 in the job directory use the defaults.
 
+Instruction and skill overrides under `.devkit/` come from the same trusted
+commit. `agent render` copies the role's instruction files and each skill's
+`SKILL.md` into `overrides/` in the job directory. `agent run` reads overrides
+only from there, never from the candidate checkout. Override changes take
+effect after merge. Local and eval runs without job-directory overrides use
+devkit's own instructions and skills.
+
 For every role, `agent render` also copies `memory/_org/` and the target repo's
 folder from `gingur-root/pipeline` at one `main` commit into the job directory's
 `memory/`, with a joined `INDEX.md`. `job.memory` records that commit, or is null

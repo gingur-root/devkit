@@ -199,12 +199,24 @@ test('missing memory removes stale files, missing folders skip, and API failures
   }
 });
 
-test('render snapshots only the trusted manifest and propagates non-404 failures', async () => {
-  const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
-  const requests: string[] = [];
+test('render snapshots trusted tools and role overrides, removes stale files, and propagates failures', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-overrides-'));
+  const requests: URL[] = [];
   // Deliberately invalid JSON: validation belongs to agent tools, after render.
   const text = '{invalid-manifest';
-  let status = 200;
+  const files = new Map([
+    ['tools.json', text],
+    ['agents/worker.md', 'TRUSTED WORKER'],
+    ['agents/contract.md', 'TRUSTED CONTRACT'],
+    ['agents/plan.md', 'TRUSTED PLAN'],
+    ['agents/build.md', 'TRUSTED BUILD'],
+    ['agents/review.md', 'TRUSTED REVIEW'],
+    ['agents/repair.md', 'TRUSTED REPAIR'],
+    ['skills/x/SKILL.md', 'TRUSTED SKILL'],
+  ]);
+  let missing = false;
+  let skillsIsFile = false;
+  const failures = new Map<string, number>();
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
     const request = new URL(url);
@@ -212,16 +224,25 @@ test('render snapshots only the trusted manifest and propagates non-404 failures
       return Response.json({ sha: 'mem1' });
     if (request.pathname === '/repos/gingur-root/pipeline/contents/memory')
       return new Response('{}', { status: 404 });
-    if (request.pathname === '/repos/o/r/contents/.devkit/tools.json') {
-      requests.push(`${request.pathname}${request.search}`);
-      return new Response(
-        JSON.stringify(
-          status === 200
-            ? { content: Buffer.from(text).toString('base64') }
-            : { message: 'fixture API failure' },
-        ),
-        { status },
-      );
+    const prefix = '/repos/o/r/contents/.devkit/';
+    if (request.pathname.startsWith(prefix)) {
+      requests.push(request);
+      const path = request.pathname.slice(prefix.length);
+      const status = failures.get(path) ?? (missing ? 404 : 200);
+      if (status !== 200) return Response.json({ message: 'fixture API failure' }, { status });
+      if (path === 'skills')
+        return Response.json(
+          skillsIsFile
+            ? { name: 'skills', type: 'file', content: '' }
+            : [
+                { name: 'x', type: 'dir' },
+                { name: 'empty', type: 'dir' },
+                { name: 'ignored.md', type: 'file' },
+              ],
+        );
+      if (!files.has(path)) return new Response('{}', { status: 404 });
+      const content = request.searchParams.get('ref') === 'cand' ? 'CANDIDATE' : files.get(path)!;
+      return Response.json({ content: Buffer.from(content).toString('base64') });
     }
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
@@ -233,35 +254,69 @@ test('render snapshots only the trusted manifest and propagates non-404 failures
       },
       '/repos/o/r/issues/1/comments': [comment()],
     };
-    return new Response(JSON.stringify(routes[request.pathname] ?? []));
+    return Response.json(routes[request.pathname] ?? []);
   });
+  const options = {
+    repo: 'o/r',
+    issue: 1,
+    role: 'plan',
+    source: 'source',
+    appId: APP,
+    out,
+  } as const;
   try {
+    const roleFiles = {
+      plan: ['worker', 'contract', 'plan'],
+      build: ['worker', 'contract', 'build'],
+      review: ['worker', 'contract', 'review'],
+      repair: ['worker', 'contract', 'build', 'repair'],
+    };
     for (const role of ['plan', 'build', 'review', 'repair'] as const) {
       const source = role === 'review' || role === 'repair' ? 'cand' : 'source';
       const base = role === 'review' || role === 'repair' ? 'base' : undefined;
-      const job = await render({
-        repo: 'o/r',
-        issue: 1,
-        role,
-        source,
-        base,
-        appId: APP,
-        dispatcher: OPERATOR_ID,
-        out,
-      });
-      assert.equal(requests.at(-1), `/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`);
+      mkdirSync(join(out, 'overrides/skills/stale'), { recursive: true });
+      writeFileSync(join(out, 'overrides/skills/stale/SKILL.md'), 'STALE');
+      const job = await render({ ...options, role, source, base, dispatcher: OPERATOR_ID });
       assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
       assert.equal(job.base ?? job.source, base ?? source);
+      const expected = [...roleFiles[role].map((name) => `agents/${name}.md`), 'skills/x/SKILL.md'];
+      const actual = readdirSync(join(out, 'overrides'), {
+        recursive: true,
+        encoding: 'utf8',
+      }).filter((path) => path.endsWith('.md'));
+      assert.deepEqual(actual.sort(), expected.sort());
+      for (const path of expected)
+        assert.equal(readFileSync(join(out, 'overrides', path), 'utf8'), files.get(path));
+      for (const request of requests) assert.equal(request.searchParams.get('ref'), base ?? source);
+      assert.deepEqual(
+        requests
+          .map((request) => request.pathname.slice('/repos/o/r/contents/.devkit/'.length))
+          .sort(),
+        [
+          'tools.json',
+          ...roleFiles[role].map((name) => `agents/${name}.md`),
+          'skills',
+          'skills/x/SKILL.md',
+          'skills/empty/SKILL.md',
+        ].sort(),
+      );
+      requests.length = 0;
     }
-    assert.ok(!requests.some((request) => request.endsWith('ref=cand')));
-    status = 404;
-    await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out });
+    missing = true;
+    await render(options);
     assert.equal(existsSync(join(out, 'tools.json')), false);
-    status = 403;
-    await assert.rejects(
-      render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out }),
-      /403.*fixture API failure/,
-    );
+    assert.equal(existsSync(join(out, 'overrides')), false);
+    missing = false;
+    for (const path of ['tools.json', 'agents/worker.md', 'skills', 'skills/x/SKILL.md']) {
+      failures.set(path, 403);
+      await assert.rejects(render(options), /403.*fixture API failure/);
+      failures.clear();
+    }
+    skillsIsFile = true;
+    await render(options);
+    assert.equal(existsSync(join(out, 'overrides/skills')), false);
+    assert.equal(readFileSync(join(out, 'overrides/agents/worker.md'), 'utf8'), 'TRUSTED WORKER');
+    assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
   } finally {
     rmSync(out, { recursive: true, force: true });
     vi.unstubAllGlobals();

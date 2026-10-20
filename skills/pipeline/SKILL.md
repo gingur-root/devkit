@@ -32,7 +32,10 @@ GitHub pipeline can't drift apart.
 
 Use each role's effort from `bin/agent/roles.ts`. Every stage also gets each
 `skills/*/SKILL.md` whose `roles:` line names it, and a repo's `.devkit/<path>`
-replaces devkit's file of the same path. Codex builds and Claude reviews, so a
+replaces devkit's file of the same path. For review and repair, give the stage
+the repo's `.devkit/` files from the build's base (for example,
+`git show <base>:.devkit/agents/review.md`), never from the candidate worktree.
+Codex builds and Claude reviews, so a
 second model checks the first. A Claude build is allowed only when Troy says
 so, and the PR then says Claude both built and reviewed it.
 

@@ -278,6 +278,10 @@ A repo replaces any role file by committing the
 same path under `.devkit/` (e.g. `.devkit/agents/build.md`). A skill is
 `skills/<name>/SKILL.md` with a `roles: plan, build` frontmatter line; a
 repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
+`agent render` copies these overrides from the trusted commit
+(`job.base ?? job.source`) into the job directory's `overrides/`. Review and
+repair use the build's base, never the candidate checkout. Changes take effect
+after merge; runs without this snapshot use devkit's own files.
 
 ## Running it from a desk session
 
