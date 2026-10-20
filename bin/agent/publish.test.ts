@@ -823,6 +823,41 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
   }
 });
 
+test('follow-up listings keep earlier issues once, sorted and separate from other stages', async () => {
+  const github = fakeGitHub();
+  const job = { ...storyJob, job: 'build-1', role: 'build' };
+  const [first, second, third] = fixtureResult('build.followups').followups!;
+  function listing(): string {
+    const comment = github.calls
+      .filter((c) => c.startsWith('POST /repos/o/r/issues/1/comments '))
+      .at(-1)!;
+    return JSON.parse(comment.split(' ').slice(2).join(' ')).body;
+  }
+  const buildListing =
+    '<!-- devkit:followups:build -->\n\n**Follow-ups from the `build` stage**\n\n- #2 Stub follow-up 1\n- #3 Stub follow-up 2';
+  try {
+    await fileFollowups(job, CARD, 'build', [first!]);
+    assert.equal(
+      await fileFollowups(job, CARD, 'build', [second!]),
+      'Filed 1 follow-up, listed below.',
+    );
+    assert.equal(listing(), buildListing);
+
+    await fileFollowups(job, CARD, 'review.r1', [third!]);
+    assert.equal(
+      listing(),
+      '<!-- devkit:followups:review.r1 -->\n\n**Follow-ups from the `review.r1` stage**\n\n- #4 Stub follow-up 3',
+    );
+
+    github.issues.reverse();
+    await fileFollowups(job, CARD, 'build', [second!, first!]);
+    assert.equal(listing(), buildListing);
+    assert.equal(github.issues.length, 3, 'a retry files nothing');
+  } finally {
+    teardown();
+  }
+});
+
 test('follow-ups carry only provenance in Ask, capped at 5 per stage, and once', async () => {
   const github = fakeGitHub();
   const job = { ...storyJob, job: 'build-1', role: 'build' };
