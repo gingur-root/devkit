@@ -427,7 +427,8 @@ jobs:
   review:
     name: Review
     needs: [start, publish]
-    if: needs.publish.outputs.candidate != ''
+    # No status function would also need every job upstream of publish to succeed, and Critique is skipped when the plan has no critique.
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.candidate != '' }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read

@@ -376,6 +376,10 @@ test('criticism gates plan handoff and build dispatch at trusted devkit jobs', (
     build.publish.if,
     "${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.resume == '' && (needs.build.result != 'skipped' || needs.start.outputs.triage == 'true') }}",
   );
+  assert.equal(
+    build.review.if,
+    "${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.candidate != '' }}",
+  );
   assert.deepEqual(build.criticism.needs, ['start', 'critique']);
   for (const jobs of [plan, build]) {
     assert.ok(jobs.retro.needs.includes('critique'));
