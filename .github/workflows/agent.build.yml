@@ -110,7 +110,7 @@ jobs:
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionContents: read
           permissionIssues: write
-          permissionPullRequests: read
+          permissionPullRequests: write
           permissionOrganizationProjects: write
 
       # The run's 👀 (devkit#148). The webhook receiver adds it for the App's

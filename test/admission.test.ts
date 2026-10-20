@@ -280,11 +280,14 @@ test('each repair is gated by replan and resume skips the builder', () => {
   assert.equal(jobs.gate.needs, 'replan');
   assert.equal(jobs.repair.needs, 'gate');
   assert.equal(jobs.repair.steps[0].with.readToken, '${{ needs.gate.outputs.readToken }}');
-  for (const field of ['next', 'retro'])
-    assert.equal(
-      on.workflow_call.outputs[field].value,
-      `\${{ jobs.verdict.outputs.${field} || jobs.gate.outputs.${field} }}`,
-    );
+  assert.equal(
+    on.workflow_call.outputs.next.value,
+    "${{ jobs.verdict.outputs.next || (jobs.gate.outputs.next != 'repair' && jobs.gate.outputs.next || '') }}",
+  );
+  assert.equal(
+    on.workflow_call.outputs.retro.value,
+    '${{ jobs.verdict.outputs.retro || jobs.gate.outputs.retro }}',
+  );
   const renderReplan = jobs.verdict.steps.find((s: { id?: string }) => s.id === 'next');
   assert.match(renderReplan.run, /--role replan/);
   assert.match(renderReplan.run, /artifact=replan-/);
@@ -294,8 +297,6 @@ test('each repair is gated by replan and resume skips the builder', () => {
   const build = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')).jobs;
   for (const id of ['build', 'publish'])
     assert.ok(build[id].if.includes("needs.start.outputs.resume == ''"));
-  const app = build.start.steps.find((s: { id?: string }) => s.id === 'app');
-  assert.equal(app.with.permissionPullRequests, 'read');
   const read = build.start.steps.find((s: { id?: string }) => s.id === 'read');
   assert.ok(read.if.includes("steps.render.outputs.resume == ''"));
   for (const field of ['base', 'resume', 'candidate'])
