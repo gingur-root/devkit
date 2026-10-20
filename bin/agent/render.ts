@@ -43,14 +43,17 @@ import { MANIFEST_PATH } from './tools.ts';
 
 const MEMORY_REPO = 'gingur-root/pipeline';
 
+async function trustedContents<T>(repo: string, path: string, ref: string): Promise<T | null> {
+  return rest<T>('GET', `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`).catch(
+    (error: Error) => {
+      if (!error.message.includes(' 404 ')) throw error;
+      return null;
+    },
+  );
+}
+
 async function trustedFile(repo: string, path: string, ref: string): Promise<Buffer | null> {
-  const file = await rest<{ content: string }>(
-    'GET',
-    `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
-  ).catch((error: Error) => {
-    if (!error.message.includes(' 404 ')) throw error;
-    return null;
-  });
+  const file = await trustedContents<{ content: string }>(repo, path, ref);
   return file && Buffer.from(file.content, 'base64');
 }
 
@@ -419,14 +422,14 @@ export async function render(options: RenderOptions): Promise<Job> {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, content);
   }
-  const skills = await rest<{ name: string; type: string }[]>(
-    'GET',
-    `/repos/${options.repo}/contents/.devkit/skills?ref=${encodeURIComponent(ref)}`,
-  ).catch((error: Error) => {
-    if (!error.message.includes(' 404 ')) throw error;
-    return [];
-  });
-  for (const skill of skills.filter((skill) => skill.type === 'dir')) {
+  const skills = await trustedContents<{ name: string; type: string }[]>(
+    options.repo,
+    '.devkit/skills',
+    ref,
+  );
+  for (const skill of (Array.isArray(skills) ? skills : []).filter(
+    (skill) => skill.type === 'dir',
+  )) {
     const content = await trustedFile(
       options.repo,
       `.devkit/skills/${encodeURIComponent(skill.name)}/SKILL.md`,

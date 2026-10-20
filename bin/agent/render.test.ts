@@ -215,6 +215,7 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
     ['skills/x/SKILL.md', 'TRUSTED SKILL'],
   ]);
   let missing = false;
+  let skillsIsFile = false;
   const failures = new Map<string, number>();
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
@@ -230,11 +231,15 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
       const status = failures.get(path) ?? (missing ? 404 : 200);
       if (status !== 200) return Response.json({ message: 'fixture API failure' }, { status });
       if (path === 'skills')
-        return Response.json([
-          { name: 'x', type: 'dir' },
-          { name: 'empty', type: 'dir' },
-          { name: 'ignored.md', type: 'file' },
-        ]);
+        return Response.json(
+          skillsIsFile
+            ? { name: 'skills', type: 'file', content: '' }
+            : [
+                { name: 'x', type: 'dir' },
+                { name: 'empty', type: 'dir' },
+                { name: 'ignored.md', type: 'file' },
+              ],
+        );
       if (!files.has(path)) return new Response('{}', { status: 404 });
       const content = request.searchParams.get('ref') === 'cand' ? 'CANDIDATE' : files.get(path)!;
       return Response.json({ content: Buffer.from(content).toString('base64') });
@@ -307,6 +312,11 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
       await assert.rejects(render(options), /403.*fixture API failure/);
       failures.clear();
     }
+    skillsIsFile = true;
+    await render(options);
+    assert.equal(existsSync(join(out, 'overrides/skills')), false);
+    assert.equal(readFileSync(join(out, 'overrides/agents/worker.md'), 'utf8'), 'TRUSTED WORKER');
+    assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
   } finally {
     rmSync(out, { recursive: true, force: true });
     vi.unstubAllGlobals();
