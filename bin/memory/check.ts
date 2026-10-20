@@ -12,7 +12,7 @@ export interface Failure {
   reason: string;
 }
 
-function frontmatter(text: string): Entry | string {
+export function frontmatter(text: string): Entry | string {
   const lines = text.split(/\r?\n/);
   if (lines[0] !== '---') return 'missing frontmatter';
   const end = lines.indexOf('---', 1);

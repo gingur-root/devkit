@@ -20,7 +20,7 @@ import renderCommand from '../commands/agent/render.ts';
 import { render as memoryIndex } from '../memory/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
-import { approvedPlan, issueSnapshot, openIssues, render } from './render.ts';
+import { approvedPlan, changedFiles, issueSnapshot, openIssues, render } from './render.ts';
 
 const APP = 7;
 const ISSUE = revision('Title', 'Body');
@@ -996,3 +996,97 @@ for (const role of ['build', 'plan', 'review', 'repair'] as const) {
     }
   });
 }
+
+test('changed paths include renames and removals in evidence form', () => {
+  assert.deepEqual(
+    changedFiles('gingur-root/scratch', [
+      { filename: 'new.ts', previous_filename: 'old.ts', status: 'renamed' },
+      { filename: 'gone.ts', status: 'removed' },
+    ]),
+    ['gingur-root/scratch:new.ts', 'gingur-root/scratch:old.ts', 'gingur-root/scratch:gone.ts'],
+  );
+});
+
+test('memory renders trusted PR text, paginated patches, and the merge commit without a plan', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-merged-'));
+  try {
+    for (const author of [1, PIPELINE_BOT.id, OPERATOR_ID]) {
+      memoryFixture();
+      const memoryFetch = globalThis.fetch;
+      const pages: string[] = [];
+      vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+        const request = new URL(url);
+        const path = request.pathname;
+        if (path.startsWith('/repos/gingur-root/pipeline/')) return memoryFetch(url, init);
+        if (path === '/repos/gingur-root/r/pulls/12')
+          return Response.json({
+            number: 12,
+            title: 'PR title',
+            body: 'Trusted body. Closes #7',
+            user: { id: author },
+            merged: true,
+            merge_commit_sha: 'merge-sha',
+          });
+        if (path === '/repos/gingur-root/r/pulls/12/files') {
+          pages.push(request.search);
+          return Response.json(
+            request.searchParams.get('page') === '1'
+              ? Array.from({ length: 100 }, (_, i) => ({
+                  filename: `file${i}.ts`,
+                  status: 'modified',
+                  patch: 'é'.repeat(1600),
+                }))
+              : [{ filename: 'old.ts', status: 'removed' }],
+          );
+        }
+        if (path === '/repos/gingur-root/r/issues/7')
+          return Response.json({
+            number: 7,
+            title: 'Untrusted linked title',
+            body: 'Untrusted linked body',
+            user: { id: 1 },
+            labels: [],
+          });
+        if (path === '/repos/gingur-root/r/issues/7/comments')
+          return Response.json([
+            { body: 'Trusted linked comment', user: { id: OPERATOR_ID }, created_at: 'today' },
+          ]);
+        throw new Error(`Unexpected request ${path}`);
+      });
+      const job = await render({
+        repo: 'gingur-root/r',
+        issue: 12,
+        role: 'memory',
+        source: 'ignored-head',
+        appId: APP,
+        out,
+      });
+      const text = readFileSync(join(out, 'pr.md'), 'utf8');
+      assert.equal(job.source, 'merge-sha');
+      assert.equal(job.plan, null);
+      assert.equal(job.base, null);
+      assert.equal(job.memory, 'mem1');
+      assert.equal(job.issue.bodySeen, author !== 1);
+      assert.ok(text.includes('Trusted body') === (author !== 1));
+      assert.ok(text.includes('Trusted linked comment') === (author !== 1));
+      assert.ok(!text.includes('Untrusted linked body'));
+      assert.ok(!text.includes('Untrusted linked title'));
+      if (author === 1) assert.match(text, /Written by someone else/);
+      const diff = readFileSync(join(out, 'pr.diff'), 'utf8');
+      assert.ok(Buffer.byteLength(diff) <= 204800 + Buffer.byteLength('\n(diff cut at 200 KB)\n'));
+      assert.ok(diff.endsWith('(diff cut at 200 KB)\n'));
+      assert.ok(!diff.includes('�'));
+      assert.equal(pages.length, 2);
+      assert.match(pages[0]!, /per_page=100&page=1/);
+      assert.ok(readFileSync(join(out, 'changed.txt'), 'utf8').includes('gingur-root/r:old.ts'));
+      assert.ok(!existsSync(join(out, 'plan.md')));
+      assert.ok(!existsSync(join(out, 'tools.json')));
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});

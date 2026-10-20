@@ -144,6 +144,33 @@ The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
 merges.
 
+## Memory after a merge
+
+When Troy or the pipeline App merges a PR, the webhook receiver starts
+`agent.memory.yml`. The role reads the merge commit, changed files, trusted
+PR text, the org and repo memory slice, and checks for evidence affected by
+those files. It has no `GH_TOKEN`, web tools or Edit tool.
+
+The controller validates all proposed paths and requires evidence for every
+written entry before applying anything. It writes only `memory/_org/` and
+`memory/<repo>/` in a pipeline checkout at the recorded `job.memory` commit.
+It regenerates `MEMORY.md` and checks the changed evidence. A check failure
+opens a draft with the check output; a passing check opens a ready PR.
+Changes go to `memory/<repo>-<pr>` on `gingur-root/pipeline`, with a PR into
+`main`. Nothing changes directly on `main`. No changes means no branch, PR
+or comment.
+
+A failed or cancelled run updates one `<!-- devkit:memory -->` comment on the
+merged PR, naming the stopped job and linking its run. The merged card stays Done, and
+a memory run gets no retro. Merges in `pipeline` and `infra` are skipped by
+the receiver, so merging a memory PR cannot start another memory run.
+
+Activation needs the central caller's `memory` option and job, with
+`devkitRef: main` (devkit#276). Merge the devkit implementation first, then
+the caller update: until the caller lands, memory dispatch returns 422.
+That follow-up also owns the first live run. The companion infra diagram is
+tracked in devkit#277; infra's own memory caller is devkit#261.
+
 ## Retros
 
 When a plan or build run fails, or a review leaves the card in **Needs you**,

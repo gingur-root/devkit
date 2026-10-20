@@ -71,7 +71,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
     }));
   }
   // A plan writes plan.md; a build or repair changes the checkout; a review or retro writes nothing.
-  if (job.role !== 'review' && job.role !== 'retro') {
+  if (job.role !== 'review' && job.role !== 'retro' && job.role !== 'memory') {
     const target = job.role === 'plan' ? join(input.out, PLAN_FILE) : join(input.cwd, 'STUB.md');
     const ownText = new URL(`${job.role}.${fixture}.md`, FIXTURES);
     copyFileSync(existsSync(ownText) ? ownText : new URL(`${job.role}.md`, FIXTURES), target);
