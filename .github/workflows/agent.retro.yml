@@ -95,10 +95,19 @@ jobs:
         with:
           path: ${{ runner.temp }}/agent/in/run
 
+      - id: memory
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
       - name: Render
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           SOURCE: ${{ inputs.source || github.sha }}

@@ -111,6 +111,7 @@ function harness() {
       source: pull.head.sha,
       base: 'base',
       candidate: options.jobCandidate ?? pull.head.sha,
+      memory: null,
       artifacts: [],
       operations: [],
       attemptLimit: null,

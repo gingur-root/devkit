@@ -165,11 +165,21 @@ jobs:
             --checkout "$GITHUB_WORKSPACE/repo" --round "$ROUND"
 
       # The review sees the whole change since the build's base, not just this fix.
+      - id: memory
+        if: steps.publish.outputs.candidate != ''
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
       - name: Render review
         if: steps.publish.outputs.candidate != ''
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           CANDIDATE: ${{ steps.publish.outputs.candidate }}
@@ -302,12 +312,22 @@ jobs:
             --round "$ROUND" --verified "$VERIFIED"
 
       # The next round's repair job: the reviewed commit, the build's base, and this review.
+      - id: memory
+        if: steps.publish.outputs.repair == 'true'
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
       - id: next
         name: Render repair
         if: steps.publish.outputs.repair == 'true'
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
           APP_ID: ${{ inputs.appId }}
