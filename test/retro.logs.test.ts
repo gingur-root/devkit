@@ -154,7 +154,9 @@ test('every public Bitwarden secret ID is allowlisted for the log scan', () => {
       recursive: true,
       withFileTypes: true,
     })) {
-      if (!file.isFile() || !/\.ya?ml$/.test(file.name)) continue;
+      // Test workflows hold placeholder IDs that never reach pipeline logs.
+      if (!file.isFile() || !/\.ya?ml$/.test(file.name) || /\.test\.ya?ml$/.test(file.name))
+        continue;
       const text = readFileSync(join(file.parentPath, file.name), 'utf8');
       for (const match of text.matchAll(
         /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?=\s*>\s*[A-Z_]+)/gi,
