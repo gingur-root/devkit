@@ -1138,7 +1138,7 @@ export async function publishMemory(
   const branch = `memory/${repo}-${job.issue.number}`;
   const title = `memory: ${repo}#${job.issue.number}`;
   git(checkout, ['commit', '-m', title], PIPELINE_BOT);
-  git(checkout, ['push', '--force', 'origin', `HEAD:refs/heads/${branch}`]);
+  git(checkout, ['push', 'origin', `HEAD:refs/heads/${branch}`]);
   const body = [
     `From [${job.repo}#${job.issue.number}](https://github.com/${job.repo}/pull/${job.issue.number}).`,
     actions.map((action) => `- ${action}`).join('\n'),

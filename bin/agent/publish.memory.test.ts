@@ -134,6 +134,32 @@ test('memory output refuses every path outside its slice and symlinks before app
   }
 });
 
+test('a symlink stored in the pipeline checkout is refused before any write', async () => {
+  const f = fixture();
+  try {
+    const target = join(f.root, 'target');
+    mkdirSync(target);
+    rmSync(join(f.checkout, 'memory/_org'), { recursive: true });
+    symlinkSync(target, join(f.checkout, 'memory/_org'));
+    git(f.checkout, ['add', '-A']);
+    git(f.checkout, ['commit', '-m', 'link'], { name: 'Fixture', email: 'fixture@example.com' });
+    f.put('_org/a.md', entry());
+    await assert.rejects(
+      publishMemory(
+        { ...job, memory: git(f.checkout, ['rev-parse', 'HEAD']) },
+        result,
+        f.out,
+        f.checkout,
+      ),
+      /memory\/_org: symlink refused/,
+    );
+    assert.equal(existsSync(join(target, 'a.md')), false);
+    assert.equal(f.calls.length, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('valid memory becomes one pipeline PR from the pinned store, never main', async () => {
   const f = fixture();
   try {

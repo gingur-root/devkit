@@ -131,9 +131,9 @@ const merged = (sender = OPERATOR_ID, extra = {}) => ({
   event: 'pull_request',
   payload: {
     action: 'closed',
-    repository,
+    repository: { ...repository, default_branch: 'main' },
     sender: { id: sender },
-    pull_request: { number: 12, merged: true },
+    pull_request: { number: 12, merged: true, base: { ref: 'main' } },
     ...extra,
   },
 });
@@ -148,7 +148,8 @@ test('only a trusted merge starts memory, and skipped repositories cannot loop',
     });
   for (const extra of [
     { action: 'opened' },
-    { pull_request: { number: 12, merged: false } },
+    { pull_request: { number: 12, merged: false, base: { ref: 'main' } } },
+    { pull_request: { number: 12, merged: true, base: { ref: 'agent/issue-1' } } },
     { repository: { ...repository, name: 'pipeline' } },
     { repository: { ...repository, name: 'infra' } },
   ])

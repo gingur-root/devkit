@@ -55,9 +55,9 @@ export interface Dispatch {
 interface Payload {
   action?: string;
   sender?: { id?: number };
-  repository?: { name?: string; owner?: { login?: string } };
+  repository?: { name?: string; owner?: { login?: string }; default_branch?: string };
   issue?: { number?: number; pull_request?: unknown };
-  pull_request?: { number?: number; merged?: boolean };
+  pull_request?: { number?: number; merged?: boolean; base?: { ref?: string } };
   label?: { name?: string };
   comment?: { id?: number; body?: string };
 }
@@ -72,6 +72,8 @@ export function dispatchFor({ event, payload }: Delivery): Dispatch | null {
       action !== 'closed' ||
       pull_request?.merged !== true ||
       !pull_request.number ||
+      // A stacked PR merged into its parent branch isn't on main yet; the parent's merge runs it.
+      pull_request.base?.ref !== repository.default_branch ||
       (sender?.id !== OPERATOR_ID && sender?.id !== PIPELINE_BOT.id)
     )
       return null;
