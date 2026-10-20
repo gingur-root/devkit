@@ -19,7 +19,15 @@ import { test, vi } from 'vite-plus/test';
 import renderCommand from '../commands/agent/render.ts';
 import { render as memoryIndex } from '../memory/render.ts';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
-import { CONTRACT_PREFIX, Job, marker, PLAN_END, PLAN_START, revision } from './job.ts';
+import {
+  CONTRACT_PREFIX,
+  Job,
+  marker,
+  PLAN_END,
+  PLAN_START,
+  revision,
+  TRIAGE_FILE,
+} from './job.ts';
 import { loopComment, readLoopState, type LoopState } from './publish.ts';
 import { approvedPlan, changedFiles, issueSnapshot, openIssues, render } from './render.ts';
 
@@ -94,6 +102,7 @@ test('every role renders only org and repo Markdown at one memory SHA with the r
   try {
     for (const role of [
       'plan',
+      'critique',
       'research',
       'build',
       'review',
@@ -216,6 +225,7 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
     ['agents/worker.md', 'TRUSTED WORKER'],
     ['agents/contract.md', 'TRUSTED CONTRACT'],
     ['agents/plan.md', 'TRUSTED PLAN'],
+    ['agents/critique.md', 'TRUSTED CRITIC'],
     ['agents/build.md', 'TRUSTED BUILD'],
     ['agents/review.md', 'TRUSTED REVIEW'],
     ['agents/repair.md', 'TRUSTED REPAIR'],
@@ -274,8 +284,8 @@ test('render snapshots trusted tools and role overrides, removes stale files, an
   } as const;
   try {
     const roleFiles = {
-      plan: ['worker', 'contract', 'plan'],
-      build: ['worker', 'contract', 'build'],
+      plan: ['worker', 'contract', 'plan', 'critique'],
+      build: ['worker', 'contract', 'build', 'critique'],
       review: ['worker', 'contract', 'review'],
       repair: ['worker', 'contract', 'build', 'repair'],
       verify: ['worker', 'contract', 'verify'],
@@ -1316,7 +1326,7 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
         refusals.push(body);
         return Response.json({ body });
       }
-      return Response.json([comment()]);
+      return Response.json([comment(PLAN, { critique: true })]);
     }
     if (path === '/repos/o/r/pulls')
       return Response.json([{ number: 2, head: { sha: 'new-head' } }]);
@@ -1346,6 +1356,9 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
     dispatcher: OPERATOR_ID,
     out,
   };
+  const githubOutput = join(out, 'github-output');
+  writeFileSync(githubOutput, '');
+  vi.stubEnv('GITHUB_OUTPUT', githubOutput);
   try {
     await assert.rejects(
       render({ ...options, role: 'repair' }),
@@ -1363,6 +1376,7 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
     });
     assert.equal(state.approved, revision(PLAN));
     assert.equal(job.base, 'original-base');
+    assert.equal(readFileSync(githubOutput, 'utf8'), '');
     assert.equal(writes, 1);
     assert.equal(refs.at(-1), 'original-base');
     await render({ ...options, role: 'repair' });
@@ -1378,6 +1392,75 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
     state.entries[0]!.step = 'stop';
     await render({ ...options, role: 'build' });
     assert.equal(existsSync(join(out, 'resume.json')), false);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+test('build records base drift and requests criticism only without a matching pass', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-criticism-'));
+  const output = join(out, 'github-output');
+  let source = 'abc';
+  let criticism: unknown = null;
+  let triage: unknown = null;
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('GITHUB_OUTPUT', output);
+  vi.stubGlobal('fetch', async (url: string) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/commits/main')) return Response.json({ sha: 'memory' });
+    if (path.includes('/contents/')) return new Response('{}', { status: 404 });
+    if (path === '/repos/o/r/issues/1')
+      return Response.json({
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      });
+    if (path.endsWith('/comments'))
+      return Response.json([comment(PLAN, { critique: true, source, criticism, triage })]);
+    return Response.json([]);
+  });
+  try {
+    for (const [planSource, record, moved, request, items] of [
+      ['old', null, true, true, null],
+      ['abc', null, false, true, null],
+      [
+        'abc',
+        { outcome: 'pass', planRevision: revision(PLAN), issueRevision: ISSUE, source: 'abc' },
+        false,
+        false,
+        null,
+      ],
+      ['old', null, true, false, []],
+      [
+        'abc',
+        null,
+        false,
+        false,
+        [{ title: 'Fix', body: 'b', link: null, start: 'plan', priority: 'P2' }],
+      ],
+    ] as const) {
+      source = planSource;
+      criticism = record;
+      triage = items;
+      writeFileSync(output, '');
+      const job = await render({
+        repo: 'o/r',
+        issue: 1,
+        role: 'build',
+        source: 'abc',
+        appId: APP,
+        dispatcher: OPERATOR_ID,
+        out,
+      });
+      assert.equal(job.baseMoved, moved);
+      assert.equal(readFileSync(output, 'utf8').includes('critique=true'), request);
+      if (items !== null)
+        assert.deepEqual(JSON.parse(readFileSync(join(out, TRIAGE_FILE), 'utf8')), items);
+    }
   } finally {
     rmSync(out, { recursive: true, force: true });
     vi.unstubAllGlobals();

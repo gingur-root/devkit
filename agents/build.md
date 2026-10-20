@@ -4,6 +4,10 @@
 
 Implement the supplied approved issue and plan in the assigned worktree.
 
+When `job.json` has `baseMoved: true`, the default branch moved since the plan.
+Recheck the plan's assumptions against the new base before you implement,
+and record what changed in `assumptions`.
+
 1. Confirm the source commit and plan revision. Read applicable repository
    instructions and the relevant existing flow. Run the relevant baseline
    check when practical; record pre-existing failures separately.

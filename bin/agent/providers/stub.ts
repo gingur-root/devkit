@@ -89,6 +89,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   }
   // A plan or research writes its report; a build or repair changes the checkout; a review or retro writes nothing.
   if (
+    job.role !== 'critique' &&
     job.role !== 'review' &&
     job.role !== 'verify' &&
     job.role !== 'retro' &&
@@ -118,7 +119,7 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
         ...result.inputs,
         issue: job.issue.revision,
         plan: job.plan?.revision ?? null,
-        base: job.base,
+        base: job.role === 'critique' ? job.source : job.base,
         candidate: job.candidate,
       },
     },

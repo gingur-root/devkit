@@ -15,7 +15,7 @@ import {
   STAGE_LABELS,
 } from './constants.ts';
 import { restAll } from './github.ts';
-import { marker } from './job.ts';
+import { type PlanContract, marker } from './job.ts';
 
 /** A card's run history, oldest first: a dashboard Continue, or a stage started by a label or a command. */
 export type Step =
@@ -134,4 +134,20 @@ export async function readSteps(repo: string, issue: number): Promise<Step[]> {
     restAll<Event>(`${path}/events`),
   ]);
   return steps(comments, events);
+}
+
+export function criticismPasses(
+  contract: Pick<PlanContract, 'critique' | 'criticism'>,
+  planRevision: string,
+  issueRevision: string,
+  base: string,
+): boolean {
+  const criticism = contract.criticism;
+  return (
+    contract.critique !== true ||
+    (criticism?.outcome === 'pass' &&
+      criticism.planRevision === planRevision &&
+      criticism.issueRevision === issueRevision &&
+      criticism.source === base)
+  );
 }

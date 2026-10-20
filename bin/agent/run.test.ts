@@ -111,6 +111,7 @@ test('a role gets the skills that name it; the repo adds and replaces them', () 
     assert.doesNotMatch(instructions('review', ROLES.review, overrides), /# Simple English/);
     for (const role of [
       'plan',
+      'critique',
       'build',
       'repair',
       'review',
@@ -196,6 +197,7 @@ test('the envelope written for a run with no result passes the schema publish ch
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   const missing = settle({ ok: true }, true);
   assert.equal(missing.ok, false);

@@ -32,6 +32,7 @@ const job = {
   artifacts: [],
   operations: [],
   attemptLimit: null,
+  baseMoved: false,
   objective: '',
 } satisfies Job;
 const result = Result.parse({

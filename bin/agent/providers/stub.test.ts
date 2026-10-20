@@ -34,6 +34,7 @@ for (const [fixture, failureClass, reason] of [
       artifacts: [],
       operations: [],
       attemptLimit: null,
+      baseMoved: false,
     };
     writeFileSync(join(input, JOB_FILE), JSON.stringify(job));
     const exitCode = process.exitCode;
@@ -84,6 +85,7 @@ test('stub replans answer open threads without modifying the candidate, and spec
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   writeFileSync(join(input, JOB_FILE), JSON.stringify(job));
   writeFileSync(
@@ -150,6 +152,7 @@ test('the verifier stub checks ready and unverified fixtures without changing th
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   writeFileSync(join(input, JOB_FILE), JSON.stringify(job));
   const content = 'unrepaired candidate';
@@ -181,6 +184,56 @@ test('the verifier stub checks ready and unverified fixtures without changing th
   }
 });
 
+test('critique fixtures request criticism and return pass or changes-requested without editing the checkout', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'stub-critique-'));
+  const input = join(cwd, 'in'),
+    out = join(cwd, 'out');
+  mkdirSync(input);
+  mkdirSync(out);
+  const job = {
+    job: 'plan-1',
+    role: 'plan',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 'T', revision: 'issue', bodySeen: true },
+    plan: null,
+    source: 'base',
+    base: null,
+    candidate: null,
+    memory: null,
+    baseMoved: false,
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+  };
+  const exit = process.exitCode;
+  try {
+    for (const fixture of ['critique', 'critique-pass']) {
+      vi.stubEnv('DEVKIT_STUB_FIXTURE', fixture);
+      writeFileSync(join(input, JOB_FILE), JSON.stringify(job));
+      await run({ role: 'plan', executor: 'stub', cwd, in: input, out });
+      const plan = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
+      assert.equal(plan.critique, true);
+      writeFileSync(
+        join(input, JOB_FILE),
+        JSON.stringify({
+          ...job,
+          role: 'critique',
+          plan: { revision: 'plan', criteria: ['A1'], checks: { A1: 'agent' } },
+        }),
+      );
+      await run({ role: 'critique', executor: 'stub', cwd, in: input, out });
+      const critic = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
+      assert.equal(critic.outcome, fixture === 'critique' ? 'changes-requested' : 'pass');
+      assert.equal(critic.inputs.base, 'base');
+      assert.equal(existsSync(join(cwd, 'STUB.md')), false);
+    }
+  } finally {
+    process.exitCode = exit;
+    vi.unstubAllEnvs();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
 for (const fixture of ['ready', 'docs', 'inconclusive']) {
   test(`research stub ${fixture} writes a report that passes verdict`, async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'research-stub-'));
@@ -199,6 +252,7 @@ for (const fixture of ['ready', 'docs', 'inconclusive']) {
       base: null,
       candidate: null,
       memory: null,
+      baseMoved: false,
       artifacts: [],
       operations: [],
       attemptLimit: null,

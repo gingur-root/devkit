@@ -1,0 +1,47 @@
+{
+  "job": "",
+  "role": "critique",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "pass",
+  "summary": "The plan meets the issue and trusted-source checks.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Build the approved plan.",
+  "findings": [],
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null,
+  "merge": null
+}

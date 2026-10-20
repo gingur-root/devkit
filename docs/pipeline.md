@@ -518,3 +518,24 @@ proof, then pin it back.
   still have gone through, so check the issue's runs before redelivering it.
 - **One run per card at a time.** A second label while one runs waits in the
   queue.
+
+## Plan criticism
+
+A ready plan with `critique: true` runs through Codex at High before plan
+publication. The plan comment shows the Criticism outcome, summary and blocking
+findings. A dashboard Continue hands off to build only after criticism passes.
+
+On `/approve`, the build chain checks that the pass matches the plan revision,
+issue revision and current base commit. A missing or stale pass runs criticism
+again. When the default branch moved since the plan, `job.json` records
+`baseMoved: true`; the builder rechecks the plan's assumptions against that base.
+A review-loop resume keeps its existing approval path and skips this check.
+
+A non-pass blocks build, comments on the card, removes `agent:build` and moves
+the card to Needs you. This is a normal stop and does not trigger a retro.
+Missing or invalid criticism fails the job and gets a retro. Use `/revise`,
+then `/approve`, to retry after fixing the plan.
+
+The `critique` stub fixture blocks with `changes-requested`. The
+`critique-pass` fixture passes. The scratch smoke needs both options in the
+pipeline caller's fixture list after merge.

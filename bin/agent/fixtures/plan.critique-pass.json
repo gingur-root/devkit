@@ -1,0 +1,43 @@
+{
+  "job": "",
+  "role": "plan",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": "plan.md",
+    "candidate": null,
+    "artifacts": ["plan.md"]
+  },
+  "status": "complete",
+  "outcome": "ready",
+  "summary": "Stub plan: one criterion, A1, checked by an agent. Ready to build.",
+  "evidence": [],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": [
+    {
+      "id": "A1",
+      "text": "The stub plan is published as one comment on the issue.",
+      "check": "agent"
+    }
+  ],
+  "probe": null,
+  "critique": true,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Reply /approve to build it.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "priority": "P2",
+  "triage": null,
+  "failure": null,
+  "merge": null
+}

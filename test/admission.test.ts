@@ -65,7 +65,14 @@ test('every round passes the cap and base, chains repair or rerun, and reaches f
       );
     }
   }
-  assert.deepEqual(jobs.retro.needs, ['start', 'build', 'publish', ...rounds]);
+  assert.deepEqual(jobs.retro.needs, [
+    'start',
+    'critique',
+    'criticism',
+    'build',
+    'publish',
+    ...rounds,
+  ]);
   assert.deepEqual(jobs.next.needs, [...jobs.retro.needs, 'retro']);
   assert.ok(jobs.retro.if.includes("contains(needs.*.outputs.retro, 'true')"));
 });
@@ -345,4 +352,44 @@ test('criteria verification reuses the review pack and token and feeds every ver
     assert.equal(download['continue-on-error'], true);
     assert.equal(download.with.path, `\${{ runner.temp }}/verify/${suffix}`);
   }
+});
+
+test('criticism gates plan handoff and build dispatch at trusted devkit jobs', () => {
+  const plan = parse(readFileSync(new URL('agent.plan.yml', workflows), 'utf8')).jobs;
+  const build = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')).jobs;
+  assert.deepEqual(plan.critique.needs, ['start', 'plan']);
+  assert.equal(plan.critique.if, "needs.plan.outputs.critique == 'true'");
+  assert.deepEqual(plan.publish.needs, ['start', 'plan', 'critique']);
+  assert.equal(plan.plan.outputs.critique, '${{ steps.run.outputs.critique }}');
+  assert.deepEqual(build.build.needs, ['start', 'criticism']);
+  assert.equal(
+    build.build.if,
+    "${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.triage != 'true' && needs.start.outputs.resume == '' && (needs.criticism.result == 'skipped' || needs.criticism.outputs.pass == 'true') }}",
+  );
+  assert.equal(
+    build.criticism.if,
+    "${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.critique == 'true' }}",
+  );
+  assert.equal(
+    build.publish.if,
+    "${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.resume == '' && (needs.build.result != 'skipped' || needs.start.outputs.triage == 'true') }}",
+  );
+  assert.deepEqual(build.criticism.needs, ['start', 'critique']);
+  for (const jobs of [plan, build]) {
+    assert.ok(jobs.retro.needs.includes('critique'));
+    assert.ok(jobs.next.needs.includes('critique'));
+    assert.equal(jobs.critique.permissions.contents, 'read');
+    const text = JSON.stringify(jobs.critique);
+    assert.ok(!text.includes('PIPELINE_SECRETS_TOKEN'));
+  }
+  for (const job of [plan.critique, build.start, build.criticism]) {
+    const checkout = job.steps.find((s: { uses?: string }) =>
+      s.uses?.startsWith('actions/checkout@'),
+    );
+    assert.equal(checkout.with.ref, '${{ inputs.devkitRef }}');
+  }
+  for (const job of [build.start, build.criticism])
+    assert.ok(!JSON.stringify(job).includes('/actions/agent.run@'));
+  assert.ok(plan.critique.steps.some((s: { run?: string }) => s.run?.includes('agent chain')));
+  assert.ok(build.start.steps.some((s: { run?: string }) => s.run?.includes('agent chain')));
 });

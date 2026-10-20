@@ -195,6 +195,7 @@ function runCase(
       artifacts: [],
       operations: [],
       attemptLimit: null,
+      baseMoved: false,
       ...fields,
     };
     const dir = join(work, id);

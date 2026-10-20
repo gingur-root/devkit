@@ -110,6 +110,7 @@ const planJob: Job = {
   artifacts: [],
   operations: [],
   attemptLimit: null,
+  baseMoved: false,
 };
 
 test('a ready plan that edits workflow files is approved like any other, and keeps body visibility', () => {
@@ -132,6 +133,7 @@ test('a ready plan that edits workflow files is approved like any other, and kee
           out,
           null,
           [],
+          true,
         );
         const suffix = bodySeen
           ? ''
@@ -167,6 +169,7 @@ test('plan comments record body visibility and name a withheld body in every bol
           out,
           variant.handoff,
           variant.story.map((s) => ({ ...s, blockedBy: [...s.blockedBy] })),
+          true,
         );
         const head = body.split('\n\n')[1]!;
         if (bodySeen) assert.doesNotMatch(head, /without the issue body/);
@@ -272,6 +275,7 @@ test('candidate mismatches are stale, while other contract mismatches stay contr
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   const out = mkdtempSync(join(tmpdir(), 'verdict-'));
   const result = {
@@ -678,6 +682,7 @@ test('a missing result names the first failed setup step, but not a failed run',
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   const out = mkdtempSync(join(tmpdir(), 'verdict-'));
   const missing = { stage: 'review', reason: 'the agent ended without a result' };
@@ -735,6 +740,7 @@ test("only a retro issue's plan triages, and every other plan sets a priority", 
     artifacts: [],
     operations: [],
     attemptLimit: null,
+    baseMoved: false,
   };
   const retro = { ...job, artifacts: [ISSUES_FILE] };
   const triage = [{ title: 'Fix', body: 'b', link: null, start: 'plan', priority: 'P2' }] as const;
@@ -959,6 +965,7 @@ const storyJob: Job = {
   artifacts: [],
   operations: [],
   attemptLimit: null,
+  baseMoved: false,
 };
 
 test('subtasks become sub-issues in Ask, and a retry files none twice', async () => {
@@ -1072,6 +1079,7 @@ test('plan contracts record dependency issue numbers and accept old plans withou
         out,
         null,
         story.map((s) => ({ ...s, blockedBy: [...s.blockedBy] })),
+        true,
       );
       const raw = JSON.parse(body.split(CONTRACT_PREFIX)[1]!.split(' -->')[0]!);
       assert.deepEqual(raw.blockedBy, expected);

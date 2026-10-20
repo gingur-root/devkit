@@ -80,6 +80,8 @@ export const STUB_FIXTURES = [
   'advisory',
   'spec',
   'unverified',
+  'critique',
+  'critique-pass',
   'docs',
   'inconclusive',
 ] as const;

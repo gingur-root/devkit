@@ -1,0 +1,60 @@
+{
+  "job": "",
+  "role": "critique",
+  "inputs": {
+    "issue": "",
+    "plan": "",
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "status": "complete",
+  "outcome": "changes-requested",
+  "summary": "The plan needs a trusted-commit check before building.",
+  "evidence": [
+    {
+      "criterion": "A1",
+      "check": "stub",
+      "expected": "STUB.md exists",
+      "observed": "STUB.md exists",
+      "exit": 0,
+      "location": "STUB.md",
+      "result": "pass"
+    }
+  ],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": null,
+  "probe": null,
+  "critique": null,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Revise the plan and approve it again.",
+  "findings": [
+    {
+      "id": "F1",
+      "axis": "spec",
+      "blocking": true,
+      "criterion": "A1",
+      "path": null,
+      "line": null,
+      "evidence": "Stub plan lacks a trusted-commit check.",
+      "scenario": "A credential decision reads agent-written files.",
+      "impact": "Agent output could control credentials.",
+      "fix": "Read the decision from the trusted source commit."
+    }
+  ],
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null,
+  "merge": null
+}

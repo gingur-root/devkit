@@ -76,6 +76,14 @@ export function isStageComment(
   );
 }
 
+export const Criticism = z.object({
+  outcome: z.string(),
+  planRevision: z.string(),
+  issueRevision: z.string(),
+  source: z.string(),
+});
+export type Criticism = z.infer<typeof Criticism>;
+
 /** The hidden fields under a plan comment, which the build stage reads back. */
 export const PlanContract = z.object({
   planRevision: z.string(),
@@ -86,6 +94,7 @@ export const PlanContract = z.object({
   bodySeen: z.boolean().nullable().default(null),
   checks: z.record(z.string(), z.string()),
   critique: z.boolean().nullable(),
+  criticism: Criticism.nullable().default(null),
   // Absent on plans published before devkit#115.
   triage: Triage.nullable().default(null),
   blockedBy: z.record(z.string(), z.array(z.number().int())).nullable().default(null),
@@ -114,6 +123,7 @@ export const Job = z.object({
   base: z.string().nullable(),
   candidate: z.string().nullable(),
   memory: z.string().nullable().default(null),
+  baseMoved: z.boolean().default(false),
   artifacts: z.array(z.string()),
   operations: z.array(z.string()),
   attemptLimit: z.number().int().nullable(),
@@ -126,6 +136,10 @@ export function revision(...parts: string[]): string {
   return createHash('sha256')
     .update(parts.map((part) => part.replace(/\r\n/g, '\n')).join('\n'))
     .digest('hex');
+}
+
+export function planRevision(text: string): string {
+  return revision(text.trim());
 }
 
 /** Claude's `input_tokens` leaves out cache reads and writes; Codex's includes them. */
