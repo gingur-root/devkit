@@ -227,7 +227,7 @@ export function replanStep(v: Verdict, changed: boolean): 'repair' | 'spec' | 's
   if ('stage' in v) return 'stop';
   if (changed) return 'spec';
   return v.result.status !== 'complete' ||
-    v.result.outcome === 'needs-input' ||
+    v.result.outcome !== 'ready' ||
     v.result.questions.length > 0
     ? 'stop'
     : 'repair';

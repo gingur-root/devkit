@@ -1232,6 +1232,11 @@ test('spec changes compare plan text and criterion checks, with null meaning unc
 test('a planner can only add stops, and invalid results never reach repair', () => {
   const ready = { ...pass, outcome: 'ready' as const };
   assert.equal(replanStep({ result: ready }, false), 'repair');
+  for (const outcome of [...Result.shape.outcome.unwrap().options, null]) {
+    const result = { ...ready, outcome };
+    assert.equal(replanStep({ result }, false), outcome === 'ready' ? 'repair' : 'stop');
+    assert.equal(replanStep({ result }, true), 'spec');
+  }
   for (const result of [
     { ...ready, outcome: 'needs-input' as const },
     { ...ready, questions: ['Change the interface?'] },
@@ -1333,6 +1338,7 @@ test('replan publication replies, gates changes, preserves approval, and stops a
     'spec',
     'checks-only',
     'questions',
+    'inconclusive',
     'missing',
     'invalid',
     'blocked',
@@ -1368,6 +1374,7 @@ test('replan publication replies, gates changes, preserves approval, and stops a
         outcome: 'needs-input' as const,
         questions: ['Change the API?'],
       }),
+      ...(scenario === 'inconclusive' && { outcome: 'inconclusive' as const }),
       ...(scenario === 'blocked' && { status: 'blocked' as const, outcome: null }),
     };
     const paths = staged(job, result);
