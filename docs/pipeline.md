@@ -212,8 +212,10 @@ lands instead of sitting in a comment (devkit#115):
    on linked issues, and closes
    the retro issue. No PR.
 
-- A retro with no findings (an outage, a rate limit) only comments, as does
-  a retro on a run of a retro issue, so retros can't loop.
+- A retro with no findings (a one-off outage or rate limit) only comments.
+  A pre-agent failure is always the first finding; a repeated transient cause
+  is a finding too. A retro on a run of a retro issue only comments, so retros
+  can't loop.
 - One retro per run. A plan that asks you questions gets none, since that is
   the normal flow.
 - It can't read the Actions log, so a job that died before its agent wrote
