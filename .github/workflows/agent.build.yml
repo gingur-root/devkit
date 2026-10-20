@@ -199,7 +199,8 @@ jobs:
   publish:
     name: Publish
     needs: [start, build]
-    if: always() && needs.start.result == 'success'
+    # The loop reports cancelled runs; never publish their partial output.
+    if: ${{ !cancelled() && needs.start.result == 'success' }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:

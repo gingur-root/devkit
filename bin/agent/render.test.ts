@@ -861,6 +861,197 @@ test('a story never builds: it goes to Needs you and says to build each subtask'
   }
 });
 
+const OPEN_BLOCKER = {
+  id: 1002,
+  number: 2,
+  state: 'open',
+  html_url: 'https://github.com/o/r/issues/2',
+};
+
+function blockerFixture() {
+  const out = mkdtempSync(join(tmpdir(), 'render-blockers-'));
+  const issue = {
+    number: 3,
+    title: 'Title',
+    body: 'Body',
+    labels: [],
+    user: { id: OPERATOR_ID },
+    issue_dependencies_summary: { total_blocked_by: 1 },
+  };
+  const parent = { ...issue, number: 1 };
+  const routes = new Map<string, unknown>([
+    ['/repos/o/r/issues/3', issue],
+    ['/repos/o/r/issues/3/comments', [comment()]],
+    ['/repos/o/r/issues/3/parent', parent],
+    ['/repos/o/r/issues/3/dependencies/blocked_by', [OPEN_BLOCKER]],
+    ['/repos/o/r/issues/1/comments', [comment(PLAN, { blockedBy: { '3': [2] } })]],
+    [
+      '/repos/o/r/issues/1/sub_issues',
+      [
+        { id: 1002, number: 2 },
+        { id: 1003, number: 3 },
+      ],
+    ],
+  ]);
+  const calls: { method: string; path: string; body: string }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    const method = init.method ?? 'GET';
+    calls.push({ method, path, body: String(init.body ?? '') });
+    if (path === '/repos/gingur-root/pipeline/commits/main') return Response.json({ sha: 'mem1' });
+    if (path.includes('/contents/') || (path.endsWith('/parent') && !routes.has(path)))
+      return new Response('{}', { status: 404 });
+    if (method !== 'GET') return Response.json({});
+    assert.ok(routes.has(path), `unexpected GET ${path}`);
+    return Response.json(routes.get(path));
+  });
+  return {
+    issue,
+    parent,
+    routes,
+    calls,
+    options: {
+      repo: 'o/r',
+      issue: 3,
+      role: 'build',
+      source: 'abc',
+      appId: APP,
+      dispatcher: OPERATOR_ID,
+      out,
+    } as const,
+    cleanup() {
+      rmSync(out, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    },
+  };
+}
+
+for (const scenario of [
+  'live',
+  'closed',
+  'removed',
+  'edited',
+  'not-ready',
+  'story-edited',
+  'missing-plan',
+  'untrusted-plan',
+  'body-unseen',
+  'mixed',
+  'external',
+  'cross-story',
+  'cross-repo',
+] as const) {
+  test(`build dependency gate: ${scenario}`, async () => {
+    const f = blockerFixture();
+    const parentComments = '/repos/o/r/issues/1/comments';
+    const dependencies = '/repos/o/r/issues/3/dependencies/blocked_by';
+    try {
+      switch (scenario) {
+        case 'closed':
+          f.routes.set(dependencies, [{ ...OPEN_BLOCKER, state: 'closed' }]);
+          break;
+        case 'removed':
+          f.routes.set(parentComments, [comment(PLAN, { blockedBy: null })]);
+          break;
+        case 'edited':
+          f.routes.set(parentComments, [comment(`${PLAN}\nEdited`, { blockedBy: { '3': [2] } })]);
+          break;
+        case 'not-ready':
+          f.routes.set(parentComments, [
+            comment(PLAN, { outcome: 'needs-input', blockedBy: { '3': [2] } }),
+          ]);
+          break;
+        case 'story-edited':
+          f.parent.body = 'Changed story';
+          break;
+        case 'missing-plan':
+          f.routes.set(parentComments, []);
+          break;
+        case 'untrusted-plan':
+          f.routes.set(parentComments, [comment(PLAN, { blockedBy: { '3': [2] } }, 999)]);
+          break;
+        case 'body-unseen':
+          f.routes.set(parentComments, [
+            comment(PLAN, { bodySeen: false, blockedBy: { '3': [2] } }),
+          ]);
+          break;
+        case 'mixed':
+          f.issue.issue_dependencies_summary.total_blocked_by = 2;
+          f.routes.set(dependencies, [
+            OPEN_BLOCKER,
+            {
+              ...OPEN_BLOCKER,
+              id: 1004,
+              number: 4,
+              state: 'closed',
+              html_url: 'https://github.com/o/r/issues/4',
+            },
+          ]);
+          break;
+        case 'external':
+          f.routes.delete('/repos/o/r/issues/3/parent');
+          break;
+        case 'cross-story':
+          f.routes.set('/repos/o/r/issues/1/sub_issues', [{ id: 1003, number: 3 }]);
+          break;
+        case 'cross-repo':
+          f.routes.set(dependencies, [
+            { ...OPEN_BLOCKER, id: 9002, html_url: 'https://github.com/other/repo/issues/2' },
+          ]);
+          break;
+        case 'live':
+          break;
+      }
+      const refuses = ['live', 'mixed', 'external', 'cross-story', 'cross-repo'].includes(scenario);
+      if (refuses) await assert.rejects(render(f.options), /[Bb]locked/);
+      else assert.equal((await render(f.options)).role, 'build');
+      const note = f.calls.find((c) => c.method === 'POST' && c.path.endsWith('/comments'));
+      assert.ok(note, 'the card names blockers even when ignored');
+      const body = JSON.parse(note.body).body as string;
+      assert.ok(body.includes('#2'));
+      if (refuses) {
+        assert.ok(body.startsWith(marker('build')));
+        assert.match(body, /\*\*Build refused:\*\*/);
+        assert.ok(
+          f.calls.some((c) => c.method === 'DELETE' && c.path.endsWith('/labels/agent%3Abuild')),
+        );
+        if (scenario === 'mixed') assert.match(body, /[Ii]gnored.*#4.*closed/s);
+        if (scenario === 'cross-repo')
+          assert.ok(body.includes('https://github.com/other/repo/issues/2'));
+      } else {
+        assert.ok(body.startsWith(marker('blockers')));
+        assert.match(body, /[Ii]gnored/);
+        assert.ok(body.includes(scenario === 'closed' ? 'closed' : "#1's plan no longer names it"));
+        assert.ok(!f.calls.some((c) => c.method === 'DELETE'));
+      }
+    } finally {
+      f.cleanup();
+    }
+  });
+}
+
+for (const role of ['build', 'plan', 'review', 'repair'] as const) {
+  test(`dependency gate makes no calls for ${role}${role === 'build' ? ' without edges' : ''}`, async () => {
+    const f = blockerFixture();
+    try {
+      if (role === 'build') f.issue.issue_dependencies_summary.total_blocked_by = 0;
+      await render({ ...f.options, role });
+      assert.ok(
+        !f.calls.some(
+          (c) =>
+            c.path.includes('/dependencies/') ||
+            c.path === '/repos/o/r/issues/1/comments' ||
+            c.path.endsWith('/sub_issues'),
+        ),
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+}
+
 test('changed paths include renames and removals in evidence form', () => {
   assert.deepEqual(
     changedFiles('gingur-root/scratch', [
