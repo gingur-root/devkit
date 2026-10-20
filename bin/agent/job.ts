@@ -17,6 +17,8 @@ export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
 /** The MCP manifest from the job's trusted commit. */
 export const TOOLS_FILE = 'tools.json';
+/** The repo's `.devkit/` agents and skills from the job's trusted commit. */
+export const OVERRIDES_DIR = 'overrides';
 /** The org and target repo's slice of pipeline memory. */
 export const MEMORY_DIR = 'memory';
 /** A retro issue's plan: the repo's open issues, which it may link findings to. */
@@ -83,6 +85,7 @@ export const PlanContract = z.object({
   critique: z.boolean().nullable(),
   // Absent on plans published before devkit#115.
   triage: Triage.nullable().default(null),
+  blockedBy: z.record(z.string(), z.array(z.number().int())).nullable().default(null),
 });
 export type PlanContract = z.infer<typeof PlanContract>;
 

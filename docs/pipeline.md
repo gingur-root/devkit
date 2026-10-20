@@ -37,7 +37,9 @@ cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
 stage's comment and moves the card to **Needs you**. When the agent's CLI said
 why it stopped, the comment names the class (`rate_limit` with its reset time,
 `overloaded`, `server_error`, `timeout` or `unknown`). Fix the cause, then add
-the label again. Every comment that leaves a card in **Needs you** or
+the label again. A stop at a setup step before the agent starts names the step
+and points at the environment (runner, Bitwarden); read that step's log before
+retrying. Every comment that leaves a card in **Needs you** or
 **Ready** mentions @gingur, so the notification arrives then.
 
 Every plan proposes a **Priority** for the card (devkit#115): `P0` broken or
@@ -191,6 +193,25 @@ The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
 merges.
 
+## What a stage can reach
+
+Every stage runs on a pipeline runner with only these. It can read every
+repo the pipeline App reaches with `GH_TOKEN` (contents read, about an hour),
+and run local commands in its checkout: install, build, test, typecheck, lint,
+and a headless browser from the runner image.
+It can't dispatch, read or write workflow runs (in scratch or anywhere), use
+live secrets (Bitwarden, the App key), write to GitHub, or reach a deployed
+service.
+
+- `ci`: a test or build in CI proves the criterion, using a CI seam for
+  live access.
+- `agent`: a stage can check the criterion within the capability list above.
+- `operator`: only Troy can check the criterion, live or after merge.
+  Review needs no evidence for it to pass and files one follow-up on pass
+  listing every operator criterion, its check and expected result.
+
+Name each operator or post-merge check in the plan summary.
+
 ## Memory after a merge
 
 When Troy or the pipeline App merges a PR, the webhook receiver starts
@@ -222,9 +243,9 @@ tracked in devkit#277; infra's own memory caller is devkit#261.
 
 When a plan or build run fails, or a review leaves the card in **Needs you**,
 the same run ends with a retro (`agent.retro.yml`). Claude reads the issue
-thread, the card's history, each job's result and each agent's transcript,
-and lists what went wrong with the fix for each finding (a check, a doc, a
-persona prompt, a setting). Every finding then goes through plan, so a fix
+thread, the card's history, each job's result, the failed jobs' log tails and
+each agent's transcript, and lists what went wrong with the fix for each
+finding (a check, a doc, a persona prompt, a setting). Every finding then goes through plan, so a fix
 lands instead of sitting in a comment (devkit#115):
 
 1. The retro files all its findings as one new issue, labelled `retro`, and
@@ -238,8 +259,10 @@ lands instead of sitting in a comment (devkit#115):
    on linked issues, and closes
    the retro issue. No PR.
 
-- A retro with no findings (an outage, a rate limit) only comments, as does
-  a retro on a run of a retro issue, so retros can't loop.
+- A retro with no findings (a one-off outage or rate limit) only comments.
+  A pre-agent failure is always the first finding; a repeated transient cause
+  is a finding too. A retro on a run of a retro issue only comments, so retros
+  can't loop.
 - One retro per run. A plan that asks you questions gets none, since that is
   the normal flow.
 - It can't read the Actions log, so a job that died before its agent wrote
@@ -262,6 +285,16 @@ Agents propose new issues in their result, and publish files them
   sub-issues is refused. The card goes to **Needs you** with "Build each
   subtask instead", and the label is removed. This includes stories made by
   hand.
+- **Blocking edges.** A subtask's `blockedBy` names earlier subtasks by their
+  0-based indices. Publish files these as GitHub issue dependencies. A build
+  refuses while a live blocker is open and names each blocker on the card.
+  Closed blockers are ignored. A sibling edge is also ignored when the story's
+  current, ready, unedited plan no longer names it, including after the story
+  changes. The comment names ignored blockers and why. Other open blockers
+  still block. Remove the dependency in GitHub's UI to override it.
+  Plan a blocked subtask after its blocker merges: until then the planner
+  returns needs-input, because a check that needs an open issue's output
+  can't run yet.
 - **Follow-ups.** Any stage except a retro may return `followups`. Each becomes
   a new issue in **Ask** with no label, so it starts nothing. Its body links
   back to the card, the stage and the run. A comment on the card lists them,
@@ -292,6 +325,10 @@ A repo replaces any role file by committing the
 same path under `.devkit/` (e.g. `.devkit/agents/build.md`). A skill is
 `skills/<name>/SKILL.md` with a `roles: plan, build` frontmatter line; a
 repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
+`agent render` copies these overrides from the trusted commit
+(`job.base ?? job.source`) into the job directory's `overrides/`. Review and
+repair use the build's base, never the candidate checkout. Changes take effect
+after merge; runs without this snapshot use devkit's own files.
 
 ## Running it from a desk session
 

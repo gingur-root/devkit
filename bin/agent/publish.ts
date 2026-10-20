@@ -115,7 +115,7 @@ interface Outcome {
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
-export type Verdict = { result: Result } | { stage: string; reason: string };
+export type Verdict = { result: Result } | { stage: string; reason: string; step?: string };
 
 export type Step = 'ready' | 'repair' | 'rerun' | 'spec' | 'stop';
 export interface Gate {
@@ -192,6 +192,7 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
         return {
           stage: job.role,
           reason: `the ${job.role} job failed at ${failed[0]} before the agent started; see the job log`,
+          step: failed[0],
         };
     }
     return { stage: job.role, reason: 'the agent ended without a result' };
@@ -307,11 +308,13 @@ function retry(role: string): string {
   return 'reply `/approve`';
 }
 
-export function stopped(role: string, v: { stage: string; reason: string }): string {
+export function stopped(role: string, v: { stage: string; reason: string; step?: string }): string {
   return [
     marker(role),
     `**${role[0]?.toUpperCase()}${role.slice(1)} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then ${retry(role)} again.`,
+    v.step
+      ? `Likely the environment (runner, Bitwarden), not the code: read step \`${v.step}\` in job \`${role}\` before you ${retry(role)} again.`
+      : `Fix the cause, then ${retry(role)} again.`,
   ].join('\n\n');
 }
 
@@ -354,6 +357,11 @@ export function planComment(
         : Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
     critique: result.critique,
     triage: result.triage,
+    blockedBy: story.some((s) => s.blockedBy.length)
+      ? Object.fromEntries(
+          story.filter((s) => s.blockedBy.length).map((s) => [s.number, s.blockedBy]),
+        )
+      : null,
   };
   return [
     marker(job.role),
@@ -1173,6 +1181,7 @@ function runUrl(): string {
 export interface Filed {
   number: number;
   title: string;
+  blockedBy: number[];
 }
 
 /**
@@ -1193,11 +1202,18 @@ async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]
  * never moves a subtask that has started back to Ask.
  */
 export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): Promise<Filed[]> {
+  for (const [index, subtask] of subtasks.entries()) {
+    if (subtask.blockedBy?.some((blocker) => blocker < 0 || blocker >= index))
+      throw new Error(`Subtask ${index}'s blockedBy must name an earlier subtask.`);
+    // Retries find filed subtasks by title, so a repeat would map two subtasks to one issue.
+    if (subtasks.findIndex((other) => other.title === subtask.title) !== index)
+      throw new Error(`Subtask ${index} repeats the title "${subtask.title}".`);
+  }
   const mark = subtaskMarker(card.number);
   const earlier = await filedBefore(job, card, mark);
   const path = `/repos/${job.repo}/issues/${card.number}/sub_issues`;
   const linked = new Set((await restAll<{ id: number }>(path)).map((i) => i.id));
-  const filed: Filed[] = [];
+  const filed: Issue[] = [];
   for (const subtask of subtasks) {
     const issue =
       earlier.find((i) => i.title === subtask.title) ??
@@ -1211,9 +1227,24 @@ export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): 
       await rest('POST', path, { sub_issue_id: issue.id });
       await setStatus(job.repo, issue.node_id, 'Ask');
     }
-    filed.push({ number: issue.number, title: issue.title });
+    filed.push(issue);
   }
-  return filed;
+  for (const [index, subtask] of subtasks.entries()) {
+    if (!subtask.blockedBy?.length) continue;
+    const path = `/repos/${job.repo}/issues/${filed[index]!.number}/dependencies/blocked_by`;
+    const existing = new Set((await restAll<{ id: number }>(path)).map((issue) => issue.id));
+    for (const blocker of subtask.blockedBy) {
+      const id = filed[blocker]!.id;
+      if (existing.has(id)) continue;
+      await rest('POST', path, { issue_id: id });
+      existing.add(id);
+    }
+  }
+  return filed.map((issue, index) => ({
+    number: issue.number,
+    title: issue.title,
+    blockedBy: (subtasks[index]!.blockedBy ?? []).map((blocker) => filed[blocker]!.number),
+  }));
 }
 
 /** What the stage comment says about its follow-ups, drops included, or '' when there are none. */
@@ -1232,8 +1263,9 @@ export function followupLine(count: number): string {
 
 /**
  * Files or finds the stage's first FOLLOWUP_CAP follow-ups, puts a new one in
- * Ask, and lists them in the card's `followups:<stage>` comment. A follow-up
- * carries only `agent:filed`, which starts nothing. Returns the stage comment's line.
+ * Ask, and lists every follow-up the stage has filed in the card's
+ * `followups:<stage>` comment. A follow-up carries only `agent:filed`, which
+ * starts nothing. Returns the stage comment's line.
  */
 export async function fileFollowups(
   job: Job,
@@ -1245,7 +1277,7 @@ export async function fileFollowups(
   const mark = followupMarker(card.number, stage);
   const earlier = await filedBefore(job, card, mark);
   const from = `From #${card.number}'s \`${stage}\` stage ([run](${runUrl()})).`;
-  const lines: string[] = [];
+  const filed = new Map(earlier.map((issue) => [issue.number, issue]));
   for (const followup of followups.slice(0, FOLLOWUP_CAP)) {
     let issue = earlier.find((i) => i.title === followup.title);
     if (!issue) {
@@ -1256,8 +1288,11 @@ export async function fileFollowups(
       });
       await setStatus(job.repo, issue.node_id, 'Ask');
     }
-    lines.push(`- #${issue.number} ${issue.title}`);
+    filed.set(issue.number, issue);
   }
+  const lines = [...filed.values()]
+    .sort((a, b) => a.number - b.number)
+    .map((issue) => `- #${issue.number} ${issue.title}`);
   const role = `followups:${stage}`;
   await upsertStageComment(
     job.repo,

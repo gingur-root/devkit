@@ -200,12 +200,24 @@ test('missing memory removes stale files, missing folders skip, and API failures
   }
 });
 
-test('render snapshots only the trusted manifest and propagates non-404 failures', async () => {
-  const out = mkdtempSync(join(tmpdir(), 'render-tools-'));
-  const requests: string[] = [];
+test('render snapshots trusted tools and role overrides, removes stale files, and propagates failures', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-overrides-'));
+  const requests: URL[] = [];
   // Deliberately invalid JSON: validation belongs to agent tools, after render.
   const text = '{invalid-manifest';
-  let status = 200;
+  const files = new Map([
+    ['tools.json', text],
+    ['agents/worker.md', 'TRUSTED WORKER'],
+    ['agents/contract.md', 'TRUSTED CONTRACT'],
+    ['agents/plan.md', 'TRUSTED PLAN'],
+    ['agents/build.md', 'TRUSTED BUILD'],
+    ['agents/review.md', 'TRUSTED REVIEW'],
+    ['agents/repair.md', 'TRUSTED REPAIR'],
+    ['skills/x/SKILL.md', 'TRUSTED SKILL'],
+  ]);
+  let missing = false;
+  let skillsIsFile = false;
+  const failures = new Map<string, number>();
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubGlobal('fetch', async (url: string) => {
     const request = new URL(url);
@@ -213,16 +225,25 @@ test('render snapshots only the trusted manifest and propagates non-404 failures
       return Response.json({ sha: 'mem1' });
     if (request.pathname === '/repos/gingur-root/pipeline/contents/memory')
       return new Response('{}', { status: 404 });
-    if (request.pathname === '/repos/o/r/contents/.devkit/tools.json') {
-      requests.push(`${request.pathname}${request.search}`);
-      return new Response(
-        JSON.stringify(
-          status === 200
-            ? { content: Buffer.from(text).toString('base64') }
-            : { message: 'fixture API failure' },
-        ),
-        { status },
-      );
+    const prefix = '/repos/o/r/contents/.devkit/';
+    if (request.pathname.startsWith(prefix)) {
+      requests.push(request);
+      const path = request.pathname.slice(prefix.length);
+      const status = failures.get(path) ?? (missing ? 404 : 200);
+      if (status !== 200) return Response.json({ message: 'fixture API failure' }, { status });
+      if (path === 'skills')
+        return Response.json(
+          skillsIsFile
+            ? { name: 'skills', type: 'file', content: '' }
+            : [
+                { name: 'x', type: 'dir' },
+                { name: 'empty', type: 'dir' },
+                { name: 'ignored.md', type: 'file' },
+              ],
+        );
+      if (!files.has(path)) return new Response('{}', { status: 404 });
+      const content = request.searchParams.get('ref') === 'cand' ? 'CANDIDATE' : files.get(path)!;
+      return Response.json({ content: Buffer.from(content).toString('base64') });
     }
     const routes: Record<string, unknown> = {
       '/repos/o/r/issues/1': {
@@ -234,35 +255,69 @@ test('render snapshots only the trusted manifest and propagates non-404 failures
       },
       '/repos/o/r/issues/1/comments': [comment()],
     };
-    return new Response(JSON.stringify(routes[request.pathname] ?? []));
+    return Response.json(routes[request.pathname] ?? []);
   });
+  const options = {
+    repo: 'o/r',
+    issue: 1,
+    role: 'plan',
+    source: 'source',
+    appId: APP,
+    out,
+  } as const;
   try {
+    const roleFiles = {
+      plan: ['worker', 'contract', 'plan'],
+      build: ['worker', 'contract', 'build'],
+      review: ['worker', 'contract', 'review'],
+      repair: ['worker', 'contract', 'build', 'repair'],
+    };
     for (const role of ['plan', 'build', 'review', 'repair'] as const) {
       const source = role === 'review' || role === 'repair' ? 'cand' : 'source';
       const base = role === 'review' || role === 'repair' ? 'base' : undefined;
-      const job = await render({
-        repo: 'o/r',
-        issue: 1,
-        role,
-        source,
-        base,
-        appId: APP,
-        dispatcher: OPERATOR_ID,
-        out,
-      });
-      assert.ok(requests.includes(`/repos/o/r/contents/.devkit/tools.json?ref=${base ?? source}`));
+      mkdirSync(join(out, 'overrides/skills/stale'), { recursive: true });
+      writeFileSync(join(out, 'overrides/skills/stale/SKILL.md'), 'STALE');
+      const job = await render({ ...options, role, source, base, dispatcher: OPERATOR_ID });
       assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
       assert.equal(job.base ?? job.source, base ?? source);
+      const expected = [...roleFiles[role].map((name) => `agents/${name}.md`), 'skills/x/SKILL.md'];
+      const actual = readdirSync(join(out, 'overrides'), {
+        recursive: true,
+        encoding: 'utf8',
+      }).filter((path) => path.endsWith('.md'));
+      assert.deepEqual(actual.sort(), expected.sort());
+      for (const path of expected)
+        assert.equal(readFileSync(join(out, 'overrides', path), 'utf8'), files.get(path));
+      for (const request of requests) assert.equal(request.searchParams.get('ref'), base ?? source);
+      assert.deepEqual(
+        requests
+          .map((request) => request.pathname.slice('/repos/o/r/contents/.devkit/'.length))
+          .sort(),
+        [
+          'tools.json',
+          ...roleFiles[role].map((name) => `agents/${name}.md`),
+          'skills',
+          'skills/x/SKILL.md',
+          'skills/empty/SKILL.md',
+        ].sort(),
+      );
+      requests.length = 0;
     }
-    assert.ok(!requests.some((request) => request.endsWith('ref=cand')));
-    status = 404;
-    await render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out });
+    missing = true;
+    await render(options);
     assert.equal(existsSync(join(out, 'tools.json')), false);
-    status = 403;
-    await assert.rejects(
-      render({ repo: 'o/r', issue: 1, role: 'plan', source: 'source', appId: APP, out }),
-      /403.*fixture API failure/,
-    );
+    assert.equal(existsSync(join(out, 'overrides')), false);
+    missing = false;
+    for (const path of ['tools.json', 'agents/worker.md', 'skills', 'skills/x/SKILL.md']) {
+      failures.set(path, 403);
+      await assert.rejects(render(options), /403.*fixture API failure/);
+      failures.clear();
+    }
+    skillsIsFile = true;
+    await render(options);
+    assert.equal(existsSync(join(out, 'overrides/skills')), false);
+    assert.equal(readFileSync(join(out, 'overrides/agents/worker.md'), 'utf8'), 'TRUSTED WORKER');
+    assert.equal(readFileSync(join(out, 'tools.json'), 'utf8'), text);
   } finally {
     rmSync(out, { recursive: true, force: true });
     vi.unstubAllGlobals();
@@ -806,6 +861,199 @@ test('a story never builds: it goes to Needs you and says to build each subtask'
     vi.unstubAllEnvs();
   }
 });
+
+const OPEN_BLOCKER = {
+  id: 1002,
+  number: 2,
+  state: 'open',
+  html_url: 'https://github.com/o/r/issues/2',
+};
+
+function blockerFixture() {
+  const out = mkdtempSync(join(tmpdir(), 'render-blockers-'));
+  const issue = {
+    number: 3,
+    title: 'Title',
+    body: 'Body',
+    labels: [],
+    user: { id: OPERATOR_ID },
+    issue_dependencies_summary: { total_blocked_by: 1 },
+  };
+  const parent = { ...issue, number: 1 };
+  const routes = new Map<string, unknown>([
+    ['/repos/o/r/issues/3', issue],
+    ['/repos/o/r/issues/3/comments', [comment()]],
+    ['/repos/o/r/issues/3/parent', parent],
+    ['/repos/o/r/issues/3/dependencies/blocked_by', [OPEN_BLOCKER]],
+    // Review and repair look up the open PR for threads.json; none is open here.
+    ['/repos/o/r/pulls', []],
+    ['/repos/o/r/issues/1/comments', [comment(PLAN, { blockedBy: { '3': [2] } })]],
+    [
+      '/repos/o/r/issues/1/sub_issues',
+      [
+        { id: 1002, number: 2 },
+        { id: 1003, number: 3 },
+      ],
+    ],
+  ]);
+  const calls: { method: string; path: string; body: string }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    const method = init.method ?? 'GET';
+    calls.push({ method, path, body: String(init.body ?? '') });
+    if (path === '/repos/gingur-root/pipeline/commits/main') return Response.json({ sha: 'mem1' });
+    if (path.includes('/contents/') || (path.endsWith('/parent') && !routes.has(path)))
+      return new Response('{}', { status: 404 });
+    if (method !== 'GET') return Response.json({});
+    assert.ok(routes.has(path), `unexpected GET ${path}`);
+    return Response.json(routes.get(path));
+  });
+  return {
+    issue,
+    parent,
+    routes,
+    calls,
+    options: {
+      repo: 'o/r',
+      issue: 3,
+      role: 'build',
+      source: 'abc',
+      appId: APP,
+      dispatcher: OPERATOR_ID,
+      out,
+    } as const,
+    cleanup() {
+      rmSync(out, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    },
+  };
+}
+
+for (const scenario of [
+  'live',
+  'closed',
+  'removed',
+  'edited',
+  'not-ready',
+  'story-edited',
+  'missing-plan',
+  'untrusted-plan',
+  'body-unseen',
+  'mixed',
+  'external',
+  'cross-story',
+  'cross-repo',
+] as const) {
+  test(`build dependency gate: ${scenario}`, async () => {
+    const f = blockerFixture();
+    const parentComments = '/repos/o/r/issues/1/comments';
+    const dependencies = '/repos/o/r/issues/3/dependencies/blocked_by';
+    try {
+      switch (scenario) {
+        case 'closed':
+          f.routes.set(dependencies, [{ ...OPEN_BLOCKER, state: 'closed' }]);
+          break;
+        case 'removed':
+          f.routes.set(parentComments, [comment(PLAN, { blockedBy: null })]);
+          break;
+        case 'edited':
+          f.routes.set(parentComments, [comment(`${PLAN}\nEdited`, { blockedBy: { '3': [2] } })]);
+          break;
+        case 'not-ready':
+          f.routes.set(parentComments, [
+            comment(PLAN, { outcome: 'needs-input', blockedBy: { '3': [2] } }),
+          ]);
+          break;
+        case 'story-edited':
+          f.parent.body = 'Changed story';
+          break;
+        case 'missing-plan':
+          f.routes.set(parentComments, []);
+          break;
+        case 'untrusted-plan':
+          f.routes.set(parentComments, [comment(PLAN, { blockedBy: { '3': [2] } }, 999)]);
+          break;
+        case 'body-unseen':
+          f.routes.set(parentComments, [
+            comment(PLAN, { bodySeen: false, blockedBy: { '3': [2] } }),
+          ]);
+          break;
+        case 'mixed':
+          f.issue.issue_dependencies_summary.total_blocked_by = 2;
+          f.routes.set(dependencies, [
+            OPEN_BLOCKER,
+            {
+              ...OPEN_BLOCKER,
+              id: 1004,
+              number: 4,
+              state: 'closed',
+              html_url: 'https://github.com/o/r/issues/4',
+            },
+          ]);
+          break;
+        case 'external':
+          f.routes.delete('/repos/o/r/issues/3/parent');
+          break;
+        case 'cross-story':
+          f.routes.set('/repos/o/r/issues/1/sub_issues', [{ id: 1003, number: 3 }]);
+          break;
+        case 'cross-repo':
+          f.routes.set(dependencies, [
+            { ...OPEN_BLOCKER, id: 9002, html_url: 'https://github.com/other/repo/issues/2' },
+          ]);
+          break;
+        case 'live':
+          break;
+      }
+      const refuses = ['live', 'mixed', 'external', 'cross-story', 'cross-repo'].includes(scenario);
+      if (refuses) await assert.rejects(render(f.options), /[Bb]locked/);
+      else assert.equal((await render(f.options)).role, 'build');
+      const note = f.calls.find((c) => c.method === 'POST' && c.path.endsWith('/comments'));
+      assert.ok(note, 'the card names blockers even when ignored');
+      const body = JSON.parse(note.body).body as string;
+      assert.ok(body.includes('#2'));
+      if (refuses) {
+        assert.ok(body.startsWith(marker('build')));
+        assert.match(body, /\*\*Build refused:\*\*/);
+        assert.ok(
+          f.calls.some((c) => c.method === 'DELETE' && c.path.endsWith('/labels/agent%3Abuild')),
+        );
+        if (scenario === 'mixed') assert.match(body, /[Ii]gnored.*#4.*closed/s);
+        if (scenario === 'cross-repo')
+          assert.ok(body.includes('https://github.com/other/repo/issues/2'));
+      } else {
+        assert.ok(body.startsWith(marker('blockers')));
+        assert.match(body, /[Ii]gnored/);
+        assert.ok(body.includes(scenario === 'closed' ? 'closed' : "#1's plan no longer names it"));
+        assert.ok(!f.calls.some((c) => c.method === 'DELETE'));
+      }
+    } finally {
+      f.cleanup();
+    }
+  });
+}
+
+for (const role of ['build', 'plan', 'review', 'repair'] as const) {
+  test(`dependency gate makes no calls for ${role}${role === 'build' ? ' without edges' : ''}`, async () => {
+    const f = blockerFixture();
+    try {
+      if (role === 'build') f.issue.issue_dependencies_summary.total_blocked_by = 0;
+      await render({ ...f.options, role });
+      assert.ok(
+        !f.calls.some(
+          (c) =>
+            c.path.includes('/dependencies/') ||
+            c.path === '/repos/o/r/issues/1/comments' ||
+            c.path.endsWith('/sub_issues'),
+        ),
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+}
 
 test('changed paths include renames and removals in evidence form', () => {
   assert.deepEqual(

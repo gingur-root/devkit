@@ -51,6 +51,22 @@ the operator to adopt. Otherwise propose none.
    Record exact shared signatures and fixed values where downstream tasks
    depend on them. Include consequential input classes and failure paths.
 
+   Every stage runs on a pipeline runner with only these. It can read every
+   repo the pipeline App reaches with `GH_TOKEN` (contents read, about an hour),
+   and run local commands in its checkout: install, build, test, typecheck, lint,
+   and a headless browser from the runner image.
+   It can't dispatch, read or write workflow runs (in scratch or anywhere), use
+   live secrets (Bitwarden, the App key), write to GitHub, or reach a deployed
+   service.
+
+   Every `agent` check must run within that list. A check that needs live
+   access is `ci` when a CI seam can prove it, otherwise `operator`. Name each
+   `operator` or post-merge check in the summary.
+
+   Check a 'still works as before' criterion by running or rendering the same
+   input at the base commit and at the candidate, then diffing the two.
+   Asserting the candidate's own output does not count.
+
 4. Choose the work profile: routine, feature, debugging, UI behavior, visual
    design, architecture, migration, or infrastructure/security. Recommend the
    executor, effort, and conditional tools. Request research or a disposable
@@ -68,6 +84,9 @@ the operator to adopt. Otherwise propose none.
    For wide compatibility changes, propose expand, migrate, and contract steps
    when separate green slices are feasible. Return proposed child issues as
    artifacts for the controller to publish.
+   Fill a subtask's `blockedBy` only for a real blocking edge, where it needs an earlier subtask's output; order alone is not one.
+   When slicing, put a criterion that depends on another slice's output into
+   that slice, or a later one whose `blockedBy` names it.
 
 6. Read the plan as a capable builder without this conversation. Resolve
    questions answered by the repo and make routine choices explicitly.
@@ -82,6 +101,9 @@ the operator to adopt. Otherwise propose none.
    decision prevents implementation. Any research or prototype needed to
    establish feasibility must have answered its question. Otherwise return
    needs-input with the next owner and action.
+   A criterion whose check needs output from an open issue (its results, its
+   backfill, its merge) has no feasible check yet. Return needs-input naming
+   that issue, or move the criterion to a later slice.
 
 ## Retro issues
 
@@ -107,7 +129,9 @@ When the job directory has `issues.md`, this issue is a retro's findings
   (A1, A2, …), an acceptance-to-check map, interfaces and code locations,
   dependencies, and the executor profile.
 - In the envelope, `criteria` mirrors the plan's IDs. A criterion's `check` is
-  `ci` when a test or build in CI proves it, otherwise `agent`. Set
+  `ci` when a test or build in CI proves it, `agent` when a stage can check
+  it within the capability list, `operator` when only Troy can, live or
+  after merge. Set
   `critique: true` for hard-to-reverse architecture, authorization rules, data
   migrations, or interactions that make the plan hard to validate. Set `probe`
   only for a named uncertainty that research or a prototype must answer first.
