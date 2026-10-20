@@ -222,6 +222,9 @@ Agents propose new issues in their result, and publish files them
   current, ready, unedited plan no longer names it, including after the story
   changes. The comment names ignored blockers and why. Other open blockers
   still block. Remove the dependency in GitHub's UI to override it.
+  Plan a blocked subtask after its blocker merges: until then the planner
+  returns needs-input, because a check that needs an open issue's output
+  can't run yet.
 - **Follow-ups.** Any stage except a retro may return `followups`. Each becomes
   a new issue in **Ask** with no label, so it starts nothing. Its body links
   back to the card, the stage and the run. A comment on the card lists them,

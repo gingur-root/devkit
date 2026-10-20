@@ -933,6 +933,9 @@ export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): 
   for (const [index, subtask] of subtasks.entries()) {
     if (subtask.blockedBy?.some((blocker) => blocker < 0 || blocker >= index))
       throw new Error(`Subtask ${index}'s blockedBy must name an earlier subtask.`);
+    // Retries find filed subtasks by title, so a repeat would map two subtasks to one issue.
+    if (subtasks.findIndex((other) => other.title === subtask.title) !== index)
+      throw new Error(`Subtask ${index} repeats the title "${subtask.title}".`);
   }
   const mark = subtaskMarker(card.number);
   const earlier = await filedBefore(job, card, mark);

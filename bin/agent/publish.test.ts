@@ -862,6 +862,13 @@ test('invalid subtask dependencies fail before any issue is filed', async () => 
       ]),
       /earlier subtask/,
     );
+    await assert.rejects(
+      fileSubtasks(storyJob, CARD, [
+        { title: 'Same', body: '', pr: true, blockedBy: null },
+        { title: 'Same', body: '', pr: true, blockedBy: [0] },
+      ]),
+      /repeats the title/,
+    );
     assert.ok(!github.calls.some((c) => c.startsWith('POST ')));
   } finally {
     teardown();
