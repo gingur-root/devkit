@@ -389,6 +389,19 @@ secrets: they live in the `agents` environment, which only `main` may use.
 
 ## Repo persona and skills
 
+A repo sets each role's executor, model and effort in `.devkit/roles.json`
+([format and precedence](../README.md#agent-tools)). `agent render` copies it
+from `job.base ?? job.source` to `roles.json` in the job directory; `agent run`
+and `agent executor` read it only through `--in`. Review and repair use the
+build's base, so a candidate cannot change its own reviewer. Changes take
+effect after merge.
+
+`actions/agent.run` fetches the Claude token only when a token input is supplied
+and the effective executor is `claude`: `--executor` first, then `roles.json`,
+then `ROLES`. A repo mapping a role to Claude therefore gets the Claude token
+without an executor input override. With an empty token input, Claude uses
+the runner login.
+
 A repo replaces any role file by committing the
 same path under `.devkit/` (e.g. `.devkit/agents/build.md`). A skill is
 `skills/<name>/SKILL.md` with a `roles: plan, build` frontmatter line; a
