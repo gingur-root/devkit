@@ -144,6 +144,25 @@ The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
 merges.
 
+## What a stage can reach
+
+Every stage runs on a pipeline runner with only these. It can read every
+repo the pipeline App reaches with `GH_TOKEN` (contents read, about an hour),
+and run local commands in its checkout: install, build, test, typecheck, lint,
+and a headless browser from the runner image.
+It can't dispatch, read or write workflow runs (in scratch or anywhere), use
+live secrets (Bitwarden, the App key), write to GitHub, or reach a deployed
+service.
+
+- `ci`: a test or build in CI proves the criterion, using a CI seam for
+  live access.
+- `agent`: a stage can check the criterion within the capability list above.
+- `operator`: only Troy can check the criterion, live or after merge.
+  Review needs no evidence for it to pass and files one follow-up on pass
+  listing every operator criterion, its check and expected result.
+
+Name each operator or post-merge check in the plan summary.
+
 ## Retros
 
 When a plan or build run fails, or a review leaves the card in **Needs you**,
