@@ -994,8 +994,9 @@ export function followupLine(count: number): string {
 
 /**
  * Files or finds the stage's first FOLLOWUP_CAP follow-ups, puts a new one in
- * Ask, and lists them in the card's `followups:<stage>` comment. A follow-up
- * carries only `agent:filed`, which starts nothing. Returns the stage comment's line.
+ * Ask, and lists every follow-up the stage has filed in the card's
+ * `followups:<stage>` comment. A follow-up carries only `agent:filed`, which
+ * starts nothing. Returns the stage comment's line.
  */
 export async function fileFollowups(
   job: Job,
@@ -1007,7 +1008,7 @@ export async function fileFollowups(
   const mark = followupMarker(card.number, stage);
   const earlier = await filedBefore(job, card, mark);
   const from = `From #${card.number}'s \`${stage}\` stage ([run](${runUrl()})).`;
-  const lines: string[] = [];
+  const filed = new Map(earlier.map((issue) => [issue.number, issue]));
   for (const followup of followups.slice(0, FOLLOWUP_CAP)) {
     let issue = earlier.find((i) => i.title === followup.title);
     if (!issue) {
@@ -1018,8 +1019,11 @@ export async function fileFollowups(
       });
       await setStatus(job.repo, issue.node_id, 'Ask');
     }
-    lines.push(`- #${issue.number} ${issue.title}`);
+    filed.set(issue.number, issue);
   }
+  const lines = [...filed.values()]
+    .sort((a, b) => a.number - b.number)
+    .map((issue) => `- #${issue.number} ${issue.title}`);
   const role = `followups:${stage}`;
   await upsertStageComment(
     job.repo,
