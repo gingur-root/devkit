@@ -76,7 +76,7 @@ test('a rerun skips repair and publish but prepares the input candidate for revi
   );
   assert.equal(
     jobs.push.outputs.candidate,
-    '${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}',
+    '${{ inputs.rerun && inputs.candidate || steps.publish.outputs.candidate }}',
   );
   for (const step of jobs.push.steps.filter(
     (s: { uses?: string; id?: string }) =>
@@ -87,8 +87,12 @@ test('a rerun skips repair and publish but prepares the input candidate for revi
   assert.equal(render.env.BASE, '${{ inputs.base }}');
   assert.equal(
     render.env.CANDIDATE,
-    '${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}',
+    '${{ inputs.rerun && inputs.candidate || steps.publish.outputs.candidate }}',
   );
+  const pack = jobs.push.steps.find((s: { uses?: string }) =>
+    s.uses?.includes('/actions/repo.pack@'),
+  );
+  assert.equal(pack.with.ref, jobs.push.outputs.candidate);
   for (const id of ['push', 'verdict']) {
     const publish = jobs[id].steps.find((s: { id?: string }) => s.id === 'publish');
     assert.equal(publish.env.ROUNDS, '${{ inputs.rounds }}');

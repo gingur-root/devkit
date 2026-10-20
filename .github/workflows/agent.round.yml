@@ -120,7 +120,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
-      candidate: ${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}
+      candidate: ${{ inputs.rerun && inputs.candidate || steps.publish.outputs.candidate }}
       readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app
@@ -199,7 +199,7 @@ jobs:
           MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
-          CANDIDATE: ${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}
+          CANDIDATE: ${{ inputs.rerun && inputs.candidate || steps.publish.outputs.candidate }}
           APP_ID: ${{ inputs.appId }}
           BASE: ${{ inputs.base }}
         run: |
@@ -218,7 +218,7 @@ jobs:
         uses: gingur-root/devkit/actions/repo.pack@main
         with:
           repo: ${{ inputs.repo }}
-          ref: ${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}
+          ref: ${{ inputs.rerun && inputs.candidate || steps.publish.outputs.candidate }}
           token: ${{ steps.app.outputs.token }}
           name: review-${{ inputs.round }}-repo
 
