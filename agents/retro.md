@@ -30,8 +30,12 @@ Follow the retro skill below, with these changes:
   two, and whether the run's own stop comment already explains it.
 - `followups` holds one entry per finding. If any
   `run/<stage>-out/steps.json` has `failure` for a step other than `run`, or
-  a `failure` job in `run/jobs.json` has no `run/<stage>-out/`, the first entry
+  an agent job (`plan`, `build`, `review`, or `repair-<n>`) is `failure` in
+  `run/jobs.json` with no corresponding `steps.json`, the first entry
   addresses that job and step (or says the step is unknown).
+  Plan and build use `run/agent-out/steps.json`; review and repair use
+  `run/review-<n>-out/steps.json` and `run/repair-<n>-out/steps.json`.
+  Exclude `publish`, which fails whenever a stage stops.
   If the bundle shows the cause, give the fix. Otherwise, say the cause is
   unknown, name the job and step log to read, and put the question in
   `questions`. Other findings follow, most severe first. `title` names
