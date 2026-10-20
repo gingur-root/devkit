@@ -31,11 +31,24 @@ set -euo pipefail
 if [[ "$*" == *"/runs/42/jobs?filter=latest&per_page=100"* ]]; then
   [[ "$*" == *"--paginate"* ]]
   printf '1\tbuild / Review\tvps-runner2\n2\tbuild---Review\tvps-runner3\n3\tmissing\tvps-runner4\n4\tafter missing\tvps-runner5\n'
-elif [[ "$*" == *"/jobs/3/logs"* ]]; then
+else
+  echo 'unsupported gh api invocation' >&2
+  exit 1
+fi
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(dir, 'curl'),
+      `#!/bin/bash
+set -euo pipefail
+[[ "$*" == '-fsSL -H @- https://api.github.com/repos/owner/run-repo/actions/jobs/'*'/logs' ]]
+IFS= read -r header
+[[ "$header" == 'Authorization: Bearer test-token' ]]
+if [[ "$*" == *"/jobs/3/logs"* ]]; then
   echo 'log expired' >&2
   exit 1
 else
-  [[ "$*" == *"--allow-escape-sequences"* ]]
   for ((i=1; i<=250; i++)); do echo "line $i"; done
   echo '429 Too Many Requests'
 fi
@@ -49,6 +62,7 @@ fi
         RUNNER_TEMP: dir,
         REPO: 'owner/run-repo',
         RUN: '42',
+        GH_TOKEN: 'test-token',
       },
     });
     assert.equal(result.status, 0, result.stderr);
@@ -127,4 +141,31 @@ test('secrets.scan selects directory or git mode and propagates scanner failure'
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('every public Bitwarden secret ID is allowlisted for the log scan', () => {
+  const config = readFileSync(new URL('actions/secrets.scan/gitleaks.toml', root), 'utf8');
+  const patterns = [...config.matchAll(/'''([^']+)'''/g)].map(
+    (match) => new RegExp(match[0].slice(3, -3)),
+  );
+  const ids = new Set<string>();
+  for (const directory of ['actions/', '.github/workflows/']) {
+    for (const file of readdirSync(new URL(directory, root), {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (!file.isFile() || !/\.ya?ml$/.test(file.name)) continue;
+      const text = readFileSync(join(file.parentPath, file.name), 'utf8');
+      for (const match of text.matchAll(
+        /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?=\s*>\s*[A-Z_]+)/gi,
+      )) {
+        ids.add(match[0]);
+        assert.ok(
+          patterns.some((pattern) => pattern.test(match[0])),
+          `${file.name}: ${match[0]}`,
+        );
+      }
+    }
+  }
+  assert.ok(ids.size > 0, 'must check at least one public secret ID');
 });

@@ -145,7 +145,8 @@ jobs:
             name=$(printf '%s' "$job" | sed 's/[^A-Za-z0-9._-]/-/g')
             file="$logs/${name:0:180}-$id.log"
             printf 'job: %s\nrunner: %s\n' "$job" "$runner" >"$file"
-            if ! gh api --allow-escape-sequences "repos/$REPO/actions/jobs/$id/logs" | tail -n 200 >>"$file"; then
+            if ! curl -fsSL -H @- "https://api.github.com/repos/$REPO/actions/jobs/$id/logs" \
+              <<<"Authorization: Bearer $GH_TOKEN" | tail -n 200 >>"$file"; then
               rm "$file"
               echo "::warning::Could not fetch log for job $id"
             fi
