@@ -10,6 +10,9 @@ import { Triage } from './result.ts';
 
 export const JOB_FILE = 'job.json';
 export const ISSUE_FILE = 'issue.md';
+export const PR_FILE = 'pr.md';
+export const DIFF_FILE = 'pr.diff';
+export const CHANGED_FILE = 'changed.txt';
 export const RESULT_FILE = 'result.json';
 export const PLAN_FILE = 'plan.md';
 /** The MCP manifest from the job's trusted commit. */
