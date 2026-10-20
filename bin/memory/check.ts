@@ -1,36 +1,15 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { parse } from 'yaml';
-
-import { entrySchema, folders, indexLines, readOptional, repoName, type Entry } from './format.ts';
+import { entryNames, folders, frontmatter, repoName, type Entry } from './format.ts';
 import { githubReader, memoize, type Reader } from './reader.ts';
 import { render } from './render.ts';
+
+export { frontmatter };
 
 export interface Failure {
   file: string;
   reason: string;
-}
-
-export function frontmatter(text: string): Entry | string {
-  const lines = text.split(/\r?\n/);
-  if (lines[0] !== '---') return 'missing frontmatter';
-  const end = lines.indexOf('---', 1);
-  if (end === -1) return 'bad frontmatter: missing closing ---';
-  let value: unknown;
-  try {
-    value = parse(lines.slice(1, end).join('\n'));
-  } catch {
-    return 'bad frontmatter: invalid YAML';
-  }
-  const result = entrySchema.safeParse(value);
-  if (!result.success) {
-    const fields = [
-      ...new Set(result.error.issues.map((issue) => issue.path.join('.') || 'entry')),
-    ];
-    return `bad frontmatter: ${fields.join(', ')}`;
-  }
-  return result.data;
 }
 
 const collapse = (text: string): string => text.replace(/\s+/g, ' ').trim();
@@ -45,24 +24,9 @@ export async function check(
     if (folder !== '_org' && !repoName.test(folder)) {
       failures.push({ file: folder, reason: 'invalid folder name' });
     }
-    const names = readdirSync(join(dir, folder), { withFileTypes: true })
-      .filter((file) => file.isFile() && file.name.endsWith('.md') && file.name !== 'INDEX.md')
-      .map((file) => file.name)
-      .sort();
-    const indexed = new Set<string>();
-    for (const line of indexLines(dir, folder) ?? []) {
-      const target = /^- \[[^\]]+\]\(([^)]+)\)/.exec(line)?.[1];
-      if (!target) {
-        failures.push({ file: `${folder}/INDEX.md`, reason: 'invalid index line' });
-      } else if (!names.includes(target)) {
-        failures.push({ file: `${folder}/INDEX.md`, reason: `dangling link ${target}` });
-      } else {
-        indexed.add(target);
-      }
-    }
+    const names = entryNames(dir, folder);
     for (const name of names) {
       const file = `${folder}/${name}`;
-      if (!indexed.has(name)) failures.push({ file, reason: 'unindexed entry' });
       const entry = frontmatter(readFileSync(join(dir, file), 'utf8'));
       if (typeof entry === 'string') {
         failures.push({ file, reason: entry });
@@ -78,14 +42,11 @@ export async function check(
     }
   }
 
-  const memory = readOptional(join(dir, 'MEMORY.md'));
-  if (memory !== render(dir)) failures.push({ file: 'MEMORY.md', reason: 'out of sync' });
-  if (memory !== null) {
-    const lines = memory.split('\n').length - (memory.endsWith('\n') ? 1 : 0);
-    if (lines > 200) failures.push({ file: 'MEMORY.md', reason: 'over 200 lines' });
-    if (Buffer.byteLength(memory) > 25 * 1024)
-      failures.push({ file: 'MEMORY.md', reason: 'over 25 KB' });
-  }
+  const index = render(dir);
+  const lines = index.split('\n').length - 1;
+  if (lines > 200) failures.push({ file: 'MEMORY.md', reason: 'generated index over 200 lines' });
+  if (Buffer.byteLength(index) > 25 * 1024)
+    failures.push({ file: 'MEMORY.md', reason: 'generated index over 25 KB' });
 
   if (!options.offline) {
     const read = memoize(options.read ?? githubReader);

@@ -1,6 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { parse } from 'yaml';
 import { z } from 'zod';
 
 export const repoName = /^[a-z0-9][a-z0-9._-]*$/;
@@ -50,17 +51,32 @@ export function folders(dir: string): string[] {
   return names.includes('_org') ? ['_org', ...names.filter((name) => name !== '_org')] : names;
 }
 
-/** A missing index or MEMORY.md is a check failure; other I/O errors stay loud. */
-export function readOptional(file: string): string | null {
-  try {
-    return readFileSync(file, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
+/** Entry files in a folder. INDEX.md and MEMORY.md are generated or legacy, never entries. */
+export function entryNames(dir: string, folder: string): string[] {
+  return readdirSync(join(dir, folder), { withFileTypes: true })
+    .filter((file) => file.isFile() && file.name.endsWith('.md'))
+    .map((file) => file.name)
+    .filter((name) => name !== 'INDEX.md' && name !== 'MEMORY.md')
+    .sort();
 }
 
-export function indexLines(dir: string, folder: string): string[] | null {
-  const text = readOptional(join(dir, folder, 'INDEX.md'));
-  return text === null ? null : text.split(/\r?\n/).filter((line) => line.startsWith('- ['));
+export function frontmatter(text: string): Entry | string {
+  const lines = text.split(/\r?\n/);
+  if (lines[0] !== '---') return 'missing frontmatter';
+  const end = lines.indexOf('---', 1);
+  if (end === -1) return 'bad frontmatter: missing closing ---';
+  let value: unknown;
+  try {
+    value = parse(lines.slice(1, end).join('\n'));
+  } catch {
+    return 'bad frontmatter: invalid YAML';
+  }
+  const result = entrySchema.safeParse(value);
+  if (!result.success) {
+    const fields = [
+      ...new Set(result.error.issues.map((issue) => issue.path.join('.') || 'entry')),
+    ];
+    return `bad frontmatter: ${fields.join(', ')}`;
+  }
+  return result.data;
 }
