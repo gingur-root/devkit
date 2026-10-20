@@ -157,7 +157,7 @@ jobs:
             node --input-type=module -e '
               import { readFileSync, appendFileSync } from "node:fs";
               const resume = JSON.parse(readFileSync(process.argv[1], "utf8"));
-              appendFileSync(process.env.GITHUB_OUTPUT, `resume=${resume.round}\ncandidate=${resume.candidate}\nbase=${resume.base}\n`);
+              appendFileSync(process.env.GITHUB_OUTPUT, ["resume=" + resume.round, "candidate=" + resume.candidate, "base=" + resume.base, ""].join("\n"));
             ' "$RUNNER_TEMP/agent/in/resume.json"
           else
             echo "base=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
