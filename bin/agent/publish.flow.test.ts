@@ -54,7 +54,14 @@ function newThread(body: string, path: string, line: number | null, index: numbe
   };
 }
 
-function harness() {
+function harness(
+  options: {
+    files?: { filename: string; previous_filename?: string }[];
+    packages?: Record<string, string | null>;
+    mergeError?: string;
+    packageError?: number;
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'publish-flow-'));
   const issue = { number: 1, node_id: 'issue', title: 'T', body: 'B', labels: [] };
   const pull = {
@@ -62,9 +69,11 @@ function harness() {
     node_id: 'pr',
     html_url: 'https://github.com/o/r/pull/2',
     head: { sha: 'candidate' },
+    base: { sha: 'github-base' },
   };
   const comments: Comment[] = [];
   const threads: ReturnType<typeof newThread>[] = [];
+  const reads: string[] = [];
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   let calls = 0;
   vi.stubEnv('GH_TOKEN', 'test');
@@ -73,14 +82,26 @@ function harness() {
     const path = new URL(url).pathname;
     const body = init.body ? JSON.parse(String(init.body)) : {};
     if (init.method !== 'GET') writes.push({ path, body });
+    else reads.push(url);
     let result: unknown;
     if (init.method === 'GET' && path.endsWith('/issues/1')) result = issue;
     else if (init.method === 'GET' && path.endsWith('/pulls')) result = [pull];
-    else if (init.method === 'GET' && path.endsWith('/reactions')) result = [];
+    else if (init.method === 'GET' && path.endsWith('/files')) {
+      const page = Number(new URL(url).searchParams.get('page'));
+      result = (options.files ?? [{ filename: 'STUB.md' }]).slice((page - 1) * 100, page * 100);
+    } else if (init.method === 'GET' && path.endsWith('/contents/package.json')) {
+      if (options.packageError)
+        return new Response('package lookup failed', { status: options.packageError });
+      const text = options.packages?.[new URL(url).searchParams.get('ref')!];
+      if (text == null) return new Response('Not Found', { status: 404 });
+      result = { content: Buffer.from(text).toString('base64'), encoding: 'base64' };
+    } else if (init.method === 'GET' && path.endsWith('/reactions')) result = [];
     else if (init.method === 'GET' && path.endsWith('/comments')) {
       result = path.includes('/issues/2/') ? comments : [];
     } else if (path === '/graphql') {
       const { query, variables } = body;
+      if (query.includes('mergePullRequest') && options.mergeError)
+        return Response.json({ errors: [{ message: options.mergeError }] });
       if (query.includes('reviewThreads'))
         result = { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } };
       else {
@@ -223,7 +244,7 @@ function harness() {
     });
     return { dir, output: readFileSync(output, 'utf8') };
   }
-  return { stage, pull, comments, writes, threads };
+  return { stage, pull, comments, reads, writes, threads };
 }
 
 test('publish carries repair hypotheses into the same-round review and upserts one loop log', async () => {
@@ -247,7 +268,7 @@ test('publish carries repair hypotheses into the same-round review and upserts o
   h.pull.head.sha = 'repaired';
   const second = await h.stage(ready, 1);
   assert.match(second.output, /next=ready/);
-  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Ready');
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Done');
   assert.equal(h.comments.length, 1);
   assert.equal(h.threads.length, 1, 'no duplicate F1 thread');
   assert.equal(h.threads[0]!.isResolved, true, 'next review resolves F1');
@@ -770,4 +791,127 @@ test('new questions get new threads past every open, resolved and current Q ID',
     assert.equal(t.comments.nodes.length, 1, 'a fresh thread, not a reply on the old one');
     assert.ok(t.comments.nodes[0]!.body.includes(text!));
   }
+});
+
+test('non-passing rounds preserve the base publication flow without merging', async () => {
+  const h = harness();
+  const requested = await h.stage(changes, 0);
+  assert.match(requested.output, /next=repair\nrepair=true/);
+  const fixed = await h.stage(
+    { ...repair, changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }] },
+    1,
+    { review: changes },
+  );
+  assert.match(fixed.output, /candidate=repaired/);
+  const stale = await h.stage(ready, 1, { candidate: 'older' });
+  assert.match(stale.output, /next=rerun/);
+  const stopped = await h.stage(changes, 10, { rounds: 10 });
+  assert.match(stopped.output, /next=stop/);
+  assert.equal(
+    h.writes.filter((w) =>
+      /\b(mergePullRequest|enablePullRequestAutoMerge)\b/.test(String(w.body.query)),
+    ).length,
+    0,
+  );
+});
+
+const mergeWrites = (h: ReturnType<typeof harness>) =>
+  h.writes.filter((w) =>
+    /\b(mergePullRequest|enablePullRequestAutoMerge)\b/.test(String(w.body.query)),
+  );
+const issueText = (h: ReturnType<typeof harness>) =>
+  String(h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!.body.body);
+const auto = { ...ready, merge: { verdict: 'auto' as const, rule: null } };
+
+test('a passing safe review squash-merges exactly the reviewed SHA and reports Done', async () => {
+  const h = harness();
+  await h.stage(auto, 0);
+  const merges = mergeWrites(h);
+  assert.equal(merges.length, 1);
+  assert.match(String(merges[0]!.body.query), /mergePullRequest/);
+  assert.deepEqual(merges[0]!.body.variables, {
+    input: { pullRequestId: 'pr', mergeMethod: 'SQUASH', expectedHeadOid: 'candidate' },
+  });
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Done');
+  assert.match(issueText(h), /merged automatically/);
+  assert.ok(h.writes.findIndex((w) => w.path.endsWith('/reviews')) < h.writes.indexOf(merges[0]!));
+  assert.ok(
+    h.writes.findIndex((w) => String(w.body.query).includes('markPullRequestReadyForReview')) <
+      h.writes.indexOf(merges[0]!),
+  );
+});
+
+for (const merge of [{ verdict: 'troy' as const, rule: 'product' }, null]) {
+  test(`review verdict ${JSON.stringify(merge)} stops a safe PR`, async () => {
+    const h = harness();
+    await h.stage({ ...ready, merge }, 0);
+    assert.equal(mergeWrites(h).length, 0);
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.ok(issueText(h).includes(`\`${merge?.rule ?? 'review'}\``));
+  });
+}
+
+test('GitHub files overrule a safe candidate.patch, summary and reviewer; all rules are named', async () => {
+  const h = harness({ files: [{ filename: '.github/x.yml' }, { filename: 'src/auth.ts' }] });
+  await h.stage({ ...auto, summary: 'Only STUB.md documentation changed.' }, 0);
+  assert.equal(mergeWrites(h).length, 0);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.match(issueText(h), /needs you: `ci`, `auth`/);
+});
+
+test('reviewer rules add to code rules', async () => {
+  const h = harness({ files: [{ filename: '.github/x.yml' }] });
+  await h.stage({ ...ready, merge: { verdict: 'troy', rule: 'email' } }, 0);
+  assert.equal(mergeWrites(h).length, 0);
+  assert.match(issueText(h), /needs you: `ci`, `email`/);
+});
+
+test('files are paginated and both sides of a rename are checked', async () => {
+  const h = harness({
+    files: [
+      ...Array.from({ length: 100 }, (_, n) => ({ filename: `docs/${n}.md` })),
+      { filename: 'docs/moved.md', previous_filename: 'src/auth.ts' },
+    ],
+  });
+  await h.stage(auto, 0);
+  assert.equal(mergeWrites(h).length, 0);
+  assert.match(issueText(h), /needs you: `auth`/);
+  assert.ok(h.reads.some((url) => url.includes('/files?per_page=100&page=2')));
+});
+
+test('package comparison uses GitHub base and reviewed head, not the job base', async () => {
+  const h = harness({
+    files: [{ filename: 'package.json' }],
+    packages: {
+      'github-base': '{"dependencies":{"a":"1"}}',
+      candidate: '{"dependencies":{"a":"2"},"scripts":{"test":"skip"}}',
+      base: '{"dependencies":{"a":"2"},"scripts":{"test":"skip"}}',
+    },
+  });
+  await h.stage(auto, 0);
+  assert.equal(mergeWrites(h).length, 0);
+  assert.match(issueText(h), /needs you: `ci`, `dependency`/);
+  assert.deepEqual(
+    h.reads
+      .filter((url) => url.includes('/contents/package.json'))
+      .map((url) => new URL(url).searchParams.get('ref'))
+      .sort(),
+    ['candidate', 'github-base'],
+  );
+});
+
+test('a merge failure retains the posted review and names the error in Needs you', async () => {
+  const h = harness({ mergeError: 'Expected head OID did not match' });
+  await h.stage(auto, 0);
+  assert.equal(mergeWrites(h).length, 1);
+  assert.equal(h.writes.filter((w) => w.path.endsWith('/reviews')).length, 1);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.match(issueText(h), /Merging .* failed; needs you/);
+  assert.match(issueText(h), /Expected head OID did not match/);
+});
+
+test('an unavailable trusted package lookup never merges', async () => {
+  const h = harness({ packageError: 403 });
+  await assert.rejects(h.stage(auto, 0), /403 package lookup failed/);
+  assert.equal(mergeWrites(h).length, 0);
 });

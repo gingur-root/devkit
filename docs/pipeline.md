@@ -24,13 +24,13 @@ keeps its own caller, which runs the same plan and build workflows.
 
 ## The flow
 
-| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                                                    | Board card       |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
-| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                                                             | Ask              |
-| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer. | Planning         |
-| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                      | Needs you        |
-| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                   | Building → Ready |
-| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | Claude reviews and replans; Codex repairs. Spec changes wait for approval; repairs and stale reruns share a 10-round cap.            | Ready → Done     |
+| Step               | You do                                                                                                                                                                              | The pipeline does                                                                                                                                       | Board card       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 1. File            | Open an issue: what you want and how you'd know it's done. Add `ready-for-agent` to put it on the board.                                                                            | The board adds the card.                                                                                                                                | Ask              |
+| 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer.                    | Planning         |
+| 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                                         | Needs you        |
+| 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                                      | Building → Ready |
+| 5. Review / merge  | Merge a denied PR when its Needs you comment asks. Otherwise answer its findings.                                                                                                   | Claude reviews and replans; Codex repairs. Passing PRs merge when the deny gate allows; others need you. Repairs and stale reruns share a 10-round cap. | Done / Needs you |
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
@@ -142,10 +142,12 @@ becomes advisory gets a reply and is resolved. A finding whose ID matches only
 a resolved thread gets a new thread.
 
 - **Pass** (every axis passes, no blocking finding, no question, and CI green
-  on the reviewed commit, with every `agent` criterion independently verified): the PR is marked ready for review and the card
-  stays in **Ready**. Red CI adds a blocking `CI` finding to the review, which
-  Codex then fixes like any other. The review comment
-  on the issue says it's ready to merge.
+  on the reviewed commit, with every `agent` criterion independently verified):
+  the PR is marked ready for review. If the code rules and reviewer both allow
+  it, the controller squash-merges the reviewed commit and marks the card
+  **Done**. A denied PR stays open at **Needs you**, naming every rule.
+  A merge failure also goes to **Needs you**, with GitHub's error.
+  Red CI adds a blocking `CI` finding, which Codex fixes like any other.
 - **Changes requested:** Claude (Opus 5.5, medium effort) replans before
   each repair. It replies on every unresolved thread, using its finding ID
   in `changes[].ref` and the answer in `response`. A missing reply stops at
@@ -207,10 +209,44 @@ Pass the same cap to each publish in the run. Without `--rounds`, the cap is
 rounds in that run. The CLI accepts only integers from 0 to 10; 0 reviews the
 build without repairs or reruns. Local eval keeps its separate cap of 2 repairs and runs without a planner.
 
-The pipeline never merges, except memory PRs on pipeline (see
-[Memory after a merge](#memory-after-a-merge)). For other PRs, merging is yours,
-or a Claude project thread's under the project's merge policy. The board moves
-the card to **Done** when the PR merges.
+### Merge gate
+
+A passing review with green CI merges automatically only when the code deny
+rules below return no stop and the reviewer returns `merge.verdict: auto`.
+The controller squash-merges with `expectedHeadOid` set to the reviewed SHA.
+Required checks still apply. A changed head, conflict or missing check leaves
+**Needs you**, with GitHub's error. A successful merge reports **Done**.
+
+The controller reads every changed path from GitHub, including both sides of
+a rename, and reads `package.json` at the PR base and reviewed head. It runs
+from the trusted `devkitRef` checkout. Agent summaries and `candidate.patch`
+do not decide which files the gate checks. Paths and repos ignore case.
+
+| Rule         | Stops automatic merge when                                                                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo`       | The repo is `gingur-root/infra`.                                                                                                                                                                                          |
+| `ci`         | A path matches `.github/**`, `actions/**`, `configs/**`, `.node-version`, `.prototools`, `pnpm-workspace.yaml` or `vite.config.*`, or the `package.json` `scripts` block changes.                                         |
+| `deploy`     | A path matches `Pulumi*.yaml`, `**/Dockerfile*`, `**/compose*.y*ml`, `wrangler.*`, `vercel.json`, `netlify.toml`, `fly.toml` or `.devkit/**`.                                                                             |
+| `secrets`    | A path contains `secret` or matches `**/.env*`, `.gitleaks*`, `.sops.yaml` or `**/*.sops.*`.                                                                                                                              |
+| `auth`       | A path segment starts with `auth`, `oauth`, `permission`, `identity`, `login` or `session`; a path is `test/admission.test.ts` or `test/agent.token.test.ts`; or devkit changes one of its merge gate files listed below. |
+| `money`      | A path segment contains `billing`, `payment`, `stripe` or `invoice`.                                                                                                                                                      |
+| `data`       | A path matches `**/migrations/**`, `**/*.sql` or `**/schema.prisma`, or a path segment starts with `mail`, `email` or `smtp` (sends email).                                                                               |
+| `dependency` | `dependencies`, `optionalDependencies` or `peerDependencies` gains a key or changes a version, or `package.json` cannot be parsed. `devDependencies` changes alone pass.                                                  |
+| `size`       | GitHub lists 3000 or more changed files, so the list may be incomplete.                                                                                                                                                   |
+
+The devkit merge gate files are `bin/agent/merge.ts`, `bin/agent/github.ts`,
+`bin/agent/publish.ts`, `bin/agent/result.ts`, `bin/agent/roles.ts`,
+`bin/agent/run.ts`, `agents/review.md`, `agents/sdlc.md`, `agents/contract.md`,
+`agents/worker.md` and `.github/admission.txt`.
+
+The reviewer can add a stop, never remove one. It returns `troy` with a short
+rule for auth or money logic outside matched paths, production data writes,
+sending email, or a plan assumption that is really a product decision. A
+missing merge verdict also stops the merge (`review`). Every stop appears
+in the issue comment and moves the card to **Needs you**.
+
+Memory PRs use the same path rules and their required check instead of a
+review stage (see [Memory after a merge](#memory-after-a-merge)).
 
 ## What a stage can reach
 
@@ -249,7 +285,9 @@ The PR merges once the required `Check` passes. If it can already merge,
 the controller squash-merges that same commit. A draft never auto-merges.
 A rerun that fails turns auto-merge off before making the PR a draft; a
 passing rerun resets auto-merge to the new commit. The controller refuses
-staged paths outside `memory/` before committing or pushing.
+staged paths outside `memory/` before committing or pushing. It also checks
+staged paths against the merge deny rules. A denied memory PR stays open,
+names its rules in the PR body and has any existing auto-merge disabled.
 Changes go to `memory/<repo>-<pr>` on `gingur-root/pipeline`, with a PR into
 `main`. Nothing changes directly on `main`. No changes means no branch, PR
 or comment.

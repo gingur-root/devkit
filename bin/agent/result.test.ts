@@ -47,3 +47,19 @@ test('every role may return follow-ups, and each subtask says whether it needs t
     assert.ok(parsed.success, `${file}: ${parsed.error?.message}`);
   }
 });
+
+test('merge verdicts are required, nullable and strict', () => {
+  const ready = fixture('review.ready');
+  for (const merge of [null, { verdict: 'auto', rule: null }, { verdict: 'troy', rule: 'email' }]) {
+    const parsed = Result.parse({ ...ready, merge });
+    assert.deepEqual(parsed.merge, merge);
+  }
+  for (const merge of [
+    undefined,
+    { verdict: 'auto', rule: null, extra: true },
+    { verdict: 'yes', rule: null },
+    { verdict: 'troy' },
+  ]) {
+    assert.equal(Result.safeParse({ ...ready, merge }).success, false);
+  }
+});

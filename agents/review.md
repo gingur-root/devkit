@@ -45,6 +45,13 @@ Ask the operator nothing. Put the recommended correction in each finding's `fix`
    `operator` criterion.
    Return findings to the controller; implementation applies any fixes.
 
+   On a `pass`, set `merge` to `{ verdict: 'auto', rule: null }` unless the
+   change needs Troy's decision. Return `troy` with a short rule (`auth`,
+   `money`, `data`, `email`, or `product`) for auth or money logic outside
+   matched paths, production data writes, sending email, or a plan assumption
+   that is really a product decision. On any other outcome, `merge` is null.
+   The reviewer can add a stop, never remove a code rule.
+
 ## Output
 
 - The checkout is the candidate. The change under review is `candidate.patch`
@@ -59,5 +66,6 @@ Ask the operator nothing. Put the recommended correction in each finding's `fix`
   question nor a blocking finding. Accept the follow-up already listed in a
   follow-ups comment on the card, or propose it in `followups`. Record which
   in `assumptions`. Keep `questions` for decisions the operator must make.
-- A `pass` with no questions marks the PR ready for the operator to merge.
+- A `pass` with no questions lets the controller apply the merge gate.
+  The PR merges only when the code rules and `merge.verdict` both allow it.
   Leave `questions` empty; put recommended corrections in `fix`.

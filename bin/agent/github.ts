@@ -41,7 +41,7 @@ function headers(override?: string): Record<string, string> {
   };
 }
 
-// The pipeline never merges, except `autoMerge` for memory PRs on pipeline (devkit#267).
+// Generic clients never merge. Only `merge`, called after the deny gate, may merge (devkit#267).
 const MERGE =
   /\/pulls\/\d+\/merge\b|\/merges\b|\b(mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b/;
 
@@ -100,15 +100,21 @@ async function mutate<T>(query: string, variables: Record<string, unknown>): Pro
   return data;
 }
 
-/** The only merge exception: checked memory PRs on the pipeline store. */
-export async function autoMerge(
-  repo: string,
-  pull: { node_id: string },
+/** The only merge route: callers must pass their merge gate first. */
+export async function merge(
+  _repo: string,
+  pull: { node_id: string; number: number },
   head: string,
+  mode: 'auto' | 'now',
 ): Promise<void> {
-  if (repo !== 'gingur-root/pipeline')
-    throw new Error(`${repo}: auto-merge is only allowed on gingur-root/pipeline.`);
   const input = { pullRequestId: pull.node_id, mergeMethod: 'SQUASH', expectedHeadOid: head };
+  if (mode === 'now') {
+    await mutate(
+      'mutation($input:MergePullRequestInput!){mergePullRequest(input:$input){pullRequest{id}}}',
+      { input },
+    );
+    return;
+  }
   try {
     await mutate(
       'mutation($input:EnablePullRequestAutoMergeInput!){enablePullRequestAutoMerge(input:$input){pullRequest{id}}}',

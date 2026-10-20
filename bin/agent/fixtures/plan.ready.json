@@ -28,5 +28,6 @@
   "followups": null,
   "priority": "P2",
   "triage": null,
-  "failure": null
+  "failure": null,
+  "merge": null
 }

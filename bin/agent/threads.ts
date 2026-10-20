@@ -9,6 +9,7 @@ export interface Pull {
   html_url: string;
   node_id: string;
   head: { sha: string };
+  base: { sha: string };
 }
 
 export function branchOf(job: Job): string {

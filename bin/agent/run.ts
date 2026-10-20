@@ -118,6 +118,7 @@ export function failedResult(job: Job, output: RunOutput): Result {
     followups: null,
     priority: null,
     triage: null,
+    merge: null,
     failure,
   };
 }

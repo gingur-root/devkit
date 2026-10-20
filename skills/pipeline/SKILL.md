@@ -135,10 +135,10 @@ names its fix; show Troy the fix and stop. Don't install anything yourself.
 7. **Finish.** A pass (every axis passes, nothing blocking, no question, CI
    green) gets `gh pr ready <n>`. Anything else leaves the PR draft and goes
    to Troy, with the open blocking IDs: a question, an inconclusive review,
-   findings left after the cap, or a repair that changed nothing. Either way,
-   never merge. The pipeline never merges, except memory PRs on pipeline (see
-   [Memory after a merge](../../docs/pipeline.md#memory-after-a-merge)). For
-   other PRs, merging is Troy's, or a project thread's under its merge policy.
+   findings left after the cap, or a repair that changed nothing. A pass merges
+   only when `denyRules` (`bin/agent/merge.ts`) returns no stop; the deny
+   table is in [the pipeline docs](../../docs/pipeline.md). A stopped PR is
+   Troy's, or a project thread's under its merge policy.
 8. **Follow-ups.** File each stage's `followups` as an issue in the repo with
    no label, at most 5 per stage. End each body with
    `<!-- devkit:followup <slug> <stage> -->`. Before filing, search for that

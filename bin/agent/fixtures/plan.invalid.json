@@ -4,5 +4,6 @@
   "inputs": { "issue": "", "plan": null, "base": null, "candidate": null, "artifacts": [] },
   "status": "complete",
   "outcome": "ready",
-  "summary": "Stub plan with no outputs field, so it fails the schema."
+  "summary": "Stub plan with no outputs field, so it fails the schema.",
+  "merge": null
 }
