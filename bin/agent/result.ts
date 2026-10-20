@@ -101,7 +101,9 @@ export const Result = z
     axes: z.object({ correctness: Outcome, spec: Outcome, standards: Outcome }).strict().nullable(),
     criteria: z
       .array(
-        z.object({ id: z.string(), text: z.string(), check: z.enum(['ci', 'agent']) }).strict(),
+        z
+          .object({ id: z.string(), text: z.string(), check: z.enum(['ci', 'agent', 'operator']) })
+          .strict(),
       )
       .nullable(),
     probe: z
@@ -132,7 +134,21 @@ export const Result = z
       )
       .nullable(),
     subtasks: z
-      .array(z.object({ title: z.string(), body: z.string(), pr: z.boolean() }).strict())
+      .array(
+        z
+          .object({
+            title: z.string(),
+            body: z.string(),
+            pr: z.boolean(),
+            blockedBy: z
+              .array(z.number().int())
+              .nullable()
+              .describe(
+                "0-based indices of earlier subtasks this one can't start without; null when none. Order alone is not a blocking edge.",
+              ),
+          })
+          .strict(),
+      )
       .nullable()
       .describe('A ready plan files each as a sub-issue of the card, which becomes a story.'),
     followups: z

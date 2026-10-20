@@ -140,7 +140,7 @@ test('plan comments record body visibility and name a withheld body in every bol
   const variants = [
     { result: ready, handoff: null, story: [] },
     { result: ready, handoff: 'build', story: [] },
-    { result: ready, handoff: null, story: [{ number: 2, title: 'Subtask' }] },
+    { result: ready, handoff: null, story: [{ number: 2, title: 'Subtask', blockedBy: [] }] },
     { result: { ...ready, outcome: 'needs-input' }, handoff: null, story: [] },
     { result: { ...ready, status: 'failed', outcome: null }, handoff: null, story: [] },
     { result: { ...ready, triage: [] }, handoff: null, story: [] },
@@ -153,7 +153,7 @@ test('plan comments record body visibility and name a withheld body in every bol
           variant.result as Result,
           out,
           variant.handoff,
-          [...variant.story],
+          variant.story.map((s) => ({ ...s, blockedBy: [...s.blockedBy] })),
         );
         const head = body.split('\n\n')[1]!;
         if (bodySeen) assert.doesNotMatch(head, /without the issue body/);
@@ -470,6 +470,7 @@ test("a stop names the CLI's failure class and a rate limit's reset time", () =>
     body,
     /stopped at `plan`:\*\* `rate_limit`, resets 2026-10-14 04:00 UTC: Hit a limit\./,
   );
+  assert.ok(body.endsWith('Fix the cause, then add `agent:plan` again.'));
   assert.match(failureReason({ ...limited, resetsAt: null }, 'x'), /reset time unknown/);
 });
 
@@ -527,7 +528,15 @@ test('a missing result names the first failed setup step, but not a failed run',
   const setupFailure = {
     stage: 'review',
     reason: 'the review job failed at toolchain before the agent started; see the job log',
+    step: 'toolchain',
   };
+  const body = stopped('review', setupFailure);
+  assert.ok(
+    body.endsWith(
+      'Likely the environment (runner, Bitwarden), not the code: read step `toolchain` in job `review` before you reply `/approve` again.',
+    ),
+  );
+  assert.doesNotMatch(body, /Fix the cause/);
   assert.deepEqual(verdict(job, 'rev', out), setupFailure, 'a failed setup step');
 
   writeFileSync(join(out, STEPS_FILE), JSON.stringify({ ...steps, jobIn: 'failure' }));
@@ -680,6 +689,7 @@ function fakeGitHub(card = CARD, comments: unknown[] = [], events: unknown[] = [
   const user = { id: PIPELINE_BOT.id };
   const issues: FakeIssue[] = [];
   const linked = new Set<number>();
+  const dependencies = new Map<string, number[]>();
   const statuses: string[] = [];
   const calls: string[] = [];
   const board = {
@@ -724,6 +734,16 @@ function fakeGitHub(card = CARD, comments: unknown[] = [], events: unknown[] = [
     if (path === `${cardPath}/sub_issues`) {
       if (method === 'POST') linked.add(body.sub_issue_id);
       return json(method === 'GET' ? issues.filter((i) => linked.has(i.id)) : {});
+    }
+    if (path.endsWith('/dependencies/blocked_by')) {
+      const ids = dependencies.get(path) ?? [];
+      if (method === 'POST') {
+        assert.ok(!ids.includes(body.issue_id), 'no duplicate dependency');
+        ids.push(body.issue_id);
+        dependencies.set(path, ids);
+        return json({});
+      }
+      return json(ids.map((id) => ({ id })));
     }
     if (method === 'GET' && path === cardPath) return json(card);
     if (method === 'GET' && path === `${cardPath}/comments`) return json(comments);
@@ -789,9 +809,18 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
     );
     assert.deepEqual(github.statuses, ['item-I_2 Ask', 'item-I_3 Ask']);
     assert.deepEqual(filed, [
-      { number: 2, title: subtasks[0]!.title },
-      { number: 3, title: subtasks[1]!.title },
+      { number: 2, title: subtasks[0]!.title, blockedBy: [] },
+      { number: 3, title: subtasks[1]!.title, blockedBy: [2] },
     ]);
+    const edges = () =>
+      github.calls.filter((c) => c.startsWith('POST ') && c.includes('/dependencies/blocked_by'));
+    assert.deepEqual(edges(), [
+      'POST /repos/o/r/issues/3/dependencies/blocked_by {"issue_id":1002}',
+    ]);
+    assert.ok(
+      github.calls.indexOf(edges()[0]!) > github.calls.indexOf(links()[1]!),
+      'edges follow all filing and linking',
+    );
 
     // Nothing adds a stage label.
     const [plain, second] = github.issues;
@@ -805,6 +834,7 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
     github.statuses.length = 0;
     await fileSubtasks(storyJob, CARD, subtasks);
     assert.equal(posts().length, 0, 'no duplicate issue');
+    assert.equal(edges().length, 0, 'no duplicate dependency');
     assert.deepEqual(links(), [
       `POST /repos/o/r/issues/1/sub_issues {"sub_issue_id":${second!.id}}`,
     ]);
@@ -820,6 +850,69 @@ test('subtasks become sub-issues in Ask, and a retry files none twice', async ()
     assert.ok(!links().some((c) => c.includes('"sub_issue_id":7')));
   } finally {
     teardown();
+  }
+});
+
+test('invalid subtask dependencies fail before any issue is filed', async () => {
+  const github = fakeGitHub();
+  try {
+    for (const index of [-1, 0, 1, 9]) {
+      await assert.rejects(
+        fileSubtasks(storyJob, CARD, [
+          { title: 'Invalid', body: '', pr: true, blockedBy: [index] },
+        ]),
+        /earlier subtask/,
+      );
+    }
+    await assert.rejects(
+      fileSubtasks(storyJob, CARD, [
+        { title: 'First', body: '', pr: true, blockedBy: null },
+        { title: 'Invalid second', body: '', pr: true, blockedBy: [1] },
+      ]),
+      /earlier subtask/,
+    );
+    await assert.rejects(
+      fileSubtasks(storyJob, CARD, [
+        { title: 'Same', body: '', pr: true, blockedBy: null },
+        { title: 'Same', body: '', pr: true, blockedBy: [0] },
+      ]),
+      /repeats the title/,
+    );
+    assert.ok(!github.calls.some((c) => c.startsWith('POST ')));
+  } finally {
+    teardown();
+  }
+});
+
+test('plan contracts record dependency issue numbers and accept old plans without edges', () => {
+  const out = mkdtempSync(join(tmpdir(), 'plan-edges-'));
+  try {
+    for (const [story, expected] of [
+      [
+        [
+          { number: 2, title: 'First', blockedBy: [] },
+          { number: 3, title: 'Second', blockedBy: [2] },
+        ],
+        { '3': [2] },
+      ],
+      [[{ number: 2, title: 'First', blockedBy: [] }], null],
+      [[], null],
+    ] as const) {
+      const body = planComment(
+        storyJob,
+        fixtureResult('plan.ready'),
+        out,
+        null,
+        story.map((s) => ({ ...s, blockedBy: [...s.blockedBy] })),
+      );
+      const raw = JSON.parse(body.split(CONTRACT_PREFIX)[1]!.split(' -->')[0]!);
+      assert.deepEqual(raw.blockedBy, expected);
+      assert.deepEqual(PlanContract.parse(raw).blockedBy, expected);
+      delete raw.blockedBy;
+      assert.equal(PlanContract.parse(raw).blockedBy, null);
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
   }
 });
 
@@ -933,7 +1026,7 @@ test('subtasks and follow-ups ignore copied markers unless the issue is from the
       try {
         if (kind === 'subtask') {
           const filed = await fileSubtasks(storyJob, CARD, [
-            { title: 'Same title', body: 'Approved body', pr: true },
+            { title: 'Same title', body: 'Approved body', pr: true, blockedBy: null },
           ]);
           assert.equal(filed[0]!.number, reuse ? 7 : 3);
           assert.equal(github.linked.has(7), reuse);
