@@ -282,6 +282,11 @@ export function planComment(
     checks: Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
     critique: result.critique,
     triage: result.triage,
+    blockedBy: story.some((s) => s.blockedBy.length)
+      ? Object.fromEntries(
+          story.filter((s) => s.blockedBy.length).map((s) => [s.number, s.blockedBy]),
+        )
+      : null,
   };
   return [
     marker(job.role),
@@ -886,6 +891,7 @@ function runUrl(): string {
 export interface Filed {
   number: number;
   title: string;
+  blockedBy: number[];
 }
 
 /**
@@ -906,11 +912,15 @@ async function filedBefore(job: Job, card: Issue, mark: string): Promise<Issue[]
  * never moves a subtask that has started back to Ask.
  */
 export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): Promise<Filed[]> {
+  for (const [index, subtask] of subtasks.entries()) {
+    if (subtask.blockedBy?.some((blocker) => blocker < 0 || blocker >= index))
+      throw new Error(`Subtask ${index}'s blockedBy must name an earlier subtask.`);
+  }
   const mark = subtaskMarker(card.number);
   const earlier = await filedBefore(job, card, mark);
   const path = `/repos/${job.repo}/issues/${card.number}/sub_issues`;
   const linked = new Set((await restAll<{ id: number }>(path)).map((i) => i.id));
-  const filed: Filed[] = [];
+  const filed: Issue[] = [];
   for (const subtask of subtasks) {
     const issue =
       earlier.find((i) => i.title === subtask.title) ??
@@ -924,9 +934,24 @@ export async function fileSubtasks(job: Job, card: Issue, subtasks: Subtask[]): 
       await rest('POST', path, { sub_issue_id: issue.id });
       await setStatus(job.repo, issue.node_id, 'Ask');
     }
-    filed.push({ number: issue.number, title: issue.title });
+    filed.push(issue);
   }
-  return filed;
+  for (const [index, subtask] of subtasks.entries()) {
+    if (!subtask.blockedBy?.length) continue;
+    const path = `/repos/${job.repo}/issues/${filed[index]!.number}/dependencies/blocked_by`;
+    const existing = new Set((await restAll<{ id: number }>(path)).map((issue) => issue.id));
+    for (const blocker of subtask.blockedBy) {
+      const id = filed[blocker]!.id;
+      if (existing.has(id)) continue;
+      await rest('POST', path, { issue_id: id });
+      existing.add(id);
+    }
+  }
+  return filed.map((issue, index) => ({
+    number: issue.number,
+    title: issue.title,
+    blockedBy: (subtasks[index]!.blockedBy ?? []).map((blocker) => filed[blocker]!.number),
+  }));
 }
 
 /** What the stage comment says about its follow-ups, drops included, or '' when there are none. */

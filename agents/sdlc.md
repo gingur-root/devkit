@@ -211,6 +211,7 @@ the operator to adopt. Otherwise propose none.
    For wide compatibility changes, propose expand, migrate, and contract steps
    when separate green slices are feasible. Return proposed child issues as
    artifacts for the controller to publish.
+   Fill a subtask's `blockedBy` only for a real blocking edge, where it needs an earlier subtask's output; order alone is not one.
 
 6. Read the plan as a capable builder without this conversation. Resolve
    questions answered by the repo and make routine choices explicitly.

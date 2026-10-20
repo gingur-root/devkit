@@ -188,6 +188,13 @@ Agents propose new issues in their result, and publish files them
   sub-issues is refused. The card goes to **Needs you** with "Build each
   subtask instead", and the label is removed. This includes stories made by
   hand.
+- **Blocking edges.** A subtask's `blockedBy` names earlier subtasks by their
+  0-based indices. Publish files these as GitHub issue dependencies. A build
+  refuses while a live blocker is open and names each blocker on the card.
+  Closed blockers are ignored. A sibling edge is also ignored when the story's
+  current, ready, unedited plan no longer names it, including after the story
+  changes. The comment names ignored blockers and why. Other open blockers
+  still block. Remove the dependency in GitHub's UI to override it.
 - **Follow-ups.** Any stage except a retro may return `followups`. Each becomes
   a new issue in **Ask** with no label, so it starts nothing. Its body links
   back to the card, the stage and the run. A comment on the card lists them,

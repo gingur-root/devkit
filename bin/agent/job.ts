@@ -76,6 +76,7 @@ export const PlanContract = z.object({
   critique: z.boolean().nullable(),
   // Absent on plans published before devkit#115.
   triage: Triage.nullable().default(null),
+  blockedBy: z.record(z.string(), z.array(z.number().int())).nullable().default(null),
 });
 export type PlanContract = z.infer<typeof PlanContract>;
 

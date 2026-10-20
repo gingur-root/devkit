@@ -38,6 +38,7 @@ import { ROLES, type RoleName } from './roles.ts';
 import { MANIFEST_PATH } from './tools.ts';
 
 const MEMORY_REPO = 'gingur-root/pipeline';
+const CLOSED_ISSUE_STATE = 'closed';
 
 /** Fetch the slice from one main commit, using the separate read-only token. */
 async function memorySlice(options: RenderOptions): Promise<string | null> {
@@ -107,6 +108,7 @@ export interface Issue extends Authored {
   labels: { name: string }[];
   pull_request?: unknown;
   sub_issues_summary?: { total: number };
+  issue_dependencies_summary?: { total_blocked_by: number };
 }
 
 export interface RenderOptions {
@@ -237,6 +239,58 @@ async function refuse(options: RenderOptions, reason: string): Promise<void> {
   if (label) await removeLabel(options.repo, options.issue, label);
 }
 
+async function checkBlockers(options: RenderOptions, parent: Issue | null): Promise<void> {
+  const blockers = await restAll<{
+    id: number;
+    number: number;
+    state: string;
+    html_url: string;
+  }>(`/repos/${options.repo}/issues/${options.issue}/dependencies/blocked_by`);
+  let siblings = new Set<number>();
+  let contract: PlanContract | null = null;
+  if (parent) {
+    const path = `/repos/${options.repo}/issues/${parent.number}`;
+    const [comments, subtasks] = await Promise.all([
+      restAll<Authored>(`${path}/comments`),
+      restAll<{ id: number }>(`${path}/sub_issues`),
+    ]);
+    siblings = new Set(subtasks.map((subtask) => subtask.id));
+    try {
+      contract = approvedPlan(
+        comments,
+        options.appId,
+        revision(parent.title, parent.body ?? ''),
+        trustedIssue(parent),
+      ).contract;
+    } catch {
+      // An invalid or stale story plan cannot keep a sibling edge live.
+      contract = null;
+    }
+  }
+  const live: string[] = [];
+  const ignored: string[] = [];
+  for (const blocker of blockers) {
+    const link = `[#${blocker.number}](${blocker.html_url})`;
+    if (blocker.state === CLOSED_ISSUE_STATE) ignored.push(`${link} (closed)`);
+    else if (
+      parent &&
+      siblings.has(blocker.id) &&
+      !contract?.blockedBy?.[options.issue]?.includes(blocker.number)
+    )
+      ignored.push(`${link} (#${parent.number}'s plan no longer names it)`);
+    else live.push(link);
+  }
+  const note = ignored.length ? `Ignored blockers: ${ignored.join(', ')}.` : '';
+  if (live.length) throw new Error(`Blocked by ${live.join(', ')}.${note ? `\n\n${note}` : ''}`);
+  if (note)
+    await upsertStageComment(
+      options.repo,
+      options.issue,
+      'blockers',
+      `${marker('blockers')}\n\n${note}`,
+    );
+}
+
 export async function render(options: RenderOptions): Promise<Job> {
   const source =
     options.source ||
@@ -272,6 +326,8 @@ export async function render(options: RenderOptions): Promise<Job> {
         throw new Error(
           `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
         );
+      if (options.role === 'build' && (issue.issue_dependencies_summary?.total_blocked_by ?? 0) > 0)
+        await checkBlockers(options, parent);
     } catch (error) {
       // The refusal itself still fails the job, even if saying so on the issue fails.
       await refuse(options, (error as Error).message).catch(console.error);

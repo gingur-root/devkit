@@ -20,6 +20,13 @@ test('only a complete, strict result envelope validates', () => {
   assert.equal(long.summary.split(' ').length, 151, 'a long summary is clipped to 150 words and …');
 });
 
+test('a subtask must declare blockedBy, including null when it has none', () => {
+  const story = fixture('plan.story');
+  assert.ok(Result.safeParse(story).success);
+  delete story.subtasks[0].blockedBy;
+  assert.equal(Result.safeParse(story).success, false);
+});
+
 test('every role may return follow-ups, and each subtask says whether it needs the desk', () => {
   const required = RESULT_JSON_SCHEMA.required as string[];
   assert.ok(required.includes('followups') && required.includes('subtasks'));
