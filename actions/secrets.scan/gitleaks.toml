@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public Bitwarden secret IDs from actions and workflows, not their values."
+targetRules = ["generic-api-key"]
+regexes = [
+  '''^2cf223b6-0ed8-415b-a651-b4e2000da674$''',
+  '''^826a31e9-abed-4507-9a9f-b4df0181b5c2$''',
+]

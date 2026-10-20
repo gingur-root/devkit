@@ -4,7 +4,7 @@
 // each of its subtasks does (devkit#12).
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { render as memoryIndex } from '../memory/render.ts';
 import { readSteps, refuseStart } from './approval.ts';
@@ -26,6 +26,7 @@ import {
   ISSUES_FILE,
   JOB_FILE,
   MEMORY_DIR,
+  OVERRIDES_DIR,
   TIMELINE_FILE,
   THREADS_FILE,
   TOOLS_FILE,
@@ -43,6 +44,21 @@ import { branchOf, openPull, readThreads } from './threads.ts';
 import { MANIFEST_PATH } from './tools.ts';
 
 const MEMORY_REPO = 'gingur-root/pipeline';
+const CLOSED_ISSUE_STATE = 'closed';
+
+async function trustedContents<T>(repo: string, path: string, ref: string): Promise<T | null> {
+  return rest<T>('GET', `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`).catch(
+    (error: Error) => {
+      if (!error.message.includes(' 404 ')) throw error;
+      return null;
+    },
+  );
+}
+
+async function trustedFile(repo: string, path: string, ref: string): Promise<Buffer | null> {
+  const file = await trustedContents<{ content: string }>(repo, path, ref);
+  return file && Buffer.from(file.content, 'base64');
+}
 
 /** Fetch the slice from one main commit, using the separate read-only token. */
 async function memorySlice(options: RenderOptions): Promise<string | null> {
@@ -112,6 +128,7 @@ export interface Issue extends Authored {
   labels: { name: string }[];
   pull_request?: unknown;
   sub_issues_summary?: { total: number };
+  issue_dependencies_summary?: { total_blocked_by: number };
 }
 
 export interface RenderOptions {
@@ -240,6 +257,58 @@ async function refuse(options: RenderOptions, reason: string): Promise<void> {
   );
   const label = STAGE_LABELS[options.role as keyof typeof STAGE_LABELS];
   if (label) await removeLabel(options.repo, options.issue, label);
+}
+
+async function checkBlockers(options: RenderOptions, parent: Issue | null): Promise<void> {
+  const blockers = await restAll<{
+    id: number;
+    number: number;
+    state: string;
+    html_url: string;
+  }>(`/repos/${options.repo}/issues/${options.issue}/dependencies/blocked_by`);
+  let siblings = new Set<number>();
+  let contract: PlanContract | null = null;
+  if (parent) {
+    const path = `/repos/${options.repo}/issues/${parent.number}`;
+    const [comments, subtasks] = await Promise.all([
+      restAll<Authored>(`${path}/comments`),
+      restAll<{ id: number }>(`${path}/sub_issues`),
+    ]);
+    siblings = new Set(subtasks.map((subtask) => subtask.id));
+    try {
+      contract = approvedPlan(
+        comments,
+        options.appId,
+        revision(parent.title, parent.body ?? ''),
+        trustedIssue(parent),
+      ).contract;
+    } catch {
+      // An invalid or stale story plan cannot keep a sibling edge live.
+      contract = null;
+    }
+  }
+  const live: string[] = [];
+  const ignored: string[] = [];
+  for (const blocker of blockers) {
+    const link = `[#${blocker.number}](${blocker.html_url})`;
+    if (blocker.state === CLOSED_ISSUE_STATE) ignored.push(`${link} (closed)`);
+    else if (
+      parent &&
+      siblings.has(blocker.id) &&
+      !contract?.blockedBy?.[options.issue]?.includes(blocker.number)
+    )
+      ignored.push(`${link} (#${parent.number}'s plan no longer names it)`);
+    else live.push(link);
+  }
+  const note = ignored.length ? `Ignored blockers: ${ignored.join(', ')}.` : '';
+  if (live.length) throw new Error(`Blocked by ${live.join(', ')}.${note ? `\n\n${note}` : ''}`);
+  if (note)
+    await upsertStageComment(
+      options.repo,
+      options.issue,
+      'blockers',
+      `${marker('blockers')}\n\n${note}`,
+    );
 }
 
 export interface ChangedFile {
@@ -389,6 +458,8 @@ export async function render(options: RenderOptions): Promise<Job> {
         throw new Error(
           `This card is a story with ${subtasks} subtasks. Build each subtask instead.`,
         );
+      if (options.role === 'build' && (issue.issue_dependencies_summary?.total_blocked_by ?? 0) > 0)
+        await checkBlockers(options, parent);
     } catch (error) {
       // The refusal itself still fails the job, even if saying so on the issue fails.
       await refuse(options, (error as Error).message).catch(console.error);
@@ -399,13 +470,34 @@ export async function render(options: RenderOptions): Promise<Job> {
   }
   const base = approved && (options.base ?? source);
   const ref = base ?? source;
-  const manifest = await rest<{ content: string }>(
-    'GET',
-    `/repos/${options.repo}/contents/${MANIFEST_PATH}?ref=${encodeURIComponent(ref)}`,
-  ).catch((error: Error) => {
-    if (!error.message.includes(' 404 ')) throw error;
-    return null;
-  });
+  const manifest = await trustedFile(options.repo, MANIFEST_PATH, ref);
+  const overrides = join(options.out, OVERRIDES_DIR);
+  rmSync(overrides, { recursive: true, force: true });
+  for (const path of ROLES[options.role].instructions) {
+    const content = await trustedFile(options.repo, `.devkit/${path}`, ref);
+    if (content === null) continue;
+    const file = join(overrides, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content);
+  }
+  const skills = await trustedContents<{ name: string; type: string }[]>(
+    options.repo,
+    '.devkit/skills',
+    ref,
+  );
+  for (const skill of (Array.isArray(skills) ? skills : []).filter(
+    (skill) => skill.type === 'dir',
+  )) {
+    const content = await trustedFile(
+      options.repo,
+      `.devkit/skills/${encodeURIComponent(skill.name)}/SKILL.md`,
+      ref,
+    );
+    if (content === null) continue;
+    const dir = join(overrides, 'skills', skill.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), content);
+  }
   const job: Job = {
     job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
     role: options.role,
@@ -433,8 +525,7 @@ export async function render(options: RenderOptions): Promise<Job> {
     attemptLimit: null,
   };
   mkdirSync(options.out, { recursive: true });
-  if (manifest)
-    writeFileSync(join(options.out, TOOLS_FILE), Buffer.from(manifest.content, 'base64'));
+  if (manifest) writeFileSync(join(options.out, TOOLS_FILE), manifest);
   else rmSync(join(options.out, TOOLS_FILE), { force: true });
   rmSync(join(options.out, THREADS_FILE), { force: true });
   if (options.role === 'review' || options.role === 'repair') {

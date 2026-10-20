@@ -8,9 +8,11 @@ export interface Role {
   objective: string;
   /**
    * Instruction files, relative to devkit's root, joined in order. A repo
-   * overrides one by committing the same path under `.devkit/`. The role's
-   * skills follow: each `skills/<name>/SKILL.md` whose frontmatter `roles`
-   * line names it, from devkit or the repo's `.devkit/skills/` (bin/agent/run.ts).
+   * overrides one under `.devkit/` at the trusted commit (`base ?? source`).
+   * Render snapshots overrides into the job's `overrides/`, which run reads
+   * instead of the checkout. The role's skills follow: each
+   * `skills/<name>/SKILL.md` whose frontmatter `roles` line names it, from
+   * devkit or that trusted snapshot (bin/agent/run.ts).
    */
   instructions: readonly string[];
   /** Claude built-in tools the role gets. Anything else, including subagents and skills, is absent. */
