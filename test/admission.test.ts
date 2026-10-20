@@ -93,7 +93,9 @@ test('a rerun skips repair and publish but prepares the input candidate for revi
       s.uses?.startsWith('actions/download-artifact@') || s.id === 'publish',
   ))
     assert.equal(step.if, '${{ !inputs.rerun }}');
-  const render = jobs.push.steps.find((s: { name?: string }) => s.name === 'Render review');
+  const render = jobs.push.steps.find(
+    (s: { name?: string }) => s.name === 'Render review and verifier',
+  );
   assert.equal(render.env.BASE, '${{ inputs.base }}');
   assert.equal(
     render.env.CANDIDATE,
@@ -302,4 +304,44 @@ test('each repair is gated by replan and resume skips the builder', () => {
   assert.ok(read.if.includes("steps.render.outputs.resume == ''"));
   for (const field of ['base', 'resume', 'candidate'])
     assert.equal(build.start.outputs[field], `\${{ steps.render.outputs.${field} }}`);
+});
+
+test('criteria verification reuses the review pack and token and feeds every verdict', () => {
+  const build = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8'));
+  const round = parse(readFileSync(new URL('agent.round.yml', workflows), 'utf8'));
+  const run = round.jobs.criteria.steps[0];
+  assert.equal(run.with.role, 'verify');
+  assert.equal(run.with.prefix, 'verify-${{ inputs.round }}');
+  assert.equal(run.with.pack, round.jobs.verify.with.pack);
+  assert.equal(run.with.source, round.jobs.review.steps[0].with.source);
+  assert.equal(run.with.readToken, round.jobs.review.steps[0].with.readToken);
+  assert.ok(admits(round.jobs.criteria.if));
+  assert.ok(round.jobs.criteria.if.includes('(inputs.round == 0 && inputs.criteria)'));
+  assert.ok(
+    round.jobs.criteria.if.includes("(inputs.round > 0 && needs.push.outputs.criteria == 'true')"),
+  );
+  assert.equal(round.on.workflow_call.inputs.criteria.default, false);
+  assert.equal(build.jobs.review.with.criteria, "${{ needs.publish.outputs.criteria == 'true' }}");
+  for (const job of [build.jobs.publish, round.jobs.push]) {
+    assert.equal(job.outputs.criteria, '${{ steps.criteria.outputs.criteria }}');
+    const render = job.steps.find((s: { id?: string }) => s.id === 'criteria');
+    assert.match(render.run, /--role verify --source "\$CANDIDATE"/);
+    assert.match(render.run, /plan.checks\).includes\("agent"\)/);
+    assert.ok(
+      job.steps.some((s: { with?: { name?: string } }) => s.with?.name?.startsWith('verify-')),
+    );
+  }
+  assert.ok(round.jobs.verdict.needs.includes('criteria'));
+  const publish = round.jobs.verdict.steps.find((s: { id?: string }) => s.id === 'publish');
+  assert.match(
+    publish.run,
+    /--verifier-in "\$RUNNER_TEMP\/verify\/in" --verifier-out "\$RUNNER_TEMP\/verify\/out"/,
+  );
+  for (const suffix of ['in', 'out']) {
+    const download = round.jobs.verdict.steps.find(
+      (s: { with?: { name?: string } }) => s.with?.name === `verify-\${{ inputs.round }}-${suffix}`,
+    );
+    assert.equal(download['continue-on-error'], true);
+    assert.equal(download.with.path, `\${{ runner.temp }}/verify/${suffix}`);
+  }
 });

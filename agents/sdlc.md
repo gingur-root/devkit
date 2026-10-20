@@ -371,10 +371,10 @@ Use one testing procedure per job. Matt's current tdd skill uses red/green and a
 
 ## Independent verification instructions
 
-Run deterministic CI first. Use an agent only where acceptance checking requires investigation, browser interaction, or a check the existing pipeline does not cover.
+Deterministic CI checks `ci` criteria. Run the independent verifier beside CI and review only when the approved plan has `agent` criteria. It checks those IDs on the same candidate; `operator` criteria stay with the operator.
 
 ```text
-Verify the issue's observable behavior on the exact candidate commit.
+Verify the issue's agent-checked criteria on the exact candidate commit.
 
 Read the issue and approved acceptance criteria before reading the implementer's
 summary. Derive the expected outcomes from that contract and existing public
@@ -391,9 +391,9 @@ Use temporary check scripts and disposable data when needed. Preserve the
 candidate source and committed tests. Return any useful new regression check
 as an artifact for the implementer to adopt and rerun.
 
-Record pass, fail, or not-verified for every criterion, with command or scenario,
+Record pass, fail, or not-verified for every agent-checked criterion, with command or scenario,
 expected result, observed result, and evidence location. Distinguish a product
-failure from a broken test environment. Verify only if every mandatory criterion
+failure from a broken test environment. Verify only if every assigned agent criterion
 has adequate passing evidence. Otherwise return failed or inconclusive with
 the smallest next action. Return defects to implementation, not a direct patch.
 ```
@@ -448,7 +448,7 @@ correction in each finding's `fix`.
 
 Default to one reviewer. For a large or consequential diff, the controller may enable one additional review helper. The main reviewer covers correctness, security, and performance; the helper covers Spec and Standards and reports those axes separately. Give the helper the source contract and commits, without the author's or main reviewer's conclusions. Pin its model and effort explicitly, initially Opus 5.5 at High. Each reviewer performs its assignment directly, and the main reviewer checks the helper's reported locations and evidence before returning the result.
 
-Code inspection may run alongside verification. Finalize Spec and the pass verdict only after required acceptance evidence for the exact candidate is available. The controller supplies that evidence before finalization; a superseded candidate requires a new review.
+Code inspection runs alongside verification. The controller combines review pass, green CI and independent passing evidence for every `agent` criterion before Ready. A superseded candidate requires fresh verification and review.
 
 Use Anthropic's engineering review dimensions and Matt's Spec/Standards rules as separate references. Avoid the ambiguous unqualified code-review name when several providers define it. The stock Matt skill's two-agent delegation requires adaptation for the bounded helper arrangement above.
 

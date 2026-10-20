@@ -79,6 +79,7 @@ export const STUB_FIXTURES = [
   'never',
   'advisory',
   'spec',
+  'unverified',
 ] as const;
 export type StubFixture = (typeof STUB_FIXTURES)[number];
 

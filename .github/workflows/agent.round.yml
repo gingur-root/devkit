@@ -27,7 +27,7 @@ on:
         required: false
         default: ''
       fixture:
-        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story` or `followups`.'
+        description: 'The stub fixture: `ready`, `invalid`, `needs-you`, `rate-limit`, `red`, `story`, `followups` or `unverified`.'
         type: string
         required: false
         default: 'ready'
@@ -61,6 +61,10 @@ on:
         description: 'The reviewed commit to repair, or the PR head to review on a rerun.'
         type: string
         required: true
+      criteria:
+        description: 'Round 0: the approved plan has agent criteria.'
+        type: boolean
+        default: false
       readToken:
         description: "Round 0: the reviewer's sealed read token (actions/agent.token). Later rounds: the replan's."
         type: string
@@ -257,6 +261,7 @@ jobs:
     outputs:
       candidate: ${{ inputs.rerun && inputs.candidate || steps.publish.outputs.candidate }}
       readToken: ${{ steps.read.outputs.sealed }}
+      criteria: ${{ steps.criteria.outputs.criteria }}
     steps:
       - id: app
         uses: gingur-root/devkit/actions/app.token@main
@@ -326,7 +331,8 @@ jobs:
           repositories: pipeline
           permissionContents: read
 
-      - name: Render review
+      - id: criteria
+        name: Render review and verifier
         if: steps.publish.outputs.candidate != '' || inputs.rerun
         working-directory: devkit
         env:
@@ -340,8 +346,17 @@ jobs:
         run: |
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role review --source "$CANDIDATE" \
             --base "$BASE" --app-id "$APP_ID" --out "$RUNNER_TEMP/review/in"
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role verify --source "$CANDIDATE" \
+            --base "$BASE" --app-id "$APP_ID" --out "$RUNNER_TEMP/verify/in"
+          echo "criteria=$(node -p 'Object.values(require(process.argv[1]).plan.checks).includes("agent")' "$RUNNER_TEMP/verify/in/job.json")" >>"$GITHUB_OUTPUT"
           git -C "$GITHUB_WORKSPACE/repo" fetch --depth=1 origin "$BASE"
           git -C "$GITHUB_WORKSPACE/repo" diff --binary "$BASE" "$CANDIDATE" >"$RUNNER_TEMP/review/in/candidate.patch"
+
+      - if: steps.publish.outputs.candidate != '' || inputs.rerun
+        uses: actions/upload-artifact@v7
+        with:
+          name: verify-${{ inputs.round }}-in
+          path: ${{ runner.temp }}/verify/in
 
       - if: steps.publish.outputs.candidate != '' || inputs.rerun
         uses: actions/upload-artifact@v7
@@ -388,6 +403,29 @@ jobs:
           readToken: ${{ inputs.round == 0 && inputs.readToken || needs.push.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
+  criteria:
+    name: Verify Criteria
+    needs: push
+    # Round 0 skips push, so its candidate is the input.
+    if: ${{ !cancelled() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (inputs.round == 0 || needs.push.outputs.candidate != '') && ((inputs.round == 0 && inputs.criteria) || (inputs.round > 0 && needs.push.outputs.criteria == 'true')) }}
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: verify
+          prefix: verify-${{ inputs.round }}
+          pack: review-${{ inputs.round }}-repo
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          source: ${{ needs.push.outputs.candidate || inputs.candidate }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          # Round 0's comes from the caller's publish, a repair round's from push.
+          readToken: ${{ inputs.round == 0 && inputs.readToken || needs.push.outputs.readToken }}
+          devkitRef: ${{ inputs.devkitRef }}
+
   # CI on the same commit the review reads (devkit#9). A repo's own checks are
   # the scripts toolchain.verify runs; Ready needs them green.
   verify:
@@ -407,7 +445,7 @@ jobs:
 
   verdict:
     name: Verdict
-    needs: [push, review, verify]
+    needs: [push, review, verify, criteria]
     if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (inputs.round == 0 || needs.push.outputs.candidate != '')
     runs-on: ${{ inputs.runner }}
     environment: agents
@@ -452,6 +490,18 @@ jobs:
           name: review-${{ inputs.round }}-out
           path: ${{ runner.temp }}/review/out
 
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: verify-${{ inputs.round }}-in
+          path: ${{ runner.temp }}/verify/in
+
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: verify-${{ inputs.round }}-out
+          path: ${{ runner.temp }}/verify/out
+
       - id: publish
         name: Publish
         working-directory: devkit
@@ -462,7 +512,8 @@ jobs:
           VERIFIED: ${{ needs.verify.outputs.verified }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
-            --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED"
+            --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED" \
+            --verifier-in "$RUNNER_TEMP/verify/in" --verifier-out "$RUNNER_TEMP/verify/out"
 
       # The next round's replan job: the reviewed commit, the build's base, and this review.
       - id: memory

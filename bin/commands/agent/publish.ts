@@ -21,6 +21,8 @@ export default {
         return rounds;
       })
       .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed")
+      .option('--verifier-in <dir>', 'the verifier job directory')
+      .option('--verifier-out <dir>', 'the verifier output directory')
       .option('--failed <json>', 'memory report: the calling jobs and results')
       .option('--repo <owner/name>', 'memory report: the merged PR repository')
       .option('--issue <n>', 'memory report: the merged PR number', Number);
@@ -30,6 +32,8 @@ export default {
       throw new Error('--in and --out are required');
     if (options.failed !== undefined && (!options.repo || !options.issue))
       throw new Error('--repo and --issue are required for --failed');
+    if (Boolean(options.verifierIn) !== Boolean(options.verifierOut))
+      throw new Error('--verifier-in and --verifier-out must be supplied together');
     const { publish } = await import('../../agent/publish.ts');
     await publish(options);
   },

@@ -56,7 +56,7 @@ function stage(role: 'plan' | 'review', manifest: unknown) {
     objective: '',
     repo: 'o/r',
     issue: { number: 1, title: 'Tools', revision: 'issue', bodySeen: true },
-    plan: role === 'review' ? { revision: 'plan', criteria: [] } : null,
+    plan: role === 'review' ? { revision: 'plan', criteria: [], checks: {} } : null,
     source: 'candidate',
     base: role === 'review' ? 'base' : null,
     candidate: role === 'review' ? 'candidate' : null,

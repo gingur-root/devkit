@@ -106,6 +106,23 @@ same time `toolchain.verify` runs the repo's own checks (format, lint,
 typecheck, test, build) on that same commit, so an enrolled repo needs every
 script it runs.
 
+When the approved plan has `agent` criteria, a separate Codex `verify` role
+runs beside review and CI on the same candidate. It checks only those IDs and
+returns one evidence entry per ID. No `agent` criteria means no verifier job
+or model call: green CI counts as verified. The controller reads `plan.checks`
+from the approved contract, never from the candidate's proposed criteria.
+
+Ready needs review pass, green CI and `verified` with passing evidence for
+every `agent` ID, all on the same candidate. A failed criterion creates a
+blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
+`CI`. Its stable ID lets a later passing round resolve its thread.
+Missing verifier output, a missing evidence entry, `not-verified`, or an
+inconclusive result stops at **Needs you** and names the criterion IDs.
+Stale verifier results stop at **Needs you** in stage `verify` and preserve the
+current review findings. A moved PR head still reruns within the round cap.
+The loop log records `verify: verified`, the verifier's
+other outcome or stopped stage, or `verify: skipped` when no job is needed.
+
 The controller posts one `COMMENT` review and one resolvable thread per finding.
 Each thread starts with `<!-- devkit:finding <ID> -->`, followed by the ID,
 blocking or advisory flag, axis, evidence and fix. Findings on added or context
@@ -125,7 +142,7 @@ becomes advisory gets a reply and is resolved. A finding whose ID matches only
 a resolved thread gets a new thread.
 
 - **Pass** (every axis passes, no blocking finding, no question, and CI green
-  on the reviewed commit): the PR is marked ready for review and the card
+  on the reviewed commit, with every `agent` criterion independently verified): the PR is marked ready for review and the card
   stays in **Ready**. Red CI adds a blocking `CI` finding to the review, which
   Codex then fixes like any other. The review comment
   on the issue says it's ready to merge.
@@ -138,7 +155,7 @@ a resolved thread gets a new thread.
   `review.json`, and `threads.json`. It writes a plan only to change the spec.
 - **Spec unchanged:** the gate starts Codex's repair on the same PR. Codex
   sees the planner's replies, fixes the findings and pushes a new commit.
-  Claude reviews the whole change again while CI checks the same commit.
+  Claude reviews the whole change again while CI and the verifier check the same commit.
   Each repair maps every finding in `changes[].ref`; disputes need evidence.
   After a successful push, each entry is posted on its open thread with the
   commit SHA. An incomplete map stops at `validate` before a push.
@@ -181,7 +198,7 @@ resume. Its hidden
 `<!-- devkit:loop-state {json} -->` line keeps state between jobs. Round 0
 reviews the build; rounds 1 through 10 review repairs or rerun stale reviews.
 Each round runs through `agent.round.yml`; non-rerun rounds 1–10 run
-replan → gate → repair → push → review + verify → verdict.
+replan → gate → repair → push → review + CI + criteria → verdict.
 
 For a direct controller call, set the repair cap with
 `pnpm agent publish --in <job-dir> --out <output-dir> --round <r> --rounds <n>`.
@@ -398,7 +415,12 @@ on a scratch issue.
    from the same proof branch with `fixture=spec`. Check that Build is skipped,
    round 1 re-reviews the same PR, round 2 replans and repairs, and the review
    passes. The loop log must retain the original base and continuing rounds.
-   If the proof caller has a fixed fixture list, add `spec` on that branch.
+   With `ready`, check that **Verify Criteria** runs and the card reaches **Ready**
+   with `verify: verified` in the loop log. With `unverified`, round 0 must
+   post blocking `V-A1`; round 1 repairs it, resolves that thread and reaches
+   **Ready**, again with `verify: verified`. The verifier reuses the review's
+   repo pack and sealed read token.
+   If the proof caller has a fixed fixture list, add `spec` and `unverified` on that branch.
    To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 
 3. Delete the pipeline branch when you are done.
