@@ -1490,3 +1490,158 @@ test('research renders without an approved plan', async () => {
     rmSync(out, { recursive: true, force: true });
   }
 });
+
+test('build resumes only an unchanged transient stop and restores a spec heading at approval', async () => {
+  const out = mkdtempSync(join(tmpdir(), 'render-transient-'));
+  let author: number = PIPELINE_BOT.id;
+  let head = 'head';
+  let state: LoopState;
+  const normal = comment(PLAN, { bodySeen: true });
+  const spec =
+    '**Plan: changed in review round 6: reply `/approve` to resume #2**\n\nChanged criteria: A1.';
+  let planBody = `${marker('plan')}\n\n${spec}\n\n${normal.body.slice(marker('plan').length).trimStart()}`;
+  const writes: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubEnv('MEMORY_TOKEN', 'test');
+  vi.stubEnv('DEVKIT_APP_ONLY', '1');
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (init.method !== 'GET') writes.push(path);
+    if (path === '/repos/o/r/issues/1')
+      return Response.json({
+        number: 1,
+        title: 'Title',
+        body: 'Body',
+        user: { id: OPERATOR_ID },
+        labels: [],
+      });
+    if (path === '/repos/o/r/issues/1/comments')
+      return Response.json([
+        { ...normal, id: 24, body: planBody, user: { id: PIPELINE_BOT.id, type: 'Bot' } },
+      ]);
+    if (path === '/repos/o/r/pulls') return Response.json([{ number: 2, head: { sha: head } }]);
+    if (path === '/repos/o/r/issues/2/comments')
+      return Response.json([
+        { id: 23, user: { id: author, type: 'Bot' }, body: loopComment(state) },
+      ]);
+    if (path === '/repos/o/r/issues/comments/23') {
+      const { body } = JSON.parse(String(init.body));
+      state = readLoopState(body);
+      return Response.json({ body });
+    }
+    if (path === '/repos/o/r/issues/comments/24') {
+      planBody = JSON.parse(String(init.body)).body;
+      return Response.json({ body: planBody });
+    }
+    if (path.endsWith('/commits/main')) return Response.json({ sha: 'mem' });
+    return new Response('{}', { status: 404 });
+  });
+  const options = {
+    repo: 'o/r',
+    issue: 1,
+    source: 'default-head',
+    appId: APP,
+    dispatcher: OPERATOR_ID,
+    out,
+    role: 'build' as const,
+  };
+  try {
+    for (const scenario of [
+      'rate_limit',
+      'overloaded',
+      'server_error',
+      'timeout',
+      'moved',
+      'unknown',
+      'null',
+      'legacy',
+      'approval',
+      'untrusted',
+      'operator',
+      'zero-round',
+      'zero-cap',
+      'not-stopped',
+      'spec',
+    ] as const) {
+      author =
+        scenario === 'untrusted' ? 1234 : scenario === 'operator' ? OPERATOR_ID : PIPELINE_BOT.id;
+      head = scenario === 'moved' ? 'new-head' : 'head';
+      state = {
+        rounds: scenario === 'zero-cap' ? 0 : 10,
+        failures: 1,
+        approved: scenario === 'approval' || scenario === 'spec' ? 'older-plan' : revision(PLAN),
+        base: 'original-base',
+        entries: [
+          {
+            round: scenario === 'zero-round' ? 0 : 6,
+            candidate: 'head',
+            ci: null,
+            review: null,
+            verify: null,
+            replan: null,
+            open: [],
+            hypotheses: [],
+            step: scenario === 'spec' ? 'spec' : scenario === 'not-stopped' ? 'ready' : 'stop',
+            ...(scenario !== 'legacy' && {
+              failure:
+                scenario === 'unknown'
+                  ? 'unknown'
+                  : scenario === 'null'
+                    ? null
+                    : scenario === 'overloaded'
+                      ? 'overloaded'
+                      : scenario === 'server_error'
+                        ? 'server_error'
+                        : scenario === 'timeout'
+                          ? 'timeout'
+                          : 'rate_limit',
+            }),
+          },
+        ],
+      };
+      writes.length = 0;
+      const before = loopComment(state);
+      const job = await render(options);
+      const resumed = [
+        'rate_limit',
+        'overloaded',
+        'server_error',
+        'timeout',
+        'operator',
+        'zero-round',
+        'spec',
+      ].includes(scenario);
+      assert.equal(existsSync(join(out, 'resume.json')), resumed, scenario);
+      assert.equal(job.base, resumed ? 'original-base' : 'default-head', scenario);
+      if (resumed)
+        assert.deepEqual(
+          JSON.parse(readFileSync(join(out, 'resume.json'), 'utf8')),
+          { round: scenario === 'zero-round' ? 1 : 6, candidate: 'head', base: 'original-base' },
+          scenario,
+        );
+      if (scenario === 'spec') {
+        assert.deepEqual(writes, [
+          '/repos/o/r/issues/comments/23',
+          '/repos/o/r/issues/comments/24',
+        ]);
+        const expected = normal.body.replace(
+          marker('plan'),
+          `${marker('plan')}\n\n**Plan: ready: reply \`/approve\` to build it**`,
+        );
+        assert.equal(planBody, expected);
+        assert.deepEqual(
+          approvedPlan([{ ...normal, body: planBody }], APP, ISSUE, true),
+          approvedPlan([normal], APP, ISSUE, true),
+        );
+      } else {
+        assert.deepEqual(writes, [], scenario);
+        assert.equal(loopComment(state), before, scenario);
+        assert.ok(planBody.includes(spec), scenario);
+      }
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});

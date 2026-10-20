@@ -1,3 +1,5 @@
+export const TRANSIENT_FAILURES = ['rate_limit', 'overloaded', 'server_error', 'timeout'] as const;
+
 /** `stub` writes fixture results instead of calling a model, for smoke runs of the chain. */
 export const EXECUTORS = ['claude', 'codex', 'stub'] as const;
 export type Executor = (typeof EXECUTORS)[number];

@@ -134,7 +134,9 @@ interface Outcome {
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
-export type Verdict = { result: Result } | { stage: string; reason: string; step?: string };
+export type Verdict =
+  | { result: Result }
+  | { stage: string; reason: string; step?: string; failure?: Failure['class'] };
 
 export type Step = 'ready' | 'repair' | 'rerun' | 'spec' | 'stop';
 export interface Gate {
@@ -299,7 +301,11 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const result = parsed.data;
   // The CLI's own failure says more than any later check could (devkit#14).
   if (result.failure)
-    return { stage: job.role, reason: failureReason(result.failure, result.summary) };
+    return {
+      stage: job.role,
+      reason: failureReason(result.failure, result.summary),
+      failure: result.failure.class,
+    };
   if (
     result.job !== job.job ||
     result.role !== job.role ||
@@ -546,6 +552,26 @@ async function publishCriticism(job: Job, issue: Issue, options: PublishOptions)
   if (!assessment.valid) process.exitCode = 1;
 }
 
+export function readyHeading(bodySeen: boolean): string {
+  const bodyNote = bodySeen ? '' : ' (written without the issue body, which someone else wrote)';
+  return `**Plan: ready: reply \`/approve\` to build it${bodyNote}**`;
+}
+
+export function specHeading(round: number, pull: number, changed: string[]): string {
+  return `**Plan: changed in review round ${round}: reply \`/approve\` to resume #${pull}**\n\nChanged criteria: ${changed.join(', ') || 'plan text only'}.`;
+}
+
+export function restoreHeading(body: string, bodySeen: boolean): string {
+  const start = body.indexOf(PLAN_START);
+  const heading = start < 0 ? body : body.slice(0, start);
+  return (
+    heading.replace(
+      /^\*\*Plan: changed in review round \d+: reply `\/approve` to resume #\d+\*\*\n\nChanged criteria: [^\n]*/m,
+      readyHeading(bodySeen),
+    ) + (start < 0 ? '' : body.slice(start))
+  );
+}
+
 export function planComment(
   job: Job,
   result: Result,
@@ -568,7 +594,9 @@ export function planComment(
         ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
         : handoff
           ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
-          : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
+          : result.outcome === 'ready' && !result.triage
+            ? readyHeading(job.issue.bodySeen)
+            : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : 'ready: reply `/approve` to file what it keeps'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: planRevision(plan),
     criticism: assessment?.criticism ?? null,
@@ -868,6 +896,7 @@ export interface LoopEntry {
   open: string[];
   hypotheses: string[];
   step: Step | null;
+  failure?: Failure['class'] | null;
 }
 export interface LoopState {
   rounds: number;
@@ -884,7 +913,7 @@ export function loopComment(state: LoopState): string {
     `**Round ${round} of ${state.rounds} · ${state.failures} failures**`,
     ...state.entries.map(
       (e) =>
-        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; verify: ${e.verify ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
+        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; verify: ${e.verify ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.failure ? `; stopped: ${e.failure}` : ''}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
     ),
     `<!-- devkit:loop-state ${JSON.stringify(state).replace(/-->/g, '--\\u003e')} -->`,
   ].join('\n\n');
@@ -995,6 +1024,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   const log = await updateLoop(job, pull, options, {
     candidate: job.source,
     replan: 'result' in v ? v.result.summary : v.reason,
+    failure: 'stage' in v ? (v.failure ?? null) : null,
     ...(step !== 'repair' && { step }),
   });
   if (step === 'spec' && 'result' in v) {
@@ -1013,7 +1043,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
       'plan',
       body.replace(
         /\*\*Plan:.*?\*\*/,
-        `**Plan: changed in review round ${round}: reply \`/approve\` to resume #${pull.number}**\n\nChanged criteria: ${changedCriteria(checks, v.result.criteria).join(', ') || 'plan text only'}.`,
+        specHeading(round, pull.number, changedCriteria(checks, v.result.criteria)),
       ),
     );
   }
@@ -1122,6 +1152,8 @@ async function publishReview(
           threads.map((t) => t.id),
         )
       : null;
+  const failure =
+    ('stage' in v && v.failure) || (check && 'stage' in check && check.failure) || null;
   if ('result' in v && criteria.kind === 'stop')
     v = { stage: criteria.stage, reason: criteria.reason };
   const log =
@@ -1139,6 +1171,7 @@ async function publishReview(
       ...('result' in v &&
         result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
       step,
+      failure,
     }));
   if (step === 'rerun' && pull && 'stage' in v) {
     if (process.env.GITHUB_OUTPUT)
@@ -1492,6 +1525,20 @@ async function publishBuildOrPlan(
   }
   if ('result' in v && v.result.outcome === 'implemented') {
     try {
+      if (job.role === 'repair') {
+        pull = (await openPull(job, branchOf(job))) ?? null;
+        if (pull && pull.head.sha !== job.source) {
+          candidate = pull.head.sha;
+          if (process.env.GITHUB_OUTPUT)
+            appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${candidate}\n`);
+          await updateLoop(job, pull, options, { candidate, failure: null, step: null });
+          return {
+            body: `${marker(job.role)}\n\nThe repair was dropped because the PR has a newer commit \`${candidate.slice(0, 7)}\` than the one repaired. This round reviews that commit.`,
+            status: 'Building',
+            stopped: false,
+          };
+        }
+      }
       if (!checkout) throw new Error('publish needs --checkout for a build.');
       const { branch, commit } = pushCandidate(job, checkout, join(out, CANDIDATE_FILE));
       candidate = commit;
@@ -1523,6 +1570,7 @@ async function publishBuildOrPlan(
     if (logPull)
       await updateLoop(job, logPull, options, {
         candidate: candidate || job.source,
+        failure: 'stage' in v ? (v.failure ?? null) : null,
         ...('result' in v
           ? { hypotheses: v.result.hypotheses ?? [] }
           : { step: 'stop' as const, review: v.stage }),
