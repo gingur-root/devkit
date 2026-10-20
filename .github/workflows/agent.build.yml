@@ -9,6 +9,8 @@ name: Build
 # get up to 10 rounds on the same PR (the rounds input), one `repair-<n>` job
 # each. Stale reviews rerun on the PR head and count as rounds. Anything else
 # moves the card to Needs you.
+# Each repair runs a planner first; /approve after a spec stop skips build
+# and re-reviews the stopped round on the same PR.
 # The pipeline never merges. Only the operator can start it (the admission
 # gate), so that comment is the approval, or the App right after his dashboard
 # Continue, which render checks (bin/agent/approval.ts) against the dispatcher:
@@ -83,6 +85,9 @@ jobs:
     environment: agents
     outputs:
       source: ${{ steps.render.outputs.source }}
+      base: ${{ steps.render.outputs.base }}
+      resume: ${{ steps.render.outputs.resume }}
+      candidate: ${{ steps.render.outputs.candidate }}
       triage: ${{ steps.render.outputs.triage }}
       readToken: ${{ steps.read.outputs.sealed }}
     steps:
@@ -105,6 +110,7 @@ jobs:
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionContents: read
           permissionIssues: write
+          permissionPullRequests: write
           permissionOrganizationProjects: write
 
       # The run's 👀 (devkit#148). The webhook receiver adds it for the App's
@@ -147,11 +153,21 @@ jobs:
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role build ${SOURCE:+--source "$SOURCE"} \
             --app-id "$APP_ID" --actor "$ACTOR" --out "$RUNNER_TEMP/agent/in"
           echo "source=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
+          if [ -f "$RUNNER_TEMP/agent/in/resume.json" ]; then
+            node --input-type=module -e '
+              import { readFileSync, appendFileSync } from "node:fs";
+              const resume = JSON.parse(readFileSync(process.argv[1], "utf8"));
+              appendFileSync(process.env.GITHUB_OUTPUT, ["resume=" + resume.round, "candidate=" + resume.candidate, "base=" + resume.base, ""].join("\n"));
+            ' "$RUNNER_TEMP/agent/in/resume.json"
+          else
+            echo "base=$(node -p 'require(process.argv[1]).source' "$RUNNER_TEMP/agent/in/job.json")" >>"$GITHUB_OUTPUT"
+          fi
           # A retro issue's approved plan files issues instead (devkit#115): publish does it, with no builder.
           if [ -f "$RUNNER_TEMP/agent/in/triage.json" ]; then echo "triage=true" >>"$GITHUB_OUTPUT"; fi
           pnpm agent status --repo "$REPO" --issue "$ISSUE" --status Building
 
-      - uses: gingur-root/devkit/actions/repo.pack@main
+      - if: steps.render.outputs.resume == ''
+        uses: gingur-root/devkit/actions/repo.pack@main
         with:
           repo: ${{ inputs.repo }}
           ref: ${{ steps.render.outputs.source }}
@@ -160,7 +176,7 @@ jobs:
 
       # The builder's read token, minted last so its hour starts late.
       - id: read
-        if: steps.render.outputs.triage != 'true'
+        if: steps.render.outputs.triage != 'true' && steps.render.outputs.resume == ''
         uses: gingur-root/devkit/actions/agent.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -185,7 +201,7 @@ jobs:
   build:
     name: Build
     needs: start
-    if: needs.start.outputs.triage != 'true'
+    if: needs.start.outputs.triage != 'true' && needs.start.outputs.resume == ''
     runs-on: ${{ inputs.runner }}
     environment: agents
     permissions:
@@ -205,7 +221,7 @@ jobs:
     name: Publish
     needs: [start, build]
     # The loop reports cancelled runs; never publish their partial output.
-    if: ${{ !cancelled() && needs.start.result == 'success' }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.resume == '' }}
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
@@ -332,7 +348,7 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 0
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
+      base: ${{ needs.start.outputs.base }}
       candidate: ${{ needs.publish.outputs.candidate }}
       readToken: ${{ needs.publish.outputs.readToken }}
     secrets:
@@ -342,7 +358,7 @@ jobs:
   repair-1:
     name: Repair 1
     needs: [start, review]
-    if: contains(fromJSON('["repair","rerun"]'), needs.review.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.review.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.review.outputs.next)) || needs.start.outputs.resume == '1') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -357,9 +373,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 1
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.review.outputs.next == 'rerun' }}
-      candidate: ${{ needs.review.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.review.outputs.next == 'rerun' || needs.start.outputs.resume == '1' }}
+      candidate: ${{ needs.review.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.review.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -368,7 +384,7 @@ jobs:
   repair-2:
     name: Repair 2
     needs: [start, repair-1]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-1.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-1.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-1.outputs.next)) || needs.start.outputs.resume == '2') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -383,9 +399,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 2
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-1.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-1.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-1.outputs.next == 'rerun' || needs.start.outputs.resume == '2' }}
+      candidate: ${{ needs.repair-1.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-1.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -394,7 +410,7 @@ jobs:
   repair-3:
     name: Repair 3
     needs: [start, repair-2]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-2.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-2.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-2.outputs.next)) || needs.start.outputs.resume == '3') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -409,9 +425,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 3
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-2.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-2.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-2.outputs.next == 'rerun' || needs.start.outputs.resume == '3' }}
+      candidate: ${{ needs.repair-2.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-2.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -420,7 +436,7 @@ jobs:
   repair-4:
     name: Repair 4
     needs: [start, repair-3]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-3.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-3.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-3.outputs.next)) || needs.start.outputs.resume == '4') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -435,9 +451,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 4
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-3.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-3.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-3.outputs.next == 'rerun' || needs.start.outputs.resume == '4' }}
+      candidate: ${{ needs.repair-3.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-3.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -446,7 +462,7 @@ jobs:
   repair-5:
     name: Repair 5
     needs: [start, repair-4]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-4.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-4.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-4.outputs.next)) || needs.start.outputs.resume == '5') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -461,9 +477,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 5
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-4.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-4.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-4.outputs.next == 'rerun' || needs.start.outputs.resume == '5' }}
+      candidate: ${{ needs.repair-4.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-4.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -472,7 +488,7 @@ jobs:
   repair-6:
     name: Repair 6
     needs: [start, repair-5]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-5.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-5.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-5.outputs.next)) || needs.start.outputs.resume == '6') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -487,9 +503,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 6
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-5.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-5.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-5.outputs.next == 'rerun' || needs.start.outputs.resume == '6' }}
+      candidate: ${{ needs.repair-5.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-5.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -498,7 +514,7 @@ jobs:
   repair-7:
     name: Repair 7
     needs: [start, repair-6]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-6.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-6.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-6.outputs.next)) || needs.start.outputs.resume == '7') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -513,9 +529,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 7
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-6.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-6.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-6.outputs.next == 'rerun' || needs.start.outputs.resume == '7' }}
+      candidate: ${{ needs.repair-6.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-6.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -524,7 +540,7 @@ jobs:
   repair-8:
     name: Repair 8
     needs: [start, repair-7]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-7.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-7.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-7.outputs.next)) || needs.start.outputs.resume == '8') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -539,9 +555,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 8
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-7.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-7.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-7.outputs.next == 'rerun' || needs.start.outputs.resume == '8' }}
+      candidate: ${{ needs.repair-7.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-7.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -550,7 +566,7 @@ jobs:
   repair-9:
     name: Repair 9
     needs: [start, repair-8]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-8.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-8.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-8.outputs.next)) || needs.start.outputs.resume == '9') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -565,9 +581,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 9
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-8.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-8.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-8.outputs.next == 'rerun' || needs.start.outputs.resume == '9' }}
+      candidate: ${{ needs.repair-8.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-8.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}
@@ -576,7 +592,7 @@ jobs:
   repair-10:
     name: Repair 10
     needs: [start, repair-9]
-    if: contains(fromJSON('["repair","rerun"]'), needs.repair-9.outputs.next)
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-9.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-9.outputs.next)) || needs.start.outputs.resume == '10') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -591,9 +607,9 @@ jobs:
       issue: ${{ inputs.issue }}
       round: 10
       rounds: ${{ inputs.rounds }}
-      base: ${{ needs.start.outputs.source }}
-      rerun: ${{ needs.repair-9.outputs.next == 'rerun' }}
-      candidate: ${{ needs.repair-9.outputs.candidate }}
+      base: ${{ needs.start.outputs.base }}
+      rerun: ${{ needs.repair-9.outputs.next == 'rerun' || needs.start.outputs.resume == '10' }}
+      candidate: ${{ needs.repair-9.outputs.candidate || needs.start.outputs.candidate }}
       readToken: ${{ needs.repair-9.outputs.readToken }}
     secrets:
       AGENTS_SECRETS_TOKEN: ${{ secrets.AGENTS_SECRETS_TOKEN }}

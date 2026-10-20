@@ -16,9 +16,11 @@ import {
   STAGE_LABELS,
 } from './constants.ts';
 import { setStatus } from './board.ts';
-import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
+import { removeLabel, rest, restAll, stageComment, upsertStageComment } from './github.ts';
 import {
   CHANGED_FILE,
+  CHECKS_FILE,
+  RESUME_FILE,
   DIFF_FILE,
   PR_FILE,
   CONTRACT_PREFIX,
@@ -39,6 +41,7 @@ import {
   revision,
   TRIAGE_FILE,
 } from './job.ts';
+import { loopComment, readLoopState } from './publish.ts';
 import { ROLES, type RoleName } from './roles.ts';
 import { branchOf, openPull, readThreads } from './threads.ts';
 import { MANIFEST_PATH } from './tools.ts';
@@ -469,7 +472,82 @@ export async function render(options: RenderOptions): Promise<Job> {
     }
   }
   const base = approved && (options.base ?? source);
-  const ref = base ?? source;
+  const job: Job = {
+    job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
+    role: options.role,
+    objective: ROLES[options.role].objective,
+    repo: options.repo,
+    issue: {
+      number: issue.number,
+      title: issue.title,
+      revision: issueRevision,
+      bodySeen,
+    },
+    plan: approved && {
+      revision: approved.contract.planRevision,
+      criteria: Object.keys(approved.contract.checks),
+    },
+    // A build works from the default branch as it is now, not the plan's older source.
+    source,
+    base,
+    // A review checks out the candidate itself.
+    candidate: options.role === 'review' || options.role === 'replan' ? source : null,
+    memory: await memorySlice(options),
+    // Publish reads this to hold a retro issue's plan to its triage.
+    artifacts: retroPlan ? [ISSUES_FILE] : [],
+    operations: [],
+    attemptLimit: null,
+  };
+  mkdirSync(options.out, { recursive: true });
+  for (const file of [THREADS_FILE, CHECKS_FILE, RESUME_FILE])
+    rmSync(join(options.out, file), { force: true });
+  if (approved && ['build', 'review', 'repair', 'replan'].includes(options.role)) {
+    const pull = await openPull(job, branchOf(job));
+    if (pull) {
+      const loop =
+        options.role === 'build' || options.role === 'repair'
+          ? await stageComment(job.repo, pull.number, 'loop')
+          : undefined;
+      const state = readLoopState(loop?.body ?? null);
+      if (
+        options.role === 'repair' &&
+        state.approved &&
+        state.approved !== approved.contract.planRevision
+      ) {
+        const error = new Error(
+          'The plan changed in review and is not approved yet. Reply `/approve` to resume.',
+        );
+        await refuse(options, error.message).catch(console.error);
+        throw error;
+      }
+      const last = state.entries.at(-1);
+      if (options.role === 'build' && last?.step === 'spec') {
+        state.approved = approved.contract.planRevision;
+        await upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
+        job.base = state.base ?? base;
+        writeFileSync(
+          join(options.out, RESUME_FILE),
+          JSON.stringify({ round: last.round, candidate: pull.head.sha, base: job.base }),
+        );
+      }
+      if (options.role !== 'build') {
+        writeFileSync(
+          join(options.out, THREADS_FILE),
+          `${JSON.stringify(await readThreads(job.repo, pull.number), null, 2)}\n`,
+        );
+        job.artifacts.push(THREADS_FILE);
+      }
+    }
+    if (options.role === 'replan') {
+      writeFileSync(
+        join(options.out, CHECKS_FILE),
+        `${JSON.stringify(approved.contract.checks, null, 2)}\n`,
+      );
+      job.artifacts.push(CHECKS_FILE);
+    }
+  }
+  // After the resume, which can move job.base to the loop's recorded base.
+  const ref = job.base ?? source;
   const manifest = await trustedFile(options.repo, MANIFEST_PATH, ref);
   const overrides = join(options.out, OVERRIDES_DIR);
   rmSync(overrides, { recursive: true, force: true });
@@ -498,46 +576,8 @@ export async function render(options: RenderOptions): Promise<Job> {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'SKILL.md'), content);
   }
-  const job: Job = {
-    job: `${options.role}-${process.env.GITHUB_RUN_ID ?? 'local'}`,
-    role: options.role,
-    objective: ROLES[options.role].objective,
-    repo: options.repo,
-    issue: {
-      number: issue.number,
-      title: issue.title,
-      revision: issueRevision,
-      bodySeen,
-    },
-    plan: approved && {
-      revision: approved.contract.planRevision,
-      criteria: Object.keys(approved.contract.checks),
-    },
-    // A build works from the default branch as it is now, not the plan's older source.
-    source,
-    base,
-    // A review checks out the candidate itself.
-    candidate: options.role === 'review' ? source : null,
-    memory: await memorySlice(options),
-    // Publish reads this to hold a retro issue's plan to its triage.
-    artifacts: retroPlan ? [ISSUES_FILE] : [],
-    operations: [],
-    attemptLimit: null,
-  };
-  mkdirSync(options.out, { recursive: true });
   if (manifest) writeFileSync(join(options.out, TOOLS_FILE), manifest);
   else rmSync(join(options.out, TOOLS_FILE), { force: true });
-  rmSync(join(options.out, THREADS_FILE), { force: true });
-  if (options.role === 'review' || options.role === 'repair') {
-    const pull = await openPull(job, branchOf(job));
-    if (pull) {
-      writeFileSync(
-        join(options.out, THREADS_FILE),
-        `${JSON.stringify(await readThreads(job.repo, pull.number), null, 2)}\n`,
-      );
-      job.artifacts.push(THREADS_FILE);
-    }
-  }
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),

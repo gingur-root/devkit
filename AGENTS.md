@@ -35,6 +35,8 @@ These override anything below that conflicts with them.
 - **A gate binds to what it judged.** Plan approval, critique and review hold
   only for the plan revision, the issue text the stage actually saw, and the
   commits it checked. Any change makes the result stale (devkit#168).
+- **An agent's judgment may add a stop, never remove one.** Whether the operator
+  is asked is decided by a deterministic check on what he approved.
 - **Identity comes from a verified record.** Who acted and who approved is
   checked against GitHub's own record or a verified token, never a dispatch
   input or localhost. A missing credential fails the job; it never falls back

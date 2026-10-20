@@ -19,7 +19,7 @@ type Step = {
 };
 type Job = { permissions?: unknown; steps?: Step[] };
 
-const READ_ROLES = ['plan', 'build', 'review', 'repair'];
+const READ_ROLES = ['plan', 'build', 'review', 'repair', 'replan'];
 
 function load(url: URL): { jobs?: Record<string, Job>; runs?: { steps?: Step[] } } {
   return parse(readFileSync(url, 'utf8'));
@@ -52,6 +52,23 @@ function allSteps(): [string, Step][] {
 }
 
 const uses = (step: Step, action: string) => step.uses?.includes(`/actions/${action}@`) ?? false;
+
+test('controllers that read PRs and update PR comments hold pull-request write access', () => {
+  const writers = new Set([
+    'agent.build.yml#start',
+    'agent.build.yml#publish',
+    'agent.round.yml#gate',
+    'agent.round.yml#push',
+    'agent.round.yml#verdict',
+  ]);
+  for (const [where, job] of workflowJobs()) {
+    if (!writers.has(where)) continue;
+    const app = job.steps?.find((step) => step.id === 'app');
+    assert.equal(app?.with?.permissionPullRequests, 'write', where);
+    writers.delete(where);
+  }
+  assert.equal(writers.size, 0);
+});
 
 test('plan, build, review and repair agent jobs read with a sealed token and hold nothing else', () => {
   const seen = new Set<string>();
@@ -169,6 +186,7 @@ test('every render uses a separate pipeline-only contents: read token', () => {
     'agent.memory.yml#start',
     'agent.plan.yml#start',
     'agent.retro.yml#start',
+    'agent.round.yml#gate',
     'agent.round.yml#push',
     'agent.round.yml#verdict',
   ]);

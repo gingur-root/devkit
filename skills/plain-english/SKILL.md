@@ -1,7 +1,7 @@
 ---
 name: plain-english
 description: Write prose a busy reader can act on from a phone. Use for chat, summaries, comments, and issue and PR prose.
-roles: plan, build, repair, review, retro
+roles: plan, build, repair, review, replan, retro
 ---
 
 # Plain English

@@ -30,7 +30,7 @@ keeps its own caller, which runs the same plan and build workflows.
 | 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer. | Planning         |
 | 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                      | Needs you        |
 | 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                   | Building → Ready |
-| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | Claude reviews; Codex fixes findings. Repairs and stale reruns share a cap of 10 rounds; then ready or Needs you.                    | Ready → Done     |
+| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | Claude reviews and replans; Codex repairs. Spec changes wait for approval; repairs and stale reruns share a 10-round cap.            | Ready → Done     |
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
@@ -115,7 +115,7 @@ the first changed file, with its real location in the body. Only an empty
 patch leaves findings in the review body. Advisory findings allow an otherwise
 clean review to pass.
 
-Review and repair jobs read `threads.json`, which holds App-authored marked
+Review, replan and repair jobs read `threads.json`, which holds App-authored marked
 threads (open and resolved) and their operator or App replies. Comments from
 other authors are excluded. The reviewer reuses an open finding's ID when it
 still stands, omits fixed IDs, asks nothing and puts the recommended fix in
@@ -129,40 +129,66 @@ a resolved thread gets a new thread.
   stays in **Ready**. Red CI adds a blocking `CI` finding to the review, which
   Codex then fixes like any other. The review comment
   on the issue says it's ready to merge.
-- **Changes requested, nothing to ask you:** Codex fixes the findings and
-  pushes a new commit to the same PR, then Claude reviews the whole change
-  again. The card stays in **Building** meanwhile, and the issue gets a
-  **Repair** comment with what Codex changed. After a successful push, each
-  `changes[]` entry is also posted on its open finding thread with the commit
-  SHA and its change or evidenced response. The next review resolves fixed
-  threads. This repeats up to 10 rounds by
-  default (`rounds` in `agent.build.yml`, capped by `REPAIR_ROUNDS` in
-  `bin/agent/constants.ts`). A repair must map every
-  supplied finding ID in `changes[].ref`. A dispute needs non-empty
-  `evidence`; an incomplete map stops at `validate` before a push.
-- **Anything else** (a question for you, an inconclusive review, findings left
-  after the round cap, or a repair that changed nothing): the review comment says
-  the PR needs your call, names the round, links each open finding thread,
-  and links the PR's loop log. The card moves to **Needs you**.
+- **Changes requested:** Claude (Opus 5.5, medium effort) replans before
+  each repair. It replies on every unresolved thread, using its finding ID
+  in `changes[].ref` and the answer in `response`. A missing reply stops at
+  `validate`. Questions that accompany blocking findings become advisory
+  `Q1`, `Q2`, … threads for the planner; a question-only review still stops.
+  The planner reads the approved `plan.md`, its `checks.json`, the gated
+  `review.json`, and `threads.json`. It writes a plan only to change the spec.
+- **Spec unchanged:** the gate starts Codex's repair on the same PR. Codex
+  sees the planner's replies, fixes the findings and pushes a new commit.
+  Claude reviews the whole change again while CI checks the same commit.
+  Each repair maps every finding in `changes[].ref`; disputes need evidence.
+  After a successful push, each entry is posted on its open thread with the
+  commit SHA. An incomplete map stops at `validate` before a push.
+- **Spec changed:** any plan-text edit, or an added, removed or re-checked
+  criterion, stops the round. The controller rewrites the plan comment,
+  lists the changed criterion IDs (or says "plan text only"), posts the
+  planner's summary and moves the card to **Needs you**. The planner cannot
+  bypass this check. The loop keeps the plan revision you approved; repair
+  refuses until it matches the current plan.
+- **Planner stop:** needs-input, questions, or a non-complete result stops
+  even when the spec is unchanged. Invalid results and missing thread
+  replies stop at validation. The comment names the round, reason and open
+  threads. A normal spec or planner stop does not trigger a retro; a failed
+  planner job does.
+- **Cap:** after 10 rounds, remaining blocking findings stop at **Needs you**.
+  The comment says the loop has not converged, links every open thread and
+  gives the latest planner summary as the agents' suggestion. Other stops
+  (an inconclusive review, a question-only review or a failed repair) also
+  name the round, link open threads and link the loop log.
 - **Stale review:** the next round reviews the current PR head without a
   repair or a push. The card stays in **Building**, and the issue comment
   names the commit being re-reviewed and the next round. Reruns count toward
   the cap; a stale review at the cap stops at **Needs you**. A stale review
-  never posts a PR review or changes the PR's ready state.
+  never posts a PR review or changes the PR's ready state. A head that moves
+  while the planner runs reruns the same way, within the cap.
 
-The PR has one loop-log comment, updated after each repair and review. It
+After a spec stop, reply `/approve` or press Continue to approve the new plan.
+The run skips Build and re-reviews the current head of the same PR in the
+stopped round, now under the new plan. The round count and original base carry
+over; the next repair round runs replan → gate → repair as usual. This extra
+review avoids repairing findings judged against the old plan. Close the PR
+first to rebuild from scratch.
+
+The PR has one loop-log comment, updated after each replan, repair and review. It
 shows the round and cap, failure count, candidate short SHA, CI result,
-review outcome, open blocking IDs, and the repair's hypotheses. Its hidden
+review outcome, open blocking IDs, planner summary and repair hypotheses. It
+also records the approved plan revision and original build base. Only loop
+comments authored by the pipeline App or the operator count for approval or
+resume. Its hidden
 `<!-- devkit:loop-state {json} -->` line keeps state between jobs. Round 0
 reviews the build; rounds 1 through 10 review repairs or rerun stale reviews.
-Each round runs through `agent.round.yml`.
+Each round runs through `agent.round.yml`; non-rerun rounds 1–10 run
+replan → gate → repair → push → review + verify → verdict.
 
 For a direct controller call, set the repair cap with
 `pnpm agent publish --in <job-dir> --out <output-dir> --round <r> --rounds <n>`.
 Pass the same cap to each publish in the run. Without `--rounds`, the cap is
 `REPAIR_ROUNDS` (10). The build workflow's `rounds` input sets the cap for all
 rounds in that run. The CLI accepts only integers from 0 to 10; 0 reviews the
-build without repairs or reruns. Local eval keeps its separate cap of 2 repairs.
+build without repairs or reruns. Local eval keeps its separate cap of 2 repairs and runs without a planner.
 
 The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR
@@ -364,6 +390,14 @@ on a scratch issue.
    blocking F1 thread repaired and resolved in round 1, and `advisory` for a
    passing review with an advisory thread. For `changes`, check that the PR
    has one F1 thread, resolved after round 1, with the repair's reply.
+   With `never`, check that ten replans and ten repairs run, then the cap
+   comment lists open threads and the last planner summary in **Needs you**.
+   With `spec`, round 1 stops before repair: the plan comment adds `A2` and
+   the card moves to **Needs you**. Approve it, then dispatch the build again
+   from the same proof branch with `fixture=spec`. Check that Build is skipped,
+   round 1 re-reviews the same PR, round 2 replans and repairs, and the review
+   passes. The loop log must retain the original base and continuing rounds.
+   If the proof caller has a fixed fixture list, add `spec` on that branch.
    To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 
 3. Delete the pipeline branch when you are done.

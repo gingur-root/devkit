@@ -7,6 +7,7 @@ name: Round
 # (up to 10). The verdict marks a clean pass with CI green on that same commit
 # ready, starts the next round when the findings (CI's included) are Codex's to
 # fix and rounds are left, and otherwise moves the card to Needs you.
+# Each repair runs replan → gate → repair; spec changes wait for /approve.
 # The pipeline never merges. agent.build.yml calls this once per round.
 
 on:
@@ -61,7 +62,7 @@ on:
         type: string
         required: true
       readToken:
-        description: "Round 0: the reviewer's sealed read token (actions/agent.token). Later rounds: the repair's."
+        description: "Round 0: the reviewer's sealed read token (actions/agent.token). Later rounds: the replan's."
         type: string
         required: false
         default: ''
@@ -79,24 +80,158 @@ on:
         required: false
     outputs:
       next:
-        description: 'The next step: ready, repair, rerun or stop.'
-        value: ${{ jobs.verdict.outputs.next }}
+        description: 'The next step: ready, repair, rerun, spec or stop.'
+        value: ${{ jobs.verdict.outputs.next || (jobs.gate.outputs.next != 'repair' && jobs.gate.outputs.next || '') }}
       candidate:
         description: 'The reviewed commit to repair, or the current PR head to re-review.'
-        value: ${{ jobs.verdict.outputs.candidate }}
+        value: ${{ jobs.verdict.outputs.candidate || jobs.gate.outputs.candidate }}
       retro:
         description: '`true` when this round left the card in Needs you.'
         value: ${{ jobs.verdict.outputs.retro }}
       readToken:
-        description: "The next round's sealed read token for its repair, when `next` is `repair`."
+        description: "The next round's sealed read token for its replan, when `next` is `repair`."
         value: ${{ jobs.verdict.outputs.readToken }}
 
 permissions: {}
 
 jobs:
+  replan:
+    name: Replan
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    permissions:
+      contents: read
+    steps:
+      - uses: gingur-root/devkit/actions/agent.run@main
+        with:
+          role: replan
+          prefix: replan-${{ inputs.round }}
+          executor: ${{ inputs.executor }}
+          fixture: ${{ inputs.fixture }}
+          source: ${{ inputs.candidate }}
+          token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+          readToken: ${{ inputs.readToken }}
+          devkitRef: ${{ inputs.devkitRef }}
+
+  gate:
+    name: Gate
+    needs: replan
+    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun
+    runs-on: ${{ inputs.runner }}
+    environment: agents
+    outputs:
+      next: ${{ steps.publish.outputs.next }}
+      candidate: ${{ steps.publish.outputs.head }}
+      readToken: ${{ steps.read.outputs.sealed }}
+    steps:
+      - id: app
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          repositories: ${{ inputs.repo }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          permissionContents: read
+          permissionIssues: write
+          permissionPullRequests: write
+          permissionOrganizationProjects: write
+
+      - uses: actions/checkout@v6
+        with:
+          repository: gingur-root/devkit
+          ref: ${{ inputs.devkitRef }}
+          path: devkit
+          persist-credentials: false
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+        with:
+          cwd: devkit
+
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: replan-${{ inputs.round }}-in
+          path: ${{ runner.temp }}/replan/in
+
+      # Missing when the replan job died before writing anything; publish names that stage.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: replan-${{ inputs.round }}-out
+          path: ${{ runner.temp }}/replan/out
+
+      - id: publish
+        name: Publish
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ROUND: ${{ inputs.round }}
+          ROUNDS: ${{ inputs.rounds }}
+        run: |
+          pnpm agent publish --in "$RUNNER_TEMP/replan/in" --out "$RUNNER_TEMP/replan/out" \
+            --round "$ROUND" --rounds "$ROUNDS"
+
+      # Render repair after planner replies, so it sees the thread discussion.
+      - id: memory
+        if: steps.publish.outputs.repair == 'true'
+        uses: gingur-root/devkit/actions/app.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          repositories: pipeline
+          permissionContents: read
+
+      - id: next
+        name: Render repair
+        if: steps.publish.outputs.repair == 'true'
+        working-directory: devkit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
+          REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
+          ISSUE: ${{ inputs.issue || github.event.issue.number }}
+          APP_ID: ${{ inputs.appId }}
+          ROUND: ${{ inputs.round }}
+          BASE: ${{ inputs.base }}
+        run: |
+          job="$RUNNER_TEMP/replan/in/job.json"
+          candidate=$(node -p 'require(process.argv[1]).source' "$job")
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role repair --source "$candidate" \
+            --base "$BASE" --app-id "$APP_ID" --out "$RUNNER_TEMP/repair/in"
+          cp "$RUNNER_TEMP/replan/in/review.json" "$RUNNER_TEMP/repair/in/review.json"
+          {
+            echo "candidate=$candidate"
+            echo "artifact=repair-${ROUND}-in"
+            echo "pack=repair-${ROUND}-repo"
+          } >>"$GITHUB_OUTPUT"
+
+      - if: steps.next.outputs.artifact != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.next.outputs.artifact }}
+          path: ${{ runner.temp }}/repair/in
+
+      - if: steps.next.outputs.artifact != ''
+        uses: gingur-root/devkit/actions/repo.pack@main
+        with:
+          repo: ${{ inputs.repo }}
+          ref: ${{ steps.next.outputs.candidate }}
+          token: ${{ steps.app.outputs.token }}
+          name: ${{ steps.next.outputs.pack }}
+
+      # The repair's read token.
+      - id: read
+        if: steps.publish.outputs.repair == 'true'
+        uses: gingur-root/devkit/actions/agent.token@main
+        with:
+          appId: ${{ inputs.appId }}
+          token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
+          key: ${{ secrets.AGENTS_SECRETS_TOKEN }}
+
   repair:
     name: Repair
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun
+    needs: gate
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun && needs.gate.outputs.next == 'repair'
     runs-on: ${{ inputs.runner }}
     environment: agents
     permissions:
@@ -110,7 +245,7 @@ jobs:
           fixture: ${{ inputs.fixture }}
           source: ${{ inputs.candidate }}
           token: ${{ secrets.AGENTS_SECRETS_TOKEN }}
-          readToken: ${{ inputs.readToken }}
+          readToken: ${{ needs.gate.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
   push:
@@ -329,7 +464,7 @@ jobs:
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
             --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED"
 
-      # The next round's repair job: the reviewed commit, the build's base, and this review.
+      # The next round's replan job: the reviewed commit, the build's base, and this review.
       - id: memory
         if: steps.publish.outputs.repair == 'true'
         uses: gingur-root/devkit/actions/app.token@main
@@ -340,7 +475,7 @@ jobs:
           permissionContents: read
 
       - id: next
-        name: Render repair
+        name: Render replan
         if: steps.publish.outputs.repair == 'true'
         working-directory: devkit
         env:
@@ -354,20 +489,20 @@ jobs:
           job="$RUNNER_TEMP/review/in/job.json"
           candidate=$(node -p 'require(process.argv[1]).candidate' "$job")
           base=$(node -p 'require(process.argv[1]).base' "$job")
-          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role repair --source "$candidate" \
-            --base "$base" --app-id "$APP_ID" --out "$RUNNER_TEMP/repair/in"
-          cp "$RUNNER_TEMP/review/out/review.json" "$RUNNER_TEMP/repair/in/review.json"
+          pnpm agent render --repo "$REPO" --issue "$ISSUE" --role replan --source "$candidate" \
+            --base "$base" --app-id "$APP_ID" --out "$RUNNER_TEMP/replan/in"
+          cp "$RUNNER_TEMP/review/out/review.json" "$RUNNER_TEMP/replan/in/review.json"
           {
             echo "candidate=$candidate"
-            echo "artifact=repair-$((ROUND + 1))-in"
-            echo "pack=repair-$((ROUND + 1))-repo"
+            echo "artifact=replan-$((ROUND + 1))-in"
+            echo "pack=replan-$((ROUND + 1))-repo"
           } >>"$GITHUB_OUTPUT"
 
       - if: steps.next.outputs.artifact != ''
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.next.outputs.artifact }}
-          path: ${{ runner.temp }}/repair/in
+          path: ${{ runner.temp }}/replan/in
 
       - if: steps.next.outputs.artifact != ''
         uses: gingur-root/devkit/actions/repo.pack@main
@@ -377,7 +512,7 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           name: ${{ steps.next.outputs.pack }}
 
-      # The next round's repair read token.
+      # The next round's replan read token.
       - id: read
         if: steps.publish.outputs.repair == 'true'
         uses: gingur-root/devkit/actions/agent.token@main

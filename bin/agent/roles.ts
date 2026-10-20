@@ -51,6 +51,19 @@ export const ROLES = {
     maxTurns: 100,
     result: true,
   },
+  replan: {
+    executor: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'medium',
+    objective:
+      'Answer every open review thread and change the plan only when the approved spec must change.',
+    instructions: ['agents/worker.md', 'agents/contract.md', 'agents/plan.md', 'agents/replan.md'],
+    tools: ['Bash', 'Read', 'Glob', 'Grep', 'Write'],
+    web: true,
+    timeoutMinutes: 30,
+    maxTurns: 100,
+    result: true,
+  },
   build: {
     // agents/sdlc.md: Codex at High implements; the account default model.
     executor: 'codex',

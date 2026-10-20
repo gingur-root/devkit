@@ -45,6 +45,8 @@ import {
 import { graphql, removeLabel, rest, restAll, stageComment, upsertStageComment } from './github.ts';
 import {
   CANDIDATE_FILE,
+  CHECKS_FILE,
+  THREADS_FILE,
   CONTRACT_PREFIX,
   followupMarker,
   ISSUES_FILE,
@@ -115,7 +117,7 @@ interface Outcome {
 /** A result that may be published, or the stage it stopped at and why. */
 export type Verdict = { result: Result } | { stage: string; reason: string; step?: string };
 
-export type Step = 'ready' | 'repair' | 'rerun' | 'stop';
+export type Step = 'ready' | 'repair' | 'rerun' | 'spec' | 'stop';
 export interface Gate {
   candidate: string;
   head: string;
@@ -133,6 +135,48 @@ export function nextStep(gate: Gate): Step {
   const result = gated(gate.review.result, gate.candidate || null, gate.verified);
   if (passes(result)) return 'ready';
   return repairable(result) && gate.round < gate.rounds ? 'repair' : 'stop';
+}
+
+export function changedCriteria(
+  approved: Record<string, string>,
+  criteria: Result['criteria'],
+): string[] {
+  if (criteria === null) return [];
+  const next = Object.fromEntries(criteria.map((c) => [c.id, c.check]));
+  return [...new Set([...Object.keys(approved), ...Object.keys(next)])]
+    .filter((id) => approved[id] !== next[id])
+    .sort();
+}
+
+export function specChanged(
+  approved: { revision: string; checks: Record<string, string> },
+  result: Result,
+  plan: string | null,
+): boolean {
+  return (
+    (plan !== null && revision(plan.trim()) !== approved.revision) ||
+    changedCriteria(approved.checks, result.criteria).length > 0
+  );
+}
+
+export function replanStep(v: Verdict, changed: boolean): 'repair' | 'spec' | 'stop' {
+  if ('stage' in v) return 'stop';
+  if (changed) return 'spec';
+  return v.result.status !== 'complete' ||
+    v.result.outcome !== 'ready' ||
+    v.result.questions.length > 0
+    ? 'stop'
+    : 'repair';
+}
+
+export function replanMap(threads: Thread[], result: Result): string | null {
+  const missing = threads
+    .filter(
+      (t) =>
+        !t.resolved && !(result.changes ?? []).some((c) => c.ref === t.id && c.response?.trim()),
+    )
+    .map((t) => t.id);
+  return missing.length ? `planner map is missing replies: ${missing.join(', ')}` : null;
 }
 
 export function verdict(job: Job, liveRevision: string, out: string): Verdict {
@@ -225,8 +269,12 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
       stage: 'stale',
       reason: `the ${job.role} found its input superseded: ${result.summary.replace(/\.$/, '')}`,
     };
-  // A repair's blocked or failed result still goes through the repair-map check and the loop log (#161).
-  if ((result.status === 'blocked' || result.status === 'failed') && job.role !== 'repair')
+  // Repair and replan results still pass through their map check and the loop log.
+  if (
+    (result.status === 'blocked' || result.status === 'failed') &&
+    job.role !== 'repair' &&
+    job.role !== 'replan'
+  )
     return {
       stage: job.role,
       reason: `\`${result.status}\`: ${result.summary.replace(/\.$/, '')}`,
@@ -285,6 +333,7 @@ export function planComment(
   out: string,
   handoff: Handoff | null,
   story: Filed[],
+  checks?: Record<string, string>,
 ): string {
   const planFile = join(out, PLAN_FILE);
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8').trim() : '';
@@ -302,7 +351,10 @@ export function planComment(
     source: job.source,
     issueRevision: job.issue.revision,
     bodySeen: job.issue.bodySeen,
-    checks: Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
+    checks:
+      result.criteria === null && checks
+        ? checks
+        : Object.fromEntries((result.criteria ?? []).map((c) => [c.id, c.check])),
     critique: result.critique,
     triage: result.triage,
     blockedBy: story.some((s) => s.blockedBy.length)
@@ -548,6 +600,7 @@ export async function replyChanges(
   pull: number,
   changes: NonNullable<Result['changes']>,
   commit: string,
+  heading: 'Repair' | 'Planner' = 'Repair',
 ): Promise<void> {
   const threads = await readThreads(repo, pull);
   for (const change of changes) {
@@ -555,7 +608,11 @@ export async function replyChanges(
     if (thread)
       await replyThread(
         thread.node,
-        [`Repair \`${commit.slice(0, 7)}\``, change.change ?? change.response, change.evidence]
+        [
+          `${heading} \`${commit.slice(0, 7)}\``,
+          heading === 'Planner' ? change.response : (change.change ?? change.response),
+          change.evidence,
+        ]
           .filter(Boolean)
           .join('\n\n'),
       );
@@ -580,6 +637,7 @@ export interface LoopEntry {
   candidate: string;
   ci: 'green' | 'red' | null;
   review: string | null;
+  replan: string | null;
   open: string[];
   hypotheses: string[];
   step: Step | null;
@@ -588,6 +646,8 @@ export interface LoopState {
   rounds: number;
   failures: number;
   entries: LoopEntry[];
+  approved?: string;
+  base?: string;
 }
 
 export function loopComment(state: LoopState): string {
@@ -597,7 +657,7 @@ export function loopComment(state: LoopState): string {
     `**Round ${round} of ${state.rounds} · ${state.failures} failures**`,
     ...state.entries.map(
       (e) =>
-        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
+        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
     ),
     `<!-- devkit:loop-state ${JSON.stringify(state).replace(/-->/g, '--\\u003e')} -->`,
   ].join('\n\n');
@@ -620,6 +680,8 @@ async function updateLoop(
   const existing = await stageComment(job.repo, pull.number, 'loop');
   // Round zero starts a new build on a PR that may already have a log.
   const state = readLoopState(round === 0 ? null : (existing?.body ?? null));
+  state.approved ??= job.plan?.revision;
+  state.base ??= job.base ?? job.source;
   state.rounds = options.rounds ?? REPAIR_ROUNDS;
   const previous = state.entries.find((e) => e.round === round);
   const current: LoopEntry = {
@@ -627,6 +689,7 @@ async function updateLoop(
     candidate: job.candidate ?? '',
     ci: null,
     review: null,
+    replan: null,
     open: state.entries.at(-1)?.open ?? [],
     hypotheses: [],
     step: null,
@@ -647,6 +710,111 @@ export function needsYouText(round: number, threads: Thread[], logUrl: string): 
   return `Stopped in round ${round}. Open threads: ${links.join(', ') || 'none'}.\n\n[Loop log](${logUrl})`;
 }
 
+export function replanStopText(
+  step: 'spec' | 'stop',
+  round: number,
+  changed: string[],
+  reason: string,
+  threads: Thread[],
+  logUrl: string,
+): string {
+  return [
+    step === 'spec'
+      ? `Spec changed in round ${round}. Changed criteria: ${changed.join(', ') || 'plan text only'}. Approve with \`/approve\` to resume.`
+      : `The planner stopped round ${round}: ${reason}.`,
+    step === 'spec' && reason,
+    needsYouText(round, threads, logUrl),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+export function capText(round: number, state: LoopState): string {
+  const suggestion = [...state.entries].reverse().find((e) => e.replan)?.replan;
+  return `The review loop hasn't converged after ${round} rounds.\n\nAgents' suggestion: ${suggestion ?? 'No planner summary was recorded.'}`;
+}
+
+async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
+  const round = options.round ?? 0;
+  const pull = await openPull(job, branchOf(job));
+  if (!pull)
+    return {
+      body: `${stopped(job.role, { stage: 'publish', reason: 'the build has no open PR' })}\n\nStopped in round ${round}. No open PR or review threads.`,
+      status: 'Needs you',
+      stopped: true,
+    };
+  const snapshot: Thread[] = JSON.parse(readFileSync(join(options.in, THREADS_FILE), 'utf8'));
+  if ('result' in v) {
+    const reason = replanMap(snapshot, v.result);
+    if (reason) v = { stage: 'validate', reason };
+  }
+  if (pull.head.sha !== job.source)
+    v = { stage: 'stale', reason: 'the PR has a newer commit than the planner saw' };
+  const checks: Record<string, string> = JSON.parse(
+    readFileSync(join(options.in, CHECKS_FILE), 'utf8'),
+  );
+  const planFile = join(options.out, PLAN_FILE);
+  const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
+  const changed =
+    'result' in v && specChanged({ revision: job.plan!.revision, checks }, v.result, plan);
+  const step =
+    pull.head.sha !== job.source && round < (options.rounds ?? REPAIR_ROUNDS)
+      ? 'rerun'
+      : replanStep(v, changed);
+  if ('result' in v)
+    await replyChanges(job.repo, pull.number, v.result.changes ?? [], job.source, 'Planner');
+  // Record approval before rewriting the plan comment, so the render guard holds even after a partial publish.
+  const log = await updateLoop(job, pull, options, {
+    candidate: job.source,
+    replan: 'result' in v ? v.result.summary : v.reason,
+    ...(step !== 'repair' && { step }),
+  });
+  if (step === 'spec' && 'result' in v) {
+    const body = planComment(
+      { ...job, role: 'plan' },
+      { ...v.result, outcome: 'ready' },
+      plan === null ? options.in : options.out,
+      null,
+      [],
+      checks,
+    );
+    await upsertStageComment(
+      job.repo,
+      job.issue.number,
+      'plan',
+      body.replace(
+        /\*\*Plan:.*?\*\*/,
+        `**Plan: changed in review round ${round}: reply \`/approve\` to resume #${pull.number}**\n\nChanged criteria: ${changedCriteria(checks, v.result.criteria).join(', ') || 'plan text only'}.`,
+      ),
+    );
+  }
+  if (process.env.GITHUB_OUTPUT)
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `next=${step}\n${step === 'repair' ? 'repair=true\n' : ''}${step === 'rerun' ? `head=${pull.head.sha}\n` : ''}`,
+    );
+  if (step === 'rerun')
+    return {
+      body: `${marker('replan')}\n\nRe-reviewing \`${pull.head.sha.slice(0, 7)}\`: the PR has a newer commit than the planner saw. Round ${round + 1} of ${options.rounds ?? REPAIR_ROUNDS}.`,
+      status: 'Building',
+      stopped: false,
+    };
+  const reason =
+    'stage' in v
+      ? `stopped at \`${v.stage}\`: ${v.reason}`
+      : v.result.questions.length
+        ? numbered(v.result.questions)
+        : v.result.summary;
+  return {
+    body:
+      step === 'repair'
+        ? `${marker('replan')}\n\n${reason}`
+        : `${marker('replan')}\n\n${replanStopText(step, round, 'result' in v ? changedCriteria(checks, v.result.criteria) : [], reason, await readThreads(job.repo, pull.number), log.html_url)}`,
+    status: step === 'repair' ? 'Building' : 'Needs you',
+    stopped: 'stage' in v || ('result' in v && v.result.status !== 'complete'),
+  };
+}
+
 async function publishReview(job: Job, v: Verdict, options: PublishOptions): Promise<Outcome> {
   const pull = await openPull(job, branchOf(job));
   if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
@@ -664,7 +832,17 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
     appendFileSync(process.env.GITHUB_OUTPUT, `next=${step}\n`);
     if (step === 'repair') appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
   }
-  const result = 'result' in v ? gated(v.result, job.candidate, options.verified ?? '') : null;
+  const threads: Thread[] =
+    'result' in v ? JSON.parse(readFileSync(join(options.in, THREADS_FILE), 'utf8')) : [];
+  const result =
+    'result' in v
+      ? gated(
+          v.result,
+          job.candidate,
+          options.verified ?? '',
+          threads.map((t) => t.id),
+        )
+      : null;
   const log =
     pull &&
     (await updateLoop(job, pull, options, {
@@ -701,7 +879,7 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
     };
   // The repair answers the gated review; result.json stays the reviewer's own.
   writeFileSync(join(options.out, REVIEW_FILE), JSON.stringify(result, null, 2));
-  return postReview(job, result!, pull!, options, step, log!.html_url);
+  return postReview(job, result!, pull!, options, step, log!.html_url, readLoopState(log!.body));
 }
 
 /** The finding a review gets when CI did not pass on the commit it reviewed. */
@@ -712,8 +890,13 @@ export const CI_FINDING = 'CI';
  * itself (devkit#9). Otherwise it carries a blocking CI finding for the repair,
  * so a pass from an earlier or failed verify never reaches Ready.
  */
-export function gated(result: Result, candidate: string | null, verified: string): Result {
-  if (candidate !== null && verified === candidate) return result;
+export function gated(
+  result: Result,
+  candidate: string | null,
+  verified: string,
+  threadIds: string[] = [],
+): Result {
+  const green = candidate !== null && verified === candidate;
   const finding = {
     id: CI_FINDING,
     axis: 'correctness',
@@ -726,10 +909,38 @@ export function gated(result: Result, candidate: string | null, verified: string
     impact: 'CI is red on this commit, so it is not safe to merge.',
     fix: 'Run the failing check from the run log locally and make it pass.',
   } as const;
+  const findings: Finding[] = [...(result.findings ?? []), ...(!green ? [finding] : [])];
+  if (!findings.some((f) => f.blocking) || result.questions.length === 0)
+    return green
+      ? result
+      : {
+          ...result,
+          outcome: result.outcome === 'pass' ? 'changes-requested' : result.outcome,
+          findings,
+        };
+  let question = [...threadIds, ...findings.map((f) => f.id)].reduce(
+    (max, id) => Math.max(max, Number(/^Q(\d+)$/.exec(id)?.[1] ?? 0)),
+    0,
+  );
+  for (const text of result.questions) {
+    findings.push({
+      id: `Q${++question}`,
+      axis: 'spec',
+      blocking: false,
+      criterion: null,
+      path: null,
+      line: null,
+      evidence: text,
+      scenario: text,
+      impact: 'The planner must answer before repair.',
+      fix: 'The planner answers on this thread.',
+    });
+  }
   return {
     ...result,
     outcome: result.outcome === 'pass' ? 'changes-requested' : result.outcome,
-    findings: [...(result.findings ?? []), finding],
+    findings,
+    questions: [],
   };
 }
 
@@ -753,6 +964,7 @@ async function postReview(
   options: PublishOptions,
   step: Step,
   logUrl: string,
+  state: LoopState,
 ): Promise<Outcome> {
   const round = options.round ?? 0;
   const rounds = options.rounds ?? REPAIR_ROUNDS;
@@ -805,6 +1017,10 @@ async function postReview(
       head,
       result.summary,
       numbered(result.questions),
+      step === 'stop' &&
+        round === rounds &&
+        (result.findings ?? []).some((f) => f.blocking) &&
+        capText(round, state),
       step === 'stop' && needsYouText(round, await readThreads(job.repo, pull.number), logUrl),
     ]
       .filter(Boolean)
@@ -1344,16 +1560,18 @@ export async function publish(options: PublishOptions): Promise<void> {
   const outcome =
     job.role === 'review'
       ? await publishReview(job, v, options)
-      : await publishBuildOrPlan(
-          job,
-          issue,
-          v,
-          options.out,
-          options.checkout,
-          handoff,
-          subtasks,
-          options,
-        );
+      : job.role === 'replan'
+        ? await publishReplan(job, v, options)
+        : await publishBuildOrPlan(
+            job,
+            issue,
+            v,
+            options.out,
+            options.checkout,
+            handoff,
+            subtasks,
+            options,
+          );
   const { status, stopped } = outcome;
   const followups = 'result' in v ? (v.result.followups ?? []) : [];
   const body = [outcome.body, followupLine(followups.length)].filter(Boolean).join('\n\n');
@@ -1386,7 +1604,12 @@ export async function publish(options: PublishOptions): Promise<void> {
 
   // The run ended waiting on the operator; the workflow runs a retro (devkit#39).
   // A plan that asks questions is the normal flow, not trouble.
-  if (status === 'Needs you' && job.role !== 'plan' && process.env.GITHUB_OUTPUT)
+  if (
+    status === 'Needs you' &&
+    job.role !== 'plan' &&
+    job.role !== 'replan' &&
+    process.env.GITHUB_OUTPUT
+  )
     appendFileSync(process.env.GITHUB_OUTPUT, 'retro=true\n');
   if (stopped) process.exitCode = 1;
 }

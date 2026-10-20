@@ -1,0 +1,47 @@
+{
+  "job": "",
+  "role": "replan",
+  "inputs": {
+    "issue": "",
+    "plan": null,
+    "base": null,
+    "candidate": null,
+    "artifacts": []
+  },
+  "outputs": {
+    "plan": "plan.md",
+    "candidate": null,
+    "artifacts": ["plan.md"]
+  },
+  "status": "complete",
+  "outcome": "ready",
+  "summary": "Stub planner: add A2 to the approved spec.",
+  "evidence": [],
+  "changes": null,
+  "hypotheses": null,
+  "axes": null,
+  "criteria": [
+    {
+      "id": "A1",
+      "text": "The stub plan is published as one comment on the issue.",
+      "check": "agent"
+    },
+    {
+      "id": "A2",
+      "text": "The repair rewrites STUB.md.",
+      "check": "agent"
+    }
+  ],
+  "probe": null,
+  "critique": false,
+  "docs": null,
+  "assumptions": [],
+  "questions": [],
+  "next": "Repair the open findings.",
+  "findings": null,
+  "subtasks": null,
+  "followups": null,
+  "priority": null,
+  "triage": null,
+  "failure": null
+}

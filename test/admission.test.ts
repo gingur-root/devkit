@@ -45,18 +45,24 @@ test('every round passes the cap and base, chains repair or rerun, and reaches f
     assert.equal(job.uses, './.github/workflows/agent.round.yml');
     assert.equal(job.with.round, round);
     assert.equal(job.with.rounds, '${{ inputs.rounds }}');
-    assert.equal(job.with.base, '${{ needs.start.outputs.source }}');
+    assert.equal(job.with.base, '${{ needs.start.outputs.base }}');
     if (round === 0) assert.deepEqual(job.needs, ['start', 'publish']);
     else {
       const previous = rounds[round - 1];
       assert.deepEqual(job.needs, ['start', previous]);
       assert.equal(
         job.if,
-        `contains(fromJSON('["repair","rerun"]'), needs.${previous}.outputs.next)`,
+        `\${{ !cancelled() && needs.start.result == 'success' && ((needs.${previous}.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.${previous}.outputs.next)) || needs.start.outputs.resume == '${round}') }}`,
       );
-      assert.equal(job.with.candidate, `\${{ needs.${previous}.outputs.candidate }}`);
+      assert.equal(
+        job.with.candidate,
+        `\${{ needs.${previous}.outputs.candidate || needs.start.outputs.candidate }}`,
+      );
       assert.equal(job.with.readToken, `\${{ needs.${previous}.outputs.readToken }}`);
-      assert.equal(job.with.rerun, `\${{ needs.${previous}.outputs.next == 'rerun' }}`);
+      assert.equal(
+        job.with.rerun,
+        `\${{ needs.${previous}.outputs.next == 'rerun' || needs.start.outputs.resume == '${round}' }}`,
+      );
     }
   }
   assert.deepEqual(jobs.retro.needs, ['start', 'build', 'publish', ...rounds]);
@@ -67,7 +73,11 @@ test('every round passes the cap and base, chains repair or rerun, and reaches f
 test('a rerun skips repair and publish but prepares the input candidate for review', () => {
   const { jobs, on } = parse(readFileSync(new URL('agent.round.yml', workflows), 'utf8'));
   assert.equal(on.workflow_call.inputs.rerun.default, false);
-  assert.ok(jobs.repair.if.endsWith('&& inputs.round > 0 && !inputs.rerun'));
+  assert.ok(
+    jobs.repair.if.endsWith(
+      "&& inputs.round > 0 && !inputs.rerun && needs.gate.outputs.next == 'repair'",
+    ),
+  );
   assert.ok(admits(jobs.push.if));
   assert.ok(
     jobs.push.if.endsWith(
@@ -257,4 +267,39 @@ test('every memory job carries admission and report can run after a failure', ()
   assert.match(jobs.report.if, /contains\(needs\.\*\.result, 'cancelled'\)/);
   assert.deepEqual(jobs.report.needs, ['start', 'memory', 'publish']);
   assert.ok(!JSON.stringify(jobs).includes('agent.retro.yml'));
+});
+
+test('each repair is gated by replan and resume skips the builder', () => {
+  const { jobs, on } = parse(readFileSync(new URL('agent.round.yml', workflows), 'utf8'));
+  assert.ok(admits(jobs.replan.if));
+  assert.ok(admits(jobs.gate.if));
+  assert.ok(jobs.replan.if.endsWith('&& inputs.round > 0 && !inputs.rerun'));
+  assert.ok(jobs.gate.if.endsWith('&& inputs.round > 0 && !inputs.rerun'));
+  assert.equal(jobs.gate.needs, 'replan');
+  assert.equal(jobs.repair.needs, 'gate');
+  assert.equal(jobs.repair.steps[0].with.readToken, '${{ needs.gate.outputs.readToken }}');
+  assert.equal(
+    on.workflow_call.outputs.next.value,
+    "${{ jobs.verdict.outputs.next || (jobs.gate.outputs.next != 'repair' && jobs.gate.outputs.next || '') }}",
+  );
+  assert.equal(on.workflow_call.outputs.retro.value, '${{ jobs.verdict.outputs.retro }}');
+  assert.ok(!('retro' in jobs.gate.outputs));
+  assert.equal(jobs.gate.outputs.candidate, '${{ steps.publish.outputs.head }}');
+  assert.equal(
+    on.workflow_call.outputs.candidate.value,
+    '${{ jobs.verdict.outputs.candidate || jobs.gate.outputs.candidate }}',
+  );
+  const renderReplan = jobs.verdict.steps.find((s: { id?: string }) => s.id === 'next');
+  assert.match(renderReplan.run, /--role replan/);
+  assert.match(renderReplan.run, /artifact=replan-/);
+  const renderRepair = jobs.gate.steps.find((s: { id?: string }) => s.id === 'next');
+  assert.match(renderRepair.run, /--role repair/);
+  assert.match(renderRepair.run, /replan\/in\/review.json/);
+  const build = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')).jobs;
+  for (const id of ['build', 'publish'])
+    assert.ok(build[id].if.includes("needs.start.outputs.resume == ''"));
+  const read = build.start.steps.find((s: { id?: string }) => s.id === 'read');
+  assert.ok(read.if.includes("steps.render.outputs.resume == ''"));
+  for (const field of ['base', 'resume', 'candidate'])
+    assert.equal(build.start.outputs[field], `\${{ steps.render.outputs.${field} }}`);
 });

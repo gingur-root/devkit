@@ -10,9 +10,18 @@ import { git, gitAsOperator } from '../git.ts';
 import { setStatus } from './board.ts';
 import { PIPELINE_BOT } from './constants.ts';
 import { type Comment } from './github.ts';
-import { CANDIDATE_FILE, JOB_FILE, type Job, RESULT_FILE, REVIEW_FILE, revision } from './job.ts';
-import { publish, readLoopState } from './publish.ts';
+import {
+  CANDIDATE_FILE,
+  JOB_FILE,
+  type Job,
+  RESULT_FILE,
+  REVIEW_FILE,
+  THREADS_FILE,
+  revision,
+} from './job.ts';
+import { loopComment, publish, readLoopState } from './publish.ts';
 import { Result } from './result.ts';
+import { readThreads } from './threads.ts';
 
 vi.mock('./board.ts', () => ({ setStatus: vi.fn(), proposePriority: vi.fn() }));
 vi.mock('../git.ts', () => ({ git: vi.fn(), gitAsOperator: vi.fn() }));
@@ -96,7 +105,7 @@ function harness() {
         id: comments.length + 10,
         html_url: `${pull.html_url}#issuecomment-${comments.length + 10}`,
         body: body.body,
-        user: { type: 'Bot', id: 3 },
+        user: { type: 'Bot', id: PIPELINE_BOT.id },
       };
       comments.push(comment);
       result = comment;
@@ -161,6 +170,7 @@ function harness() {
         candidate: options.candidate ?? job.candidate,
       },
     };
+    writeFileSync(join(dir, THREADS_FILE), JSON.stringify(await readThreads('o/r', pull.number)));
     writeFileSync(join(dir, JOB_FILE), JSON.stringify(job));
     writeFileSync(join(dir, RESULT_FILE), JSON.stringify(matched));
     writeFileSync(
@@ -217,6 +227,7 @@ test('publish carries repair hypotheses into the same-round review and upserts o
     candidate: 'repaired',
     ci: 'green',
     review: 'pass',
+    replan: null,
     open: [],
     hypotheses: ['stub hypothesis'],
     step: 'ready',
@@ -507,4 +518,74 @@ test('a review stage failure names its round and links the existing open thread 
   assert.ok(String(stop.body.body).includes(h.comments[0]!.html_url));
   assert.ok(!writes.some((w) => w.path.endsWith('/reviews')));
   assert.equal(h.threads[0]!.isResolved, false);
+});
+
+test('the cap publication links open threads and includes the latest planner suggestion', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const state = readLoopState(h.comments[0]!.body);
+  state.entries[0]!.replan = 'Use the supported API.';
+  h.comments[0]!.body = loopComment(state);
+  const capped = await h.stage(changes, 10, { rounds: 10 });
+  assert.match(capped.output, /next=stop/);
+  const body = String(
+    h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!.body.body,
+  );
+  assert.match(body, /hasn't converged after 10 rounds/);
+  assert.match(body, /Agents' suggestion: Use the supported API/);
+  assert.match(body, /round 10/);
+  assert.match(body, /\[F1\]\(https:\/\/github.com\/o\/r\/pull\/2#discussion-1\)/);
+});
+
+test('publication threads questions alongside findings and stops a question-only review', async () => {
+  const h = harness();
+  const review = { ...changes, questions: ['Which API?'] };
+  const first = await h.stage(review, 0);
+  assert.match(first.output, /next=repair/);
+  assert.equal(h.threads.length, 2);
+  assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding Q1 -->/);
+  const gatedReview = JSON.parse(readFileSync(join(first.dir, REVIEW_FILE), 'utf8'));
+  assert.deepEqual(gatedReview.questions, []);
+  assert.deepEqual(
+    gatedReview.findings.map((f: { id: string }) => f.id),
+    ['F1', 'Q1'],
+  );
+  const second = await h.stage({ ...review, findings: [] }, 1);
+  assert.match(second.output, /next=stop/);
+});
+
+test('new questions get new threads past every open, resolved and current Q ID', async () => {
+  const h = harness();
+  await h.stage({ ...changes, questions: ['Original API question?'] }, 0);
+  h.threads.push({
+    ...newThread('<!-- devkit:finding Q20 -->', 'STUB.md', 1, 20),
+    isResolved: true,
+  });
+  const second = await h.stage(
+    {
+      ...changes,
+      findings: [...changes.findings!, { ...changes.findings![0]!, id: 'Q12', blocking: false }],
+      questions: ['New API question?', 'Another question?'],
+    },
+    1,
+  );
+  const review = Result.parse(JSON.parse(readFileSync(join(second.dir, REVIEW_FILE), 'utf8')));
+  assert.deepEqual(
+    review.findings?.slice(-2).map((f) => f.id),
+    ['Q21', 'Q22'],
+  );
+  assert.deepEqual(review.questions, []);
+  assert.equal(h.threads[1]!.isResolved, true, 'the old question is resolved');
+  for (const [id, text] of [
+    ['Q21', 'New API question?'],
+    ['Q22', 'Another question?'],
+  ]) {
+    const t = h.threads.find((t) =>
+      t.comments.nodes[0]!.body.startsWith(`<!-- devkit:finding ${id} -->`),
+    );
+    assert.ok(t, id);
+    assert.equal(t.isResolved, false, 'the new question stays open for the planner');
+    assert.equal(t.comments.nodes.length, 1, 'a fresh thread, not a reply on the old one');
+    assert.ok(t.comments.nodes[0]!.body.includes(text!));
+  }
 });
