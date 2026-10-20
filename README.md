@@ -87,6 +87,23 @@ A candidate's manifest cannot change configs or credential requests. A manifest
 change takes effect after it merges. Local and eval runs without `tools.json`
 in the job directory use the defaults.
 
+Add `.devkit/roles.json` to set a role's `executor`, `model` or `effort`:
+
+```json
+{ "build": { "executor": "claude", "model": "claude-opus-5-5", "effort": "high" } }
+```
+
+Each role entry is optional, as are its fields. `executor` is `claude`, `codex`
+or `stub`; `model` is a nonempty string or `null` for the account default;
+`effort` is `low`, `medium` or `high`. Unknown roles and fields stop the run.
+Settings apply over `ROLES` in `bin/agent/roles.ts`, then `--executor` wins.
+Changing executor drops the previous model unless the file sets one; a later
+flag that changes executor drops even that model. Render reads the file from
+the same trusted commit as `tools.json` and writes `roles.json` in the job
+directory. Run reads only that snapshot through `--in`, never the candidate
+checkout. Changes take effect after merge; without a snapshot, role defaults
+and the flag apply.
+
 Instruction and skill overrides under `.devkit/` come from the same trusted
 commit. `agent render` copies the role's instruction files and each skill's
 `SKILL.md` into `overrides/` in the job directory. `agent run` reads overrides

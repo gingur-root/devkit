@@ -1,4 +1,6 @@
-import type { Effort, Executor } from './constants.ts';
+import { z } from 'zod';
+
+import { EFFORTS, EXECUTORS, type Effort, type Executor } from './constants.ts';
 
 export interface Role {
   executor: Executor;
@@ -147,3 +149,13 @@ export const ROLES = {
 } as const satisfies Record<string, Role>;
 
 export type RoleName = keyof typeof ROLES;
+
+export const RoleOverrides = z.partialRecord(
+  z.enum(Object.keys(ROLES) as RoleName[]),
+  z.strictObject({
+    executor: z.enum(EXECUTORS).optional(),
+    model: z.string().min(1).nullable().optional(),
+    effort: z.enum(EFFORTS).optional(),
+  }),
+);
+export type RoleOverrides = z.infer<typeof RoleOverrides>;

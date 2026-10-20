@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { PROVIDERS, type RunOutput } from './providers/index.ts';
 import { SUMMARY_WORDS, type Result, RESULT_JSON_SCHEMA } from './result.ts';
 import type { Executor } from './constants.ts';
-import { JOB_FILE, Job, OVERRIDES_DIR, RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
-import { ROLES, type Role, type RoleName } from './roles.ts';
+import { JOB_FILE, Job, OVERRIDES_DIR, ROLES_FILE, RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
+import { ROLES, RoleOverrides, type Role, type RoleName } from './roles.ts';
 import { resolveExecutable } from './providers/shared.ts';
 import { loadTools, renderTools } from './tools.ts';
 
@@ -22,9 +22,23 @@ export interface RunOptions {
 
 const DEVKIT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/** The role, with its executor swapped when asked. A model belongs to one vendor, so a swap drops it. */
-export function resolveRole({ role: name, executor }: RunOptions): Role {
-  const role: Role = ROLES[name];
+/** Trusted repo settings apply before the flag. A model belongs to one vendor, so a swap drops it. */
+export function resolveRole({ role: name, executor, in: inDir }: RunOptions): Role {
+  let role: Role = ROLES[name];
+  const file = inDir && join(inDir, ROLES_FILE);
+  const override =
+    file && existsSync(file)
+      ? RoleOverrides.parse(JSON.parse(readFileSync(file, 'utf8')))[name]
+      : undefined;
+  if (override) {
+    if (override.executor && override.executor !== role.executor)
+      role = { ...role, executor: override.executor, model: undefined };
+    role = {
+      ...role,
+      model: override.model === undefined ? role.model : (override.model ?? undefined),
+      effort: override.effort ?? role.effort,
+    };
+  }
   if (!executor || executor === role.executor) return role;
   return { ...role, executor, model: undefined };
 }
