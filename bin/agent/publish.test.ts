@@ -1678,6 +1678,25 @@ test('research requires its report and an HTTPS source; the validate CLI uses th
         assert.match(command.stderr, /HTTPS evidence/);
       }
     }
+    for (const outcome of [
+      'ready',
+      'needs-input',
+      'pass',
+      'changes-requested',
+      'implemented',
+      'verified',
+      'failed',
+      null,
+    ]) {
+      writeFileSync(join(dir, RESULT_FILE), JSON.stringify({ ...result, outcome }));
+      assert.deepEqual(verdict(job, 'rev', dir), {
+        stage: 'validate',
+        reason: 'complete research must be answered or inconclusive',
+      });
+      const command = cli();
+      assert.equal(command.status, 1);
+      assert.match(command.stderr, /answered or inconclusive/);
+    }
     writeFileSync(
       join(dir, RESULT_FILE),
       JSON.stringify({ ...result, outcome: 'inconclusive', evidence: [] }),

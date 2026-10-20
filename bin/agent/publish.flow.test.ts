@@ -61,6 +61,7 @@ function harness(
     mergeError?: string;
     packageError?: number;
     research?: boolean;
+    buildPull?: boolean;
     researchError?: string;
   } = {},
 ) {
@@ -91,11 +92,15 @@ function harness(
     else reads.push(url);
     let result: unknown;
     if (init.method === 'GET' && path.endsWith('/issues/1')) result = issue;
-    else if (init.method === 'GET' && path.endsWith('/pulls'))
-      result = !options.research || researchPull ? [pull] : [];
-    else if (path.endsWith('/git/ref/heads/agent/issue-1')) {
-      if (!researchBranch) return new Response('Not Found', { status: 404 });
-      result = { ref: 'refs/heads/agent/issue-1' };
+    else if (init.method === 'GET' && path.endsWith('/pulls')) {
+      const head = new URL(url).searchParams.get('head');
+      if (options.research && head === 'o:agent/issue-1')
+        result = options.buildPull ? [{ ...pull, number: 3 }] : [];
+      else result = !options.research || researchPull ? [pull] : [];
+    } else if (path.includes('/git/ref/heads/agent/')) {
+      const buildBranch = options.buildPull && path.endsWith('/agent/issue-1');
+      if (!buildBranch && !researchBranch) return new Response('Not Found', { status: 404 });
+      result = { ref: `refs/heads/${path.split('/git/ref/heads/')[1]}` };
     } else if (path.endsWith('/git/refs')) {
       researchBranch = true;
       result = {};
@@ -115,6 +120,8 @@ function harness(
     ) {
       researchPull = true;
       result = pull;
+    } else if (init.method === 'PATCH' && options.buildPull && path.endsWith('/pulls/3')) {
+      result = { ...pull, number: 3 };
     } else if (init.method === 'GET' && path.endsWith('/files')) {
       const page = Number(new URL(url).searchParams.get('page'));
       result = (options.files ?? [{ filename: 'STUB.md' }]).slice((page - 1) * 100, page * 100);
@@ -994,11 +1001,11 @@ test('research docs create a draft PR as the App and update the same branch and 
   const branches = h.writes.filter((w) => w.path.endsWith('/git/refs'));
   assert.deepEqual(
     branches.map((w) => w.body),
-    [{ ref: 'refs/heads/agent/issue-1', sha: 'candidate' }],
+    [{ ref: 'refs/heads/agent/research-1', sha: 'candidate' }],
   );
   const files = h.writes.filter((w) => w.path.endsWith('/contents/docs/research/1.md'));
   assert.equal(files.length, 2);
-  assert.equal(files[0]!.body.branch, 'agent/issue-1');
+  assert.equal(files[0]!.body.branch, 'agent/research-1');
   assert.equal(files[0]!.body.sha, undefined);
   assert.equal(files[1]!.body.sha, 'blob');
   assert.ok(String(files[0]!.body.message).endsWith(OPERATOR_COAUTHOR));
@@ -1006,12 +1013,29 @@ test('research docs create a draft PR as the App and update the same branch and 
   const prs = h.writes.filter((w) => w.path.endsWith('/pulls'));
   assert.equal(prs.length, 1);
   assert.equal(prs[0]!.body.draft, true);
-  assert.equal(prs[0]!.body.head, 'agent/issue-1');
+  assert.equal(prs[0]!.body.head, 'agent/research-1');
   assert.equal(prs[0]!.body.base, 'main');
   assert.match(String(prs[0]!.body.body), /Closes #1/);
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Ready');
   assert.equal(h.writes.filter((w) => w.path.endsWith('/labels/agent%3Aresearch')).length, 2);
   assert.equal(vi.mocked(git).mock.calls.length, 0);
+});
+
+test('research docs leave an existing build PR untouched, including on retry', async () => {
+  const h = harness({ research: true, buildPull: true });
+  await h.stage({ ...research, docs: true }, 0);
+  await h.stage({ ...research, docs: true }, 0);
+  const files = h.writes.filter((w) => w.path.endsWith('/contents/docs/research/1.md'));
+  assert.deepEqual(
+    files.map((w) => w.body.branch),
+    ['agent/research-1', 'agent/research-1'],
+  );
+  const prs = h.writes.filter((w) => w.path.endsWith('/pulls'));
+  assert.equal(prs.length, 1);
+  assert.equal(prs[0]!.body.head, 'agent/research-1');
+  assert.equal(h.writes.filter((w) => w.path.endsWith('/pulls/2')).length, 1);
+  assert.equal(h.writes.filter((w) => w.path.endsWith('/pulls/3')).length, 0);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Ready');
 });
 
 test('inconclusive research publishes the missing evidence, questions and next step', async () => {
@@ -1048,6 +1072,18 @@ test('research publication failures name the real error and remove the label', a
   await h.stage({ ...research, docs: true }, 0);
   assert.match(h.researchComments[0]!.body!, /stopped at `publish`/);
   assert.match(h.researchComments[0]!.body!, /403 App permission denied/);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.ok(h.writes.some((w) => w.path.endsWith('/labels/agent%3Aresearch')));
+});
+
+test('invalid research outcomes stop before publishing docs and still remove the label', async () => {
+  const h = harness({ research: true });
+  await h.stage({ ...research, outcome: 'ready', docs: true }, 0);
+  assert.match(h.researchComments[0]!.body!, /stopped at `validate`.*answered or inconclusive/);
+  assert.equal(
+    h.writes.some((w) => w.path.includes('/contents/') || w.path.endsWith('/pulls')),
+    false,
+  );
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
   assert.ok(h.writes.some((w) => w.path.endsWith('/labels/agent%3Aresearch')));
 });

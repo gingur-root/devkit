@@ -321,6 +321,8 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
     return { stage: 'validate', reason: `the agent wrote no ${PLAN_FILE}` };
   }
   if (result.status === 'complete' && job.role === 'research') {
+    if (result.outcome !== 'answered' && result.outcome !== 'inconclusive')
+      return { stage: 'validate', reason: 'complete research must be answered or inconclusive' };
     if (!existsSync(join(out, RESEARCH_FILE)))
       return { stage: 'validate', reason: `the agent wrote no ${RESEARCH_FILE}` };
     if (
@@ -1258,7 +1260,7 @@ export function readyToBuild(result: Result): boolean {
 }
 
 async function researchPull(job: Job, result: Result, text: string): Promise<Pull> {
-  const branch = branchOf(job);
+  const branch = `agent/research-${job.issue.number}`;
   const repo = `/repos/${job.repo}`;
   try {
     await rest('GET', `${repo}/git/ref/heads/${branch}`);
