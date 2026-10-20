@@ -537,6 +537,7 @@ export function planComment(
   out: string,
   handoff: Handoff | null,
   story: Filed[],
+  criticismPassed: boolean,
   checks?: Record<string, string>,
   assessment?: Assessment,
 ): string {
@@ -545,19 +546,14 @@ export function planComment(
   const bodyNote = job.issue.bodySeen
     ? ''
     : ' (written without the issue body, which someone else wrote)';
-  const criticismBlocked =
-    result.outcome === 'ready' &&
-    !story.length &&
-    result.triage === null &&
-    result.critique === true &&
-    assessment?.criticism.outcome !== 'pass';
-  const head = criticismBlocked
-    ? `**Plan: ready, but criticism did not pass${bodyNote}. Run /revise, then /approve.**`
-    : story.length
-      ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
-      : handoff
-        ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
-        : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
+  const head =
+    result.outcome === 'ready' && !story.length && result.triage === null && !criticismPassed
+      ? `**Plan: ready, but criticism did not pass${bodyNote}. Run /revise, then /approve.**`
+      : story.length
+        ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
+        : handoff
+          ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
+          : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: planRevision(plan),
     criticism: assessment?.criticism ?? null,
@@ -993,6 +989,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
       plan === null ? options.in : options.out,
       null,
       [],
+      false,
       checks,
     );
     await upsertStageComment(
@@ -1397,6 +1394,7 @@ async function publishBuildOrPlan(
   handoff: Handoff | null,
   subtasks: Subtask[],
   options: PublishOptions,
+  criticismPassed: boolean,
   assessment: Assessment | undefined,
 ): Promise<Outcome> {
   let pull: Pull | null = null;
@@ -1460,7 +1458,7 @@ async function publishBuildOrPlan(
   if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
   const body =
     job.role === 'plan'
-      ? planComment(job, v.result, out, handoff, story, undefined, assessment)
+      ? planComment(job, v.result, out, handoff, story, criticismPassed, undefined, assessment)
       : buildComment(job, v.result, pull);
   return { body, status, stopped: false };
 }
@@ -1940,8 +1938,9 @@ export async function publish(options: PublishOptions): Promise<void> {
   const assessment =
     ready && options.critique ? planCriticism(job, options.out, options.critique) : undefined;
   const criticismPassed =
-    ready &&
+    job.role === 'plan' &&
     'result' in v &&
+    v.result.status === 'complete' &&
     criticismPasses(
       { critique: v.result.critique, criticism: assessment?.criticism ?? null },
       planRevision(readFileSync(join(options.out, PLAN_FILE), 'utf8')),
@@ -1970,6 +1969,7 @@ export async function publish(options: PublishOptions): Promise<void> {
             handoff,
             subtasks,
             options,
+            criticismPassed,
             assessment,
           );
   const { status, stopped } = outcome;

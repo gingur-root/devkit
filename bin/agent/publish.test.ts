@@ -132,6 +132,7 @@ test('a ready plan that edits workflow files is approved like any other, and kee
           out,
           null,
           [],
+          true,
         );
         const suffix = bodySeen
           ? ''
@@ -167,6 +168,7 @@ test('plan comments record body visibility and name a withheld body in every bol
           out,
           variant.handoff,
           variant.story.map((s) => ({ ...s, blockedBy: [...s.blockedBy] })),
+          true,
         );
         const head = body.split('\n\n')[1]!;
         if (bodySeen) assert.doesNotMatch(head, /without the issue body/);
@@ -1076,6 +1078,7 @@ test('plan contracts record dependency issue numbers and accept old plans withou
         out,
         null,
         story.map((s) => ({ ...s, blockedBy: [...s.blockedBy] })),
+        true,
       );
       const raw = JSON.parse(body.split(CONTRACT_PREFIX)[1]!.split(' -->')[0]!);
       assert.deepEqual(raw.blockedBy, expected);

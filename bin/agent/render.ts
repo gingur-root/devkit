@@ -212,12 +212,19 @@ export function openIssues(issues: Issue[]): string {
     .join('\n');
 }
 
-/** Text between two markers in a comment, or null. */
-function between(body: string, start: string, end: string): string | null {
-  // Controller markers follow all agent-written text in the published comment.
-  const from = body.lastIndexOf(start);
-  const to = body.indexOf(end, from + start.length);
-  return from < 0 || to < 0 ? null : body.slice(from + start.length, to);
+function matchingPlan(body: string, expectedRevision: string): string | null {
+  const start = `${PLAN_START}\n`;
+  const end = body.lastIndexOf(`\n${PLAN_END}`);
+  // A plan may quote either marker; only its published revision identifies the block.
+  for (
+    let from = body.indexOf(start);
+    from >= 0 && from < end;
+    from = body.indexOf(start, from + start.length)
+  ) {
+    const plan = body.slice(from + start.length, end);
+    if (planRevision(plan) === expectedRevision) return plan;
+  }
+  return null;
 }
 
 /**
@@ -237,12 +244,16 @@ export function approvedPlan(
   );
   if (!comment) throw new Error('No plan comment from the pipeline. Add `agent:plan` first.');
   const body = comment.body.replace(/\r\n/g, '\n');
-  const plan = between(body, `${PLAN_START}\n`, `\n${PLAN_END}`);
-  const json = between(body, CONTRACT_PREFIX, ' -->');
-  if (plan === null || json === null) throw new Error('The plan comment has no plan or contract.');
-  const contract = PlanContract.parse(JSON.parse(json));
+  const contractStart = body.lastIndexOf(CONTRACT_PREFIX);
+  const contractEnd = body.indexOf(' -->', contractStart + CONTRACT_PREFIX.length);
+  if (contractStart < 0 || contractEnd < 0)
+    throw new Error('The plan comment has no plan or contract.');
+  const contract = PlanContract.parse(
+    JSON.parse(body.slice(contractStart + CONTRACT_PREFIX.length, contractEnd)),
+  );
   if (contract.outcome !== 'ready') throw new Error('The plan is not ready. Answer it first.');
-  if (planRevision(plan) !== contract.planRevision)
+  const plan = matchingPlan(body.slice(0, contractStart), contract.planRevision);
+  if (plan === null)
     throw new Error('The plan text was edited after it was published. Run `agent:plan` again.');
   if (contract.issueRevision !== issueRevision)
     throw new Error('The issue changed after the plan. Run `agent:plan` again.');
