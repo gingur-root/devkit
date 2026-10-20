@@ -7,4 +7,6 @@ targetRules = ["generic-api-key"]
 regexes = [
   '''^2cf223b6-0ed8-415b-a651-b4e2000da674$''',
   '''^826a31e9-abed-4507-9a9f-b4df0181b5c2$''',
+  # Placeholder in secrets.fetch.test.yml; it never names a real secret.
+  '''^00000000-0000-4000-8000-000000000000$''',
 ]
