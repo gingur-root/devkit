@@ -1,9 +1,9 @@
 // The controller's write side for one stage: check the result against the live
 // contract, upsert the stage's marker comment, remove the trigger label and
 // move the card on. A build also pushes its candidate and opens a draft PR; a
-// review posts on that PR and marks it ready when it passes, or hands its
-// findings to a repair, which pushes a fix to the same PR. The pipeline never
-// merges, except memory PRs on pipeline. A retro files its findings as one
+// review posts on that PR and merges it when both gates pass, or hands its
+// findings to a repair, which pushes a fix to the same PR. Denied PRs need the
+// operator. A retro files its findings as one
 // `retro` issue for the planner, and that plan's approval files the issues it
 // kept instead of building. A ready
 // plan with subtasks files them as sub-issues, which makes the card a story,
@@ -43,7 +43,7 @@ import {
   type Status,
 } from './constants.ts';
 import {
-  autoMerge,
+  merge,
   disableAutoMerge,
   graphql,
   removeLabel,
@@ -84,6 +84,7 @@ import {
   type Pull,
   type Thread,
 } from './threads.ts';
+import { denyRules } from './merge.ts';
 import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
 
@@ -1115,7 +1116,7 @@ export function repairable(result: Result): boolean {
 }
 
 /**
- * Posts the review on the PR. A pass marks it ready for the operator to merge;
+ * Posts the review on the PR. A pass merges only when both gates allow it;
  * a repairable review with rounds left sets the `repair` output for the next round.
  */
 async function postReview(
@@ -1156,7 +1157,39 @@ async function postReview(
       });
   const ok = step === 'ready';
   const repair = step === 'repair';
-  if (ok)
+  const rules: string[] = [];
+  if (ok) {
+    const files = await restAll<{ filename: string; previous_filename?: string }>(
+      `/repos/${job.repo}/pulls/${pull.number}/files`,
+    );
+    const packageAt = async (sha: string): Promise<string | null> => {
+      const file = await rest<{ content: string }>(
+        'GET',
+        `/repos/${job.repo}/contents/package.json?ref=${encodeURIComponent(sha)}`,
+      ).catch((error: Error) => {
+        if (!error.message.includes(' 404 ')) throw error;
+        return null;
+      });
+      return file === null ? null : Buffer.from(file.content, 'base64').toString('utf8');
+    };
+    const [pkgBase, pkgHead] = await Promise.all([
+      packageAt(pull.base.sha),
+      packageAt(pull.head.sha),
+    ]);
+    rules.push(
+      ...denyRules(
+        job.repo,
+        files.flatMap((file) =>
+          file.previous_filename ? [file.previous_filename, file.filename] : [file.filename],
+        ),
+        pkgBase,
+        pkgHead,
+      ),
+    );
+    if (result.merge?.verdict !== 'auto') {
+      const rule = result.merge?.rule || 'review';
+      if (!rules.includes(rule)) rules.push(rule);
+    }
     await graphql(
       `
         mutation ($id: ID!) {
@@ -1167,9 +1200,24 @@ async function postReview(
       `,
       { id: pull.node_id },
     );
+  }
   const link = `[#${pull.number}](${pull.html_url})`;
+  let merged = false;
+  let mergeError: string | null = null;
+  if (ok && !rules.length) {
+    try {
+      await merge(job.repo, pull, pull.head.sha, 'now');
+      merged = true;
+    } catch (error) {
+      mergeError = error instanceof Error ? error.message : String(error);
+    }
+  }
   const head = ok
-    ? `**Review: passed. ${link} is ready to merge**`
+    ? merged
+      ? `**Review: passed. ${link} merged automatically**`
+      : mergeError !== null
+        ? `**Review: passed. Merging ${link} failed; needs you**\n\n${mergeError}`
+        : `**Review: passed. ${link} is ready to merge; needs you: ${rules.map((rule) => `\`${rule}\``).join(', ')}**`
     : repair
       ? `**Review: ${link} needs changes. Codex is fixing them (round ${round + 1} of ${rounds})**`
       : `**Review: ${link} needs your call${round > 0 ? ` after ${round} repair round${round > 1 ? 's' : ''}` : ''}**`;
@@ -1187,7 +1235,7 @@ async function postReview(
     ]
       .filter(Boolean)
       .join('\n\n'),
-    status: ok ? 'Ready' : repair ? 'Building' : 'Needs you',
+    status: merged ? 'Done' : repair ? 'Building' : 'Needs you',
     stopped: false,
   };
 }
@@ -1620,7 +1668,8 @@ export async function publishMemory(
     '-z',
   ]).toString('utf8');
   if (!staged) return;
-  for (const path of staged.split('\0').filter(Boolean)) {
+  const stagedPaths = staged.split('\0').filter(Boolean);
+  for (const path of stagedPaths) {
     if (!path.startsWith('memory/')) throw new Error(`${path}: staged path outside memory/.`);
   }
   const failures = await checkMemory(dir, {
@@ -1631,6 +1680,7 @@ export async function publishMemory(
         : [...new Set([...changed, ...changes.flatMap((change) => change.evidence)])],
     read: (at) => githubReader(at, process.env.CHECK_TOKEN),
   });
+  const rules = denyRules('gingur-root/pipeline', stagedPaths, null, null);
   const output = failures.length
     ? failures.map((f) => `${f.file}: ${f.reason}`).join('\n')
     : 'Memory check passed.';
@@ -1644,8 +1694,12 @@ export async function publishMemory(
     `From [${job.repo}#${job.issue.number}](https://github.com/${job.repo}/pull/${job.issue.number}).`,
     actions.map((action) => `- ${action}`).join('\n'),
     failures.length ? '**Memory check failed**' : '**Memory check passed**',
+    rules.length &&
+      `**Auto-merge denied; needs you: ${rules.map((rule) => `\`${rule}\``).join(', ')}**`,
     `\`\`\`text\n${output}\n\`\`\``,
-  ].join('\n\n');
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   const pipeline = 'gingur-root/pipeline';
   const path = `/repos/${pipeline}/pulls`;
   const [open] = await rest<
@@ -1658,7 +1712,8 @@ export async function publishMemory(
   >('GET', `${path}?state=open&head=${encodeURIComponent(`gingur-root:${branch}`)}`);
   if (open) {
     await rest('PATCH', `${path}/${open.number}`, { title, body });
-    if (failures.length && open.auto_merge) await disableAutoMerge(pipeline, open);
+    if ((failures.length || rules.length) && open.auto_merge)
+      await disableAutoMerge(pipeline, open);
     if (open.draft !== Boolean(failures.length))
       await graphql(
         failures.length
@@ -1666,19 +1721,19 @@ export async function publishMemory(
           : 'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id}}}',
         { id: open.node_id },
       );
-    if (!failures.length) {
+    if (!failures.length && !rules.length) {
       if (open.auto_merge) await disableAutoMerge(pipeline, open);
-      await autoMerge(pipeline, open, head);
+      await merge(pipeline, open, head, 'auto');
     }
   } else {
-    const created = await rest<{ node_id: string }>('POST', path, {
+    const created = await rest<{ node_id: string; number: number }>('POST', path, {
       title,
       body,
       head: branch,
       base: 'main',
       draft: Boolean(failures.length),
     });
-    if (!failures.length) await autoMerge(pipeline, created, head);
+    if (!failures.length && !rules.length) await merge(pipeline, created, head, 'auto');
   }
 }
 

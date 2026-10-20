@@ -10,5 +10,6 @@
   },
   "status": "complete",
   "outcome": "pass",
-  "summary": "Stub review with no outputs field, so it fails the schema."
+  "summary": "Stub review with no outputs field, so it fails the schema.",
+  "merge": null
 }

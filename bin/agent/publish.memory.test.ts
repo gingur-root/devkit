@@ -674,3 +674,32 @@ test('a staged rename into memory cannot hide an outside deletion', async () => 
     f.cleanup();
   }
 });
+
+for (const open of [undefined, { draft: false, auto_merge: {} }]) {
+  test(`a passing memory entry on the deny list stays open, existing=${Boolean(open)}`, async () => {
+    const f = fixture({ open });
+    try {
+      f.put('_org/secret.md', entry().replace('name: a', 'name: secret'));
+      await publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout);
+      const writes = f.calls.filter((call) => call.method !== 'GET');
+      const pullWrite = writes.find((call) =>
+        call.path.startsWith('/repos/gingur-root/pipeline/pulls'),
+      )!;
+      assert.match(String(pullWrite.body.body), /secrets/);
+      assert.equal(pullWrite.body.draft, open ? undefined : false);
+      const mutations = writes.filter((call) => call.path === '/graphql');
+      assert.equal(
+        mutations.some((call) =>
+          /\b(enablePullRequestAutoMerge|mergePullRequest)\b/.test(String(call.body.query)),
+        ),
+        false,
+      );
+      assert.equal(
+        mutations.some((call) => String(call.body.query).includes('disablePullRequestAutoMerge')),
+        Boolean(open),
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+}

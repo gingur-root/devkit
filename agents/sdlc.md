@@ -444,6 +444,13 @@ correction in each finding's `fix`.
    expected result, so Troy can run them. Don't return `inconclusive` for an
    `operator` criterion.
    Return findings to the controller; implementation applies any fixes.
+
+   On a `pass`, set `merge` to `{ verdict: 'auto', rule: null }` unless the
+   change needs Troy's decision. Return `troy` with a short rule (`auth`,
+   `money`, `data`, `email`, or `product`) for auth or money logic outside
+   matched paths, production data writes, sending email, or a plan assumption
+   that is really a product decision. On any other outcome, `merge` is null.
+   The reviewer can add a stop, never remove a code rule.
 ```
 
 Default to one reviewer. For a large or consequential diff, the controller may enable one additional review helper. The main reviewer covers correctness, security, and performance; the helper covers Spec and Standards and reports those axes separately. Give the helper the source contract and commits, without the author's or main reviewer's conclusions. Pin its model and effort explicitly, initially Opus 5.5 at High. Each reviewer performs its assignment directly, and the main reviewer checks the helper's reported locations and evidence before returning the result.

@@ -159,6 +159,11 @@ export const Result = z
     priority: z.enum(PRIORITIES).nullable(),
     // A retro issue's plan: what its approval files. Null on every other result.
     triage: Triage.nullable(),
+    // A passing review's merge verdict (devkit#267). Null on every other result.
+    merge: z
+      .object({ verdict: z.enum(['auto', 'troy']), rule: z.string().nullable() })
+      .strict()
+      .nullable(),
     failure: z
       .object({
         class: z.enum(['rate_limit', 'overloaded', 'server_error', 'timeout', 'unknown']),
