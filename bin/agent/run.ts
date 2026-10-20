@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PROVIDERS, type RunOutput } from './providers/index.ts';
 import { SUMMARY_WORDS, type Result, RESULT_JSON_SCHEMA } from './result.ts';
 import type { Executor } from './constants.ts';
-import { JOB_FILE, Job, RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
+import { JOB_FILE, Job, OVERRIDES_DIR, RESULT_FILE, TRANSCRIPT_FILE } from './job.ts';
 import { ROLES, type Role, type RoleName } from './roles.ts';
 import { resolveExecutable } from './providers/shared.ts';
 import { loadTools, renderTools } from './tools.ts';
@@ -29,14 +29,17 @@ function resolveRole({ role: name, executor }: RunOptions): Role {
   return { ...role, executor, model: undefined };
 }
 
-/** The role's instruction files, each replaced by the repo's `.devkit/<path>` when it has one, then its skills. */
-export function instructions(name: RoleName, role: Role, cwd: string): string {
+/** The role's instruction files and skills, with overrides from the job's trusted snapshot. */
+export function instructions(name: RoleName, role: Role, overrides: string | undefined): string {
   return [
     ...role.instructions.map((path) => {
-      const override = join(cwd, '.devkit', path);
-      return readFileSync(existsSync(override) ? override : join(DEVKIT_ROOT, path), 'utf8');
+      const override = overrides && join(overrides, path);
+      return readFileSync(
+        override && existsSync(override) ? override : join(DEVKIT_ROOT, path),
+        'utf8',
+      );
     }),
-    ...skills(name, cwd),
+    ...skills(name, overrides),
   ]
     .map((text) => text.trim())
     .join('\n\n');
@@ -52,13 +55,13 @@ export function skillRoles(text: string): string[] {
 }
 
 /**
- * Every `skills/<name>/SKILL.md` whose `roles` names the role. The repo's
- * `.devkit/skills/<name>/` replaces devkit's skill of that name or adds one.
+ * Every `skills/<name>/SKILL.md` whose `roles` names the role. The job's trusted
+ * `overrides/skills/<name>/` replaces devkit's skill of that name or adds one.
  */
-function skills(name: RoleName, cwd: string): string[] {
+function skills(name: RoleName, overrides: string | undefined): string[] {
   const files = new Map<string, string>();
-  for (const root of [join(DEVKIT_ROOT, 'skills'), join(cwd, '.devkit', 'skills')]) {
-    if (!existsSync(root)) continue;
+  for (const root of [join(DEVKIT_ROOT, 'skills'), overrides && join(overrides, 'skills')]) {
+    if (!root || !existsSync(root)) continue;
     for (const skill of readdirSync(root).sort()) {
       const file = join(root, skill, 'SKILL.md');
       if (existsSync(file)) files.set(skill, file);
@@ -139,7 +142,7 @@ export async function run(options: RunOptions): Promise<void> {
     output = await PROVIDERS[role.executor]({
       role,
       tools: renderTools(tools, options.role),
-      instructions: instructions(options.role, role, cwd),
+      instructions: instructions(options.role, role, dirs.in && join(dirs.in, OVERRIDES_DIR)),
       prompt: stagePrompt(options.prompt ?? role.objective, dirs),
       cwd,
       ...dirs,

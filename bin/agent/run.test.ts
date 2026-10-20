@@ -1,45 +1,88 @@
-// A role's skills come from devkit and the target repo's `.devkit/skills/`;
+// A role's skills come from devkit and the job's trusted override snapshot;
 // a wrong match silently changes what an agent is told.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'vite-plus/test';
+import { test, vi } from 'vite-plus/test';
 
 import type { Job } from './job.ts';
+import { PROVIDERS } from './providers/index.ts';
 import { Result } from './result.ts';
 import { ROLES } from './roles.ts';
-import { failedResult, instructions, settle, skillRoles } from './run.ts';
+import { failedResult, instructions, run, settle, skillRoles } from './run.ts';
 
-function repoSkill(cwd: string, name: string, roles: string, body: string): void {
-  mkdirSync(join(cwd, '.devkit', 'skills', name), { recursive: true });
+function repoSkill(overrides: string, name: string, roles: string, body: string): void {
+  mkdirSync(join(overrides, 'skills', name), { recursive: true });
   writeFileSync(
-    join(cwd, '.devkit', 'skills', name, 'SKILL.md'),
+    join(overrides, 'skills', name, 'SKILL.md'),
     `---\nname: ${name}\nroles: ${roles}\n---\n\n${body}\n`,
   );
 }
 
 test('a role gets the skills that name it; the repo adds and replaces them', () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'devkit-skills-'));
-  assert.match(instructions('plan', ROLES.plan, cwd), /# Plain English/);
-  assert.doesNotMatch(instructions('hello', ROLES.hello, cwd), /# Plain English/);
-  // Only roles that write docs or instructions get Simple English.
-  assert.match(instructions('build', ROLES.build, cwd), /# Simple English/);
-  assert.doesNotMatch(instructions('review', ROLES.review, cwd), /# Simple English/);
-  for (const role of ['plan', 'build', 'repair', 'review', 'retro'] as const)
-    assert.match(instructions(role, ROLES[role], cwd), /# Plain English/);
-  for (const role of ['build', 'repair'] as const)
-    assert.match(instructions(role, ROLES[role], cwd), /# Simple English/);
+  const overrides = mkdtempSync(join(tmpdir(), 'devkit-skills-'));
+  try {
+    assert.match(instructions('plan', ROLES.plan, overrides), /# Plain English/);
+    assert.doesNotMatch(instructions('hello', ROLES.hello, overrides), /# Plain English/);
+    // Only roles that write docs or instructions get Simple English.
+    assert.match(instructions('build', ROLES.build, overrides), /# Simple English/);
+    assert.doesNotMatch(instructions('review', ROLES.review, overrides), /# Simple English/);
+    for (const role of ['plan', 'build', 'repair', 'review', 'retro'] as const)
+      assert.match(instructions(role, ROLES[role], overrides), /# Plain English/);
+    for (const role of ['build', 'repair'] as const)
+      assert.match(instructions(role, ROLES[role], overrides), /# Simple English/);
 
-  repoSkill(cwd, 'infra', 'build', 'INFRA SKILL');
-  assert.match(instructions('build', ROLES.build, cwd), /INFRA SKILL/);
-  assert.doesNotMatch(instructions('plan', ROLES.plan, cwd), /INFRA SKILL/);
+    repoSkill(overrides, 'infra', 'build', 'INFRA SKILL');
+    assert.match(instructions('build', ROLES.build, overrides), /INFRA SKILL/);
+    assert.doesNotMatch(instructions('plan', ROLES.plan, overrides), /INFRA SKILL/);
 
-  repoSkill(cwd, 'plain-english', 'plan', 'REPO PLAIN');
-  assert.match(instructions('plan', ROLES.plan, cwd), /REPO PLAIN/);
-  assert.doesNotMatch(instructions('plan', ROLES.plan, cwd), /# Plain English/);
-  assert.doesNotMatch(instructions('build', ROLES.build, cwd), /Plain English|REPO PLAIN/);
+    repoSkill(overrides, 'plain-english', 'plan', 'REPO PLAIN');
+    assert.match(instructions('plan', ROLES.plan, overrides), /REPO PLAIN/);
+    assert.doesNotMatch(instructions('plan', ROLES.plan, overrides), /# Plain English/);
+    assert.doesNotMatch(instructions('build', ROLES.build, overrides), /Plain English|REPO PLAIN/);
+  } finally {
+    rmSync(overrides, { recursive: true, force: true });
+  }
+});
+
+test('run uses trusted job overrides and ignores candidate instructions and skills in cwd', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'devkit-run-overrides-'));
+  const cwd = join(dir, 'candidate');
+  const input = join(dir, 'in');
+  const out = join(dir, 'out');
+  const overrides = join(input, 'overrides');
+  mkdirSync(join(cwd, '.devkit/agents'), { recursive: true });
+  mkdirSync(join(overrides, 'agents'), { recursive: true });
+  mkdirSync(out);
+  writeFileSync(join(cwd, '.devkit/agents/review.md'), 'CANDIDATE TEXT');
+  writeFileSync(join(overrides, 'agents/contract.md'), 'TRUSTED TEXT');
+  repoSkill(join(cwd, '.devkit'), 'plain-english', 'review', 'CANDIDATE SKILL');
+  repoSkill(overrides, 'repo', 'review', 'TRUSTED SKILL');
+  const provider = vi.spyOn(PROVIDERS, 'stub').mockResolvedValue({ ok: true, result: {} });
+  try {
+    for (const inDir of [input, undefined]) {
+      await run({ role: 'review', executor: 'stub', cwd, in: inDir, out });
+      const text = provider.mock.calls.at(-1)![0].instructions;
+      assert.doesNotMatch(text, /CANDIDATE TEXT|CANDIDATE SKILL/);
+      assert.ok(
+        text.includes(
+          readFileSync(new URL('../../agents/review.md', import.meta.url), 'utf8').trim(),
+        ),
+      );
+      assert.match(text, /# Plain English/);
+      if (inDir) {
+        assert.match(text, /TRUSTED TEXT/);
+        assert.match(text, /TRUSTED SKILL/);
+      } else {
+        assert.doesNotMatch(text, /TRUSTED TEXT|TRUSTED SKILL/);
+      }
+    }
+  } finally {
+    provider.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("every devkit skill's roles are real roles", () => {
