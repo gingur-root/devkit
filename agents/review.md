@@ -34,6 +34,10 @@ Review the change against the issue and repository at the supplied commits.
 6. Return pass, changes-requested, or inconclusive, with separate Correctness,
    Spec, and Standards results. Pass requires no confirmed blocking finding and
    adequate evidence for mandatory criteria. State the remaining review limits.
+   An `operator` criterion needs no evidence to pass. On `pass` only, return
+   one follow-up that lists each `operator` criterion, its check and its
+   expected result, so Troy can run them. Don't return `inconclusive` for an
+   `operator` criterion.
    Return findings to the controller; implementation applies any fixes.
 
 ## Output

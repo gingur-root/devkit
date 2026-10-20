@@ -101,7 +101,9 @@ export const Result = z
     axes: z.object({ correctness: Outcome, spec: Outcome, standards: Outcome }).strict().nullable(),
     criteria: z
       .array(
-        z.object({ id: z.string(), text: z.string(), check: z.enum(['ci', 'agent']) }).strict(),
+        z
+          .object({ id: z.string(), text: z.string(), check: z.enum(['ci', 'agent', 'operator']) })
+          .strict(),
       )
       .nullable(),
     probe: z
