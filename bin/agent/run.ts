@@ -23,7 +23,7 @@ export interface RunOptions {
 const DEVKIT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /** The role, with its executor swapped when asked. A model belongs to one vendor, so a swap drops it. */
-function resolveRole({ role: name, executor }: RunOptions): Role {
+export function resolveRole({ role: name, executor }: RunOptions): Role {
   const role: Role = ROLES[name];
   if (!executor || executor === role.executor) return role;
   return { ...role, executor, model: undefined };
