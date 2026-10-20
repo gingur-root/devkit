@@ -3,6 +3,8 @@
 <!-- From agents/sdlc.md, "Repair instructions". -->
 
 Resolve the supplied confirmed findings using the implementation procedure.
+Read `threads.json` when present for the discussion so far. Each `changes[]`
+entry is posted as a reply on the open thread whose finding ID is its `ref`.
 
 Reproduce each claimed defect or identify why the supplied evidence does not
 support it. Apply the smallest correction that preserves the approved scope.

@@ -29,6 +29,8 @@ import {
   repairable,
   reviewComments,
   stopped,
+  threadActions,
+  replyChanges,
   verdict,
 } from './publish.ts';
 import type { Gate, LoopState } from './publish.ts';
@@ -45,6 +47,7 @@ import {
   STEPS_FILE,
   TRIAGE_FILE,
 } from './job.ts';
+import type { Thread } from './threads.ts';
 import { Result } from './result.ts';
 
 const pass = Result.parse(
@@ -309,12 +312,23 @@ test('only RIGHT-side diff lines receive inline comments', () => {
       { path: 'STUB.md', line: 20, side: 'RIGHT' },
     ],
   );
-  assert.match(comments.inline[0]!.body, /^\*\*F1\*\* blocking · correctness/);
-  assert.match(comments.inline[1]!.body, /^\*\*F2\*\* advisory · correctness/);
-  assert.deepEqual(
-    comments.body.map((f) => f.id),
-    ['F3', 'F4', 'F5', 'F6'],
+  assert.match(
+    comments.inline[0]!.body,
+    /^<!-- devkit:finding F1 -->\n\n\*\*F1\*\* blocking · correctness/,
   );
+  assert.match(
+    comments.inline[1]!.body,
+    /^<!-- devkit:finding F2 -->\n\n\*\*F2\*\* advisory · correctness/,
+  );
+  assert.deepEqual(
+    comments.file.map(({ path }) => path),
+    ['STUB.md', 'STUB.md', 'STUB.md', 'deleted.md'],
+  );
+  assert.match(comments.file[0]!.body, /^<!-- devkit:finding F3 -->\n\n`STUB.md:10`/);
+  assert.match(comments.file[1]!.body, /^<!-- devkit:finding F4 -->\n\n`absent.md:2`/);
+  assert.match(comments.file[2]!.body, /^<!-- devkit:finding F5 -->\n\nno location/);
+  assert.deepEqual(comments.body, []);
+  assert.deepEqual(reviewComments('', findings), { inline: [], file: [], body: findings });
 });
 
 test('inline comments accept Git-quoted UTF-8 paths', () => {
@@ -327,6 +341,35 @@ test('inline comments accept Git-quoted UTF-8 paths', () => {
   const comments = reviewComments(quoted, [{ ...finding, path: 'café.md', line: 1 }]);
   assert.equal(comments.inline[0]?.path, 'café.md');
   assert.deepEqual(comments.body, []);
+});
+
+test('file anchors include rename-only, binary, deleted and Git-quoted files without new-side lines', () => {
+  const files = [
+    [
+      'renamed.md',
+      'diff --git a/old.md b/renamed.md\nsimilarity index 100%\nrename from old.md\nrename to renamed.md\n',
+    ],
+    [
+      'image.png',
+      'diff --git a/image.png b/image.png\nBinary files a/image.png and b/image.png differ\n',
+    ],
+    ['deleted.md', patch.slice(patch.indexOf('diff --git a/deleted.md'))],
+    [
+      'café.md',
+      String.raw`diff --git "a/caf\303\251.md" "b/caf\303\251.md"
+old mode 100644
+new mode 100755
+`,
+    ],
+  ];
+  for (const [path, diff] of files) {
+    const comments = reviewComments(diff!, [{ ...finding, path: path!, line: 1 }]);
+    assert.deepEqual(comments.inline, []);
+    assert.deepEqual(comments.body, []);
+    assert.equal(comments.file.length, 1);
+    assert.equal(comments.file[0]!.path, path);
+    assert.match(comments.file[0]!.body, /^<!-- devkit:finding F1 -->/);
+  }
 });
 
 test('repair maps cover every finding and support every dispute with evidence', () => {
@@ -422,14 +465,119 @@ test('hypotheses cannot replace the loop state with an embedded marker', () => {
   assert.deepEqual(readLoopState(loopComment(state)), state);
 });
 
-test('Needs-you text lists only open blocking findings and links the loop log', () => {
+function thread(id: string, resolved = false): Thread {
+  return {
+    id,
+    node: `T_${id}`,
+    resolved,
+    path: 'STUB.md',
+    line: 1,
+    url: `https://github.com/o/r/pull/2#discussion-${id}`,
+    comments: [],
+  };
+}
+
+function apiThread(id: string, resolved = false) {
+  return {
+    id: `T_${id}`,
+    isResolved: resolved,
+    path: 'STUB.md',
+    line: 1,
+    comments: {
+      nodes: [
+        {
+          body: `<!-- devkit:finding ${id} -->\n\nOriginal finding`,
+          url: thread(id).url,
+          author: { login: 'pipeline', databaseId: PIPELINE_BOT.id },
+        },
+      ],
+    },
+  };
+}
+
+test('Needs-you text names the round and links every open thread and the loop log', () => {
   const text = needsYouText(
-    { ...pass, findings: [finding, { ...finding, id: 'advice', blocking: false }] },
-    'https://github.com/o/r/pull/1#issuecomment-2',
+    3,
+    [thread('F1'), thread('advice'), thread('fixed', true)],
+    'https://github.com/o/r/pull/2#issuecomment-2',
   );
-  assert.ok(text.includes('F1'));
-  assert.ok(!text.includes('advice'));
-  assert.ok(text.includes('https://github.com/o/r/pull/1#issuecomment-2'));
+  assert.ok(text.includes('round 3'));
+  for (const id of ['F1', 'advice']) assert.ok(text.includes(`[${id}](${thread(id).url})`));
+  assert.ok(!text.includes('fixed'));
+  assert.ok(text.includes('[Loop log](https://github.com/o/r/pull/2#issuecomment-2)'));
+});
+
+test('thread actions resolve fixed IDs, reply on continuing IDs, and create only new or resolved IDs', () => {
+  const open = [thread('fixed'), thread('F1'), thread('advice'), thread('old', true)];
+  const findings = [
+    finding,
+    { ...finding, id: 'advice', blocking: false },
+    { ...finding, id: 'new' },
+    { ...finding, id: 'newAdvice', blocking: false },
+    { ...finding, id: 'old' },
+  ];
+  const actions = threadActions(open, findings);
+  assert.deepEqual(
+    actions.resolve.map((t) => t.id),
+    ['fixed', 'advice'],
+  );
+  assert.deepEqual(
+    actions.reply.map(({ thread, finding }) => [thread.id, finding.id]),
+    [
+      ['F1', 'F1'],
+      ['advice', 'advice'],
+    ],
+  );
+  assert.deepEqual(
+    actions.create.map((f) => f.id),
+    ['new', 'newAdvice', 'old'],
+  );
+  assert.deepEqual(threadActions(open, []).resolve, open.slice(0, 3));
+});
+
+test('repair replies map changes and evidenced responses to open threads, skipping missing or resolved refs', async () => {
+  const calls: { query: string; variables: { id: string; body: string } }[] = [];
+  vi.stubEnv('GH_TOKEN', 'test');
+  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    if (body.query.includes('reviewThreads'))
+      return Response.json({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [apiThread('F1'), apiThread('F2'), apiThread('resolved', true)],
+              },
+            },
+          },
+        },
+      });
+    calls.push(body);
+    return Response.json({ data: {} });
+  });
+  try {
+    await replyChanges(
+      'o/r',
+      2,
+      [
+        { ref: 'F1', change: 'Fixed the parser.', response: null, evidence: null },
+        { ref: 'F2', change: null, response: 'Already works.', evidence: 'Repro exits 0.' },
+        { ref: 'missing', change: 'No anchor.', response: null, evidence: null },
+        { ref: 'resolved', change: 'Closed.', response: null, evidence: null },
+      ],
+      '123456789abcdef',
+    );
+    assert.deepEqual(
+      calls.map((c) => c.variables),
+      [
+        { id: 'T_F1', body: 'Repair `1234567`\n\nFixed the parser.' },
+        { id: 'T_F2', body: 'Repair `1234567`\n\nAlready works.\n\nRepro exits 0.' },
+      ],
+    );
+    assert.ok(calls.every((c) => c.query.includes('addPullRequestReviewThreadReply')));
+  } finally {
+    teardown();
+  }
 });
 
 test('only a clean pass passes', () => {

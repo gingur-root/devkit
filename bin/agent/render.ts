@@ -28,6 +28,7 @@ import {
   MEMORY_DIR,
   OVERRIDES_DIR,
   TIMELINE_FILE,
+  THREADS_FILE,
   TOOLS_FILE,
   type Job,
   marker,
@@ -39,6 +40,7 @@ import {
   TRIAGE_FILE,
 } from './job.ts';
 import { ROLES, type RoleName } from './roles.ts';
+import { branchOf, openPull, readThreads } from './threads.ts';
 import { MANIFEST_PATH } from './tools.ts';
 
 const MEMORY_REPO = 'gingur-root/pipeline';
@@ -525,6 +527,17 @@ export async function render(options: RenderOptions): Promise<Job> {
   mkdirSync(options.out, { recursive: true });
   if (manifest) writeFileSync(join(options.out, TOOLS_FILE), manifest);
   else rmSync(join(options.out, TOOLS_FILE), { force: true });
+  rmSync(join(options.out, THREADS_FILE), { force: true });
+  if (options.role === 'review' || options.role === 'repair') {
+    const pull = await openPull(job, branchOf(job));
+    if (pull) {
+      writeFileSync(
+        join(options.out, THREADS_FILE),
+        `${JSON.stringify(await readThreads(job.repo, pull.number), null, 2)}\n`,
+      );
+      job.artifacts.push(THREADS_FILE);
+    }
+  }
   writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
   writeFileSync(
     join(options.out, ISSUE_FILE),

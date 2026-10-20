@@ -405,6 +405,12 @@ For UI and extensions, use the project's existing Playwright setup and its suppo
 ```text
 Review the change against the issue and repository at the supplied commits.
 
+Read `threads.json` when present for earlier findings and discussion. Reuse an
+open thread's finding ID when it still stands; leave out the ID when it is fixed.
+Give a new finding an ID not used by any thread in `threads.json`.
+Ask the operator nothing. Leave `questions` empty and put the recommended
+correction in each finding's `fix`.
+
 1. Resolve the base and candidate commits. Inspect their diff and relevant
    surrounding code. For a PR, use the supplied merge base for the intended
    change and record the actual commit references assessed. Missing or stale
@@ -452,6 +458,8 @@ Repair uses the implementation role block with this addendum.
 
 ```text
 Resolve the supplied confirmed findings using the implementation procedure.
+Read `threads.json` when present for the discussion so far. Each `changes[]`
+entry is posted as a reply on the open thread whose finding ID is its `ref`.
 
 Reproduce each claimed defect or identify why the supplied evidence does not
 support it. Apply the smallest correction that preserves the approved scope.

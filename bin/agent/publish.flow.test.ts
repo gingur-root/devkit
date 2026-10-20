@@ -8,6 +8,7 @@ import { onTestFinished, test, vi } from 'vite-plus/test';
 
 import { git, gitAsOperator } from '../git.ts';
 import { setStatus } from './board.ts';
+import { PIPELINE_BOT } from './constants.ts';
 import { type Comment } from './github.ts';
 import { CANDIDATE_FILE, JOB_FILE, type Job, RESULT_FILE, REVIEW_FILE, revision } from './job.ts';
 import { publish, readLoopState } from './publish.ts';
@@ -26,6 +27,24 @@ const repair = Result.parse(
   JSON.parse(readFileSync(new URL('fixtures/repair.ready.json', import.meta.url), 'utf8')),
 );
 
+function newThread(body: string, path: string, line: number | null, index: number) {
+  return {
+    id: `T${index}`,
+    isResolved: false,
+    path,
+    line,
+    comments: {
+      nodes: [
+        {
+          body,
+          url: `https://github.com/o/r/pull/2#discussion-${index}`,
+          author: { login: 'pipeline', databaseId: PIPELINE_BOT.id },
+        },
+      ],
+    },
+  };
+}
+
 function harness() {
   const root = mkdtempSync(join(tmpdir(), 'publish-flow-'));
   const issue = { number: 1, node_id: 'issue', title: 'T', body: 'B', labels: [] };
@@ -36,6 +55,7 @@ function harness() {
     head: { sha: 'candidate' },
   };
   const comments: Comment[] = [];
+  const threads: ReturnType<typeof newThread>[] = [];
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   let calls = 0;
   vi.stubEnv('GH_TOKEN', 'test');
@@ -47,10 +67,31 @@ function harness() {
     let result: unknown;
     if (init.method === 'GET' && path.endsWith('/issues/1')) result = issue;
     else if (init.method === 'GET' && path.endsWith('/pulls')) result = [pull];
+    else if (init.method === 'GET' && path.endsWith('/reactions')) result = [];
     else if (init.method === 'GET' && path.endsWith('/comments')) {
       result = path.includes('/issues/2/') ? comments : [];
-    } else if (path === '/graphql') result = { data: {} };
-    else if (path.endsWith('/issues/2/comments')) {
+    } else if (path === '/graphql') {
+      const { query, variables } = body;
+      if (query.includes('reviewThreads'))
+        result = { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } };
+      else {
+        if (query.includes('resolveReviewThread'))
+          threads.find((t) => t.id === variables.id)!.isResolved = true;
+        if (query.includes('addPullRequestReviewThreadReply')) {
+          const thread = threads.find((t) => t.id === variables.id)!;
+          thread.comments.nodes.push({ ...thread.comments.nodes[0]!, body: variables.body });
+        }
+        result = { data: {} };
+      }
+    } else if (path.endsWith('/reviews')) {
+      for (const comment of body.comments)
+        threads.push(newThread(comment.body, comment.path, comment.line, threads.length + 1));
+      result = {};
+    } else if (path.endsWith('/pulls/2/comments')) {
+      assert.equal(body.subject_type, 'file');
+      threads.push(newThread(body.body, body.path, null, threads.length + 1));
+      result = {};
+    } else if (path.endsWith('/issues/2/comments')) {
       const comment: Comment = {
         id: comments.length + 10,
         html_url: `${pull.html_url}#issuecomment-${comments.length + 10}`,
@@ -64,12 +105,7 @@ function harness() {
       assert.ok(comment, path);
       comment.body = body.body;
       result = comment;
-    } else if (
-      path.endsWith('/issues/1/comments') ||
-      path.endsWith('/reviews') ||
-      init.method === 'DELETE'
-    )
-      result = {};
+    } else if (path.endsWith('/issues/1/comments') || init.method === 'DELETE') result = {};
     else throw new Error(`Unexpected ${init.method} ${path}`);
     return new Response(JSON.stringify(result));
   });
@@ -133,6 +169,7 @@ function harness() {
     );
     if (options.review) writeFileSync(join(dir, REVIEW_FILE), JSON.stringify(options.review));
     const output = join(dir, 'github-output');
+    writeFileSync(output, '');
     vi.stubEnv('GITHUB_OUTPUT', output);
     await publish({
       in: dir,
@@ -144,7 +181,7 @@ function harness() {
     });
     return { dir, output: readFileSync(output, 'utf8') };
   }
-  return { stage, pull, comments, writes };
+  return { stage, pull, comments, writes, threads };
 }
 
 test('publish carries repair hypotheses into the same-round review and upserts one loop log', async () => {
@@ -153,17 +190,25 @@ test('publish carries repair hypotheses into the same-round review and upserts o
   assert.match(first.output, /next=repair\nrepair=true/);
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Building');
   assert.equal(h.comments.length, 1);
+  assert.equal(h.threads.length, 1);
+  assert.equal(h.threads[0]!.isResolved, false);
+  assert.match(h.threads[0]!.comments.nodes[0]!.body, /^<!-- devkit:finding F1 -->/);
   const fixed = {
     ...repair,
     changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }],
   };
   await h.stage(fixed, 1, { review: changes });
   assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 1, 'a valid repair is pushed');
+  assert.deepEqual(h.threads[0]!.comments.nodes.map((c) => c.body).slice(1), [
+    'Repair `repaire`\n\nfixed',
+  ]);
   h.pull.head.sha = 'repaired';
   const second = await h.stage(ready, 1);
   assert.match(second.output, /next=ready/);
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Ready');
   assert.equal(h.comments.length, 1);
+  assert.equal(h.threads.length, 1, 'no duplicate F1 thread');
+  assert.equal(h.threads[0]!.isResolved, true, 'next review resolves F1');
   const state = readLoopState(h.comments[0]!.body);
   assert.equal(state.entries.length, 2);
   assert.equal(state.failures, 1);
@@ -189,7 +234,13 @@ test('a stale review never posts a PR review or changes readiness, at or below t
     });
     const stopped = round === 10;
     assert.match(result.output, new RegExp(`next=${stopped ? 'stop' : 'rerun'}`));
-    assert.ok(!h.writes.some((w) => w.path.endsWith('/reviews') || w.path === '/graphql'));
+    assert.ok(
+      !h.writes.some(
+        (w) =>
+          w.path.endsWith('/reviews') ||
+          (w.path === '/graphql' && String(w.body.query).includes('mutation')),
+      ),
+    );
     assert.ok(!result.output.includes('repair=true'));
     assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], stopped ? 'Needs you' : 'Building');
     assert.equal(result.output.includes('retro=true'), stopped);
@@ -232,8 +283,13 @@ test('the final failed review lists blocking IDs and links the single inline COM
     'inline findings are omitted from the body',
   );
   const issueComment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
-  assert.match(String(issueComment.body.body), /Open blocking findings: F1/);
-  assert.ok(!String(issueComment.body.body).includes('advice'));
+  assert.match(String(issueComment.body.body), /round 1/);
+  assert.ok(
+    String(issueComment.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-1)'),
+  );
+  assert.ok(
+    String(issueComment.body.body).includes('[advice](https://github.com/o/r/pull/2#discussion-2)'),
+  );
   assert.ok(String(issueComment.body.body).includes(h.comments[0]!.html_url));
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
 });
@@ -247,7 +303,9 @@ test('red verification adds CI and hands it to repair; advisory-only green passe
     gated.findings.map((f: { id: string }) => f.id),
     ['CI'],
   );
-  assert.ok(!h.writes.some((w) => w.path === '/graphql'));
+  assert.ok(
+    !h.writes.some((w) => w.path === '/graphql' && String(w.body.query).includes('mutation')),
+  );
   const advisory = { ...ready, findings: [{ ...changes.findings![0]!, blocking: false }] };
   const green = await h.stage(advisory, 1);
   assert.match(green.output, /next=ready/);
@@ -257,6 +315,42 @@ test('red verification adds CI and hands it to repair; advisory-only green passe
         w.path === '/graphql' && String(w.body.query).includes('markPullRequestReadyForReview'),
     ),
   );
+});
+
+test('a failed repair thread reply keeps the pushed candidate available for review', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const fetch = globalThis.fetch;
+  let outputAtReply = '';
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    if (String(init.body).includes('addPullRequestReviewThreadReply')) {
+      outputAtReply = readFileSync(process.env.GITHUB_OUTPUT!, 'utf8');
+      return new Response(JSON.stringify({ errors: [{ message: 'thread reply denied' }] }));
+    }
+    return fetch(url, init);
+  });
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  onTestFinished(() => errors.mockRestore());
+  const result = await h.stage(
+    {
+      ...repair,
+      changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }],
+    },
+    1,
+    { review: changes },
+  );
+  assert.equal(outputAtReply, 'candidate=repaired\n', 'output precedes thread replies');
+  assert.equal(result.output, 'candidate=repaired\n');
+  assert.notEqual(process.exitCode, 1, 'reply failure does not fail publication');
+  assert.match(String(errors.mock.calls.flat().join(' ')), /GraphQL:.*thread reply denied/);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Building');
+  const state = readLoopState(h.comments[0]!.body);
+  assert.equal(state.entries.at(-1)?.candidate, 'repaired');
+  assert.notEqual(state.entries.at(-1)?.step, 'stop');
+  h.pull.head.sha = 'repaired';
+  const review = await h.stage(ready, 1);
+  assert.match(review.output, /next=ready/);
+  assert.equal(h.threads[0]!.isResolved, true, 'next review still resolves the fixed finding');
 });
 
 test('an incomplete repair map stops at validate before any git write', async () => {
@@ -327,3 +421,90 @@ for (const status of ['blocked', 'failed'] as const) {
     assert.ok(String(issueComment.body.body).includes(summary));
   });
 }
+
+test('review publish replies on continuing IDs, resolves advisory IDs, and posts new off-diff threads on files', async () => {
+  const h = harness();
+  const f1 = changes.findings![0]!;
+  await h.stage({ ...changes, findings: [f1, { ...f1, id: 'F2' }] }, 0);
+  const start = h.writes.length;
+  await h.stage(
+    {
+      ...changes,
+      findings: [
+        f1,
+        { ...f1, id: 'F2', blocking: false },
+        { ...f1, id: 'F3', path: 'off-diff.ts', line: 50 },
+      ],
+    },
+    1,
+    { rounds: 1 },
+  );
+  const round = h.writes.slice(start);
+  const reviews = round.filter((w) => w.path.endsWith('/reviews'));
+  assert.equal(reviews.length, 1);
+  assert.deepEqual(reviews[0]!.body.comments, [], 'continuing IDs never duplicate inline threads');
+  const file = round.find((w) => w.path.endsWith('/pulls/2/comments'))!;
+  assert.equal(file.body.commit_id, 'candidate');
+  assert.equal(file.body.path, 'STUB.md');
+  assert.match(String(file.body.body), /^<!-- devkit:finding F3 -->\n\n`off-diff.ts:50`/);
+  assert.equal(h.threads.length, 3);
+  assert.deepEqual(
+    h.threads.map((t) => t.isResolved),
+    [false, true, false],
+  );
+  for (const t of h.threads.slice(0, 2)) assert.equal(t.comments.nodes.length, 2);
+  const stop = round.find((w) => w.path.endsWith('/issues/1/comments'))!;
+  assert.ok(String(stop.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-1)'));
+  assert.ok(String(stop.body.body).includes('[F3](https://github.com/o/r/pull/2#discussion-3)'));
+  assert.ok(!String(stop.body.body).includes('[F2]('));
+});
+
+test('an inconclusive review retains open threads while still posting replies and new findings', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const inconclusive = { ...ready, outcome: 'inconclusive' as const };
+  const empty = await h.stage(inconclusive, 1);
+  assert.match(empty.output, /next=stop/);
+  assert.equal(h.threads[0]!.isResolved, false);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  const stop = h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!;
+  assert.ok(String(stop.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-1)'));
+
+  const f1 = changes.findings![0]!;
+  await h.stage(
+    {
+      ...inconclusive,
+      findings: [
+        { ...f1, blocking: false },
+        { ...f1, id: 'F2' },
+      ],
+    },
+    2,
+  );
+  assert.equal(h.threads.length, 2);
+  assert.deepEqual(
+    h.threads.map((t) => t.isResolved),
+    [false, false],
+  );
+  assert.equal(h.threads[0]!.comments.nodes.length, 2, 'reply on the existing F1 thread');
+  assert.match(h.threads[0]!.comments.nodes[1]!.body, /\*\*F1\*\* advisory/);
+  assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding F2 -->/);
+});
+
+test('a review stage failure names its round and links the existing open thread and loop log', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const before = h.writes.length;
+  await h.stage(
+    { ...ready, status: 'failed', outcome: null, summary: 'Review fixture failed.' },
+    1,
+  );
+  const writes = h.writes.slice(before);
+  const stop = writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+  assert.match(String(stop.body.body), /stopped at `review`/);
+  assert.match(String(stop.body.body), /round 1/);
+  assert.ok(String(stop.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-1)'));
+  assert.ok(String(stop.body.body).includes(h.comments[0]!.html_url));
+  assert.ok(!writes.some((w) => w.path.endsWith('/reviews')));
+  assert.equal(h.threads[0]!.isResolved, false);
+});

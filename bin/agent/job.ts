@@ -31,6 +31,7 @@ export const TIMELINE_FILE = 'timeline.md';
 export const TRANSCRIPT_FILE = 'transcript.jsonl';
 /** The review a repair answers, CI's finding included (devkit#9). */
 export const REVIEW_FILE = 'review.json';
+export const THREADS_FILE = 'threads.json';
 /** The build's change against `source`, as a binary git patch. */
 export const CANDIDATE_FILE = 'candidate.patch';
 /** Each agent.run step's outcome, written even when setup fails. */

@@ -4,6 +4,11 @@
 
 Review the change against the issue and repository at the supplied commits.
 
+Read `threads.json` when present for earlier findings and discussion. Reuse an
+open thread's finding ID when it still stands; leave out the ID when it is fixed.
+Give a new finding an ID not used by any thread in `threads.json`.
+Ask the operator nothing. Put the recommended correction in each finding's `fix`.
+
 1. Resolve the base and candidate commits. Inspect their diff and relevant
    surrounding code. Record the actual commit references assessed. Missing or
    stale references prevent a review pass. Explain an empty diff against the
@@ -55,4 +60,4 @@ Review the change against the issue and repository at the supplied commits.
   follow-ups comment on the card, or propose it in `followups`. Record which
   in `assumptions`. Keep `questions` for decisions the operator must make.
 - A `pass` with no questions marks the PR ready for the operator to merge.
-  Put anything that needs the operator's decision in `questions`.
+  Leave `questions` empty; put recommended corrections in `fix`.
