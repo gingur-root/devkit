@@ -18,6 +18,9 @@ import {
 import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, upsertStageComment } from './github.ts';
 import {
+  CHANGED_FILE,
+  DIFF_FILE,
+  PR_FILE,
   CONTRACT_PREFIX,
   ISSUE_FILE,
   ISSUES_FILE,
@@ -237,7 +240,119 @@ async function refuse(options: RenderOptions, reason: string): Promise<void> {
   if (label) await removeLabel(options.repo, options.issue, label);
 }
 
+export interface ChangedFile {
+  filename: string;
+  previous_filename?: string;
+  status: string;
+  patch?: string;
+}
+
+export function changedFiles(repo: string, files: ChangedFile[]): string[] {
+  return [
+    ...new Set(
+      files
+        .flatMap((file) => [
+          file.filename,
+          ...(file.previous_filename ? [file.previous_filename] : []),
+        ])
+        .map((path) => `${repo}:${path}`),
+    ),
+  ];
+}
+
+interface MergedPull {
+  number: number;
+  title: string;
+  body: string | null;
+  user: { id: number } | null;
+  merged: boolean;
+  merge_commit_sha: string;
+}
+
+function trustedPull(pull: MergedPull): boolean {
+  return pull.user?.id === OPERATOR_ID || pull.user?.id === PIPELINE_BOT.id;
+}
+
+async function renderMemory(options: RenderOptions): Promise<Job> {
+  const path = `/repos/${options.repo}/pulls/${options.issue}`;
+  const pull = await rest<MergedPull>('GET', path);
+  if (!pull.merged || !pull.merge_commit_sha) throw new Error('Memory needs a merged PR.');
+  const files = await restAll<ChangedFile>(`${path}/files`);
+  const bodySeen = trustedPull(pull);
+  const linked: string[] = [];
+  if (bodySeen) {
+    const numbers = new Set(
+      [...(pull.body ?? '').matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi)].map(
+        (match) => Number(match[1]),
+      ),
+    );
+    for (const number of numbers) {
+      const issuePath = `/repos/${options.repo}/issues/${number}`;
+      const issue = await rest<Issue>('GET', issuePath);
+      const comments = await restAll<Authored>(`${issuePath}/comments`);
+      linked.push(issueSnapshot(issue, comments, options.appId));
+    }
+  }
+  mkdirSync(options.out, { recursive: true });
+  const job: Job = {
+    job: `memory-${process.env.GITHUB_RUN_ID ?? 'local'}`,
+    role: 'memory',
+    objective: ROLES.memory.objective,
+    repo: options.repo,
+    issue: {
+      number: pull.number,
+      title: pull.title,
+      revision: revision(pull.title, pull.body ?? '', pull.merge_commit_sha),
+      bodySeen,
+    },
+    source: pull.merge_commit_sha,
+    base: null,
+    candidate: null,
+    plan: null,
+    memory: await memorySlice(options),
+    artifacts: [PR_FILE, DIFF_FILE, CHANGED_FILE, 'check.txt'],
+    operations: [],
+    attemptLimit: null,
+  };
+  const text = [
+    `# PR #${pull.number}${bodySeen ? `: ${pull.title}` : ''}`,
+    `Merge commit: ${pull.merge_commit_sha}`,
+    bodySeen ? (pull.body ?? '') : '(Written by someone else, so left out.)',
+    '## Changed files',
+    ...files.map(
+      (file) =>
+        `- ${file.status}: ${file.filename}${file.previous_filename ? ` (was ${file.previous_filename})` : ''}`,
+    ),
+    ...linked,
+  ].join('\n\n');
+  writeFileSync(join(options.out, PR_FILE), `${text}\n`);
+  writeFileSync(join(options.out, ISSUE_FILE), `${text}\n`);
+  const diff = Buffer.from(
+    files
+      .map(
+        (file) =>
+          `diff --git a/${file.previous_filename ?? file.filename} b/${file.filename}\n${file.patch ?? '(patch unavailable)'}\n`,
+      )
+      .join('\n'),
+  );
+  const limit = 200 * 1024;
+  // Drop a partial UTF-8 character at the boundary before appending the note.
+  let capped = diff.subarray(0, limit).toString('utf8');
+  if (diff.length > limit) capped = capped.replace(/\uFFFD$/, '') + '\n(diff cut at 200 KB)\n';
+  writeFileSync(join(options.out, DIFF_FILE), capped);
+  writeFileSync(
+    join(options.out, CHANGED_FILE),
+    `${changedFiles(options.repo, files).join('\n')}\n`,
+  );
+  writeFileSync(join(options.out, JOB_FILE), `${JSON.stringify(job, null, 2)}\n`);
+  // Memory needs no repository tool manifest or plan from an earlier stage.
+  for (const file of [TOOLS_FILE, PLAN_FILE, TRIAGE_FILE])
+    rmSync(join(options.out, file), { force: true });
+  return job;
+}
+
 export async function render(options: RenderOptions): Promise<Job> {
+  if (options.role === 'memory') return renderMemory(options);
   const source =
     options.source ||
     (await rest<{ sha: string }>('GET', `/repos/${options.repo}/commits/HEAD`)).sha;

@@ -23,7 +23,7 @@ export const PIPELINE_WORKFLOW = 'agents.yml';
 // infra keeps its own caller (its .github/workflows/agents.yml).
 const SKIPPED_REPOS: readonly string[] = ['infra', PIPELINE_REPO];
 
-export const DISPATCH_STAGES = ['plan', 'build', 'loop'] as const;
+export const DISPATCH_STAGES = ['plan', 'build', 'loop', 'memory'] as const;
 export type DispatchStage = (typeof DISPATCH_STAGES)[number];
 
 // Troy's labels. agent:research is admitted too, but no stage handles it yet.
@@ -55,17 +55,30 @@ export interface Dispatch {
 interface Payload {
   action?: string;
   sender?: { id?: number };
-  repository?: { name?: string; owner?: { login?: string } };
+  repository?: { name?: string; owner?: { login?: string }; default_branch?: string };
   issue?: { number?: number; pull_request?: unknown };
+  pull_request?: { number?: number; merged?: boolean; base?: { ref?: string } };
   label?: { name?: string };
   comment?: { id?: number; body?: string };
 }
 
 /** The stage a delivery starts, or null. The same rule as the Actions admission gate. */
 export function dispatchFor({ event, payload }: Delivery): Dispatch | null {
-  const { action, sender, repository, issue, label, comment } = payload as Payload;
+  const { action, sender, repository, issue, label, comment, pull_request } = payload as Payload;
   const repo = repository?.name;
   if (repository?.owner?.login !== ORG || !repo || SKIPPED_REPOS.includes(repo)) return null;
+  if (event === GITHUB_EVENT.pullRequest) {
+    if (
+      action !== 'closed' ||
+      pull_request?.merged !== true ||
+      !pull_request.number ||
+      // A stacked PR merged into its parent branch isn't on main yet; the parent's merge runs it.
+      pull_request.base?.ref !== repository.default_branch ||
+      (sender?.id !== OPERATOR_ID && sender?.id !== PIPELINE_BOT.id)
+    )
+      return null;
+    return { stage: 'memory', repo, issue: pull_request.number, actor: sender.id };
+  }
   if (!issue?.number || !sender?.id) return null;
   let stage: DispatchStage | undefined;
   let started: number | undefined;
@@ -113,6 +126,7 @@ export function pipelineHandler(): WebhookHandler {
     const next = dispatchFor(delivery);
     if (!next) return;
     await dispatch(next);
-    if (next.stage !== 'loop') await react(`${ORG}/${next.repo}`, next.issue, next.comment);
+    if (next.stage !== 'loop' && next.stage !== 'memory')
+      await react(`${ORG}/${next.repo}`, next.issue, next.comment);
   };
 }

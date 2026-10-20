@@ -25,6 +25,7 @@ test('every role passes its turn cap to Claude', () => {
     repair: 200,
     review: 100,
     retro: 50,
+    memory: 50,
   };
   for (const [name, role] of Object.entries(ROLES)) {
     const options = claudeOptions(role, {
@@ -179,4 +180,22 @@ test("each CLI's failure maps to its class, with a rate limit's reset time when 
   assert.equal(codexFailure('unexpected status 503 Service Unavailable').class, 'overloaded');
   assert.equal(codexFailure('500 Internal Server Error').class, 'server_error');
   assert.equal(codexFailure('model refused').class, 'unknown');
+});
+
+test('memory has file proposal tools without Edit or web tools', () => {
+  const options = claudeOptions(ROLES.memory, {
+    cwd: '/w',
+    executable: '/bin/claude',
+    env: {},
+    instructions: '',
+  });
+  assert.deepEqual(options.tools, ['Bash', 'Read', 'Glob', 'Grep', 'Write']);
+  assert.throws(
+    () => assertClaudeInit({ apiKeySource: 'none', tools: ['Edit'] }, options, []),
+    /does not allow/,
+  );
+  assert.throws(
+    () => assertClaudeInit({ apiKeySource: 'none', tools: ['WebFetch'] }, options, []),
+    /does not allow/,
+  );
 });

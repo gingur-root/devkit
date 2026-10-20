@@ -159,3 +159,17 @@ test('every job that touches a secret, or names the gate, runs only after the ga
     }
   }
 });
+
+test('every memory job carries admission and report can run after a failure', () => {
+  const { jobs } = parse(readFileSync(new URL('agent.memory.yml', workflows), 'utf8'));
+  assert.deepEqual(Object.keys(jobs), ['start', 'memory', 'publish', 'report']);
+  for (const job of Object.values(jobs) as { if: string; environment: string }[]) {
+    assert.ok(admits(job.if));
+    assert.equal(job.environment, 'agents');
+  }
+  assert.match(jobs.report.if, /^always\(\) &&/);
+  assert.match(jobs.report.if, /contains\(needs\.\*\.result, 'failure'\)/);
+  assert.match(jobs.report.if, /contains\(needs\.\*\.result, 'cancelled'\)/);
+  assert.deepEqual(jobs.report.needs, ['start', 'memory', 'publish']);
+  assert.ok(!JSON.stringify(jobs).includes('agent.retro.yml'));
+});

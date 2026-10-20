@@ -7,14 +7,21 @@ export default {
     "Validate a stage's result and publish it: comment, label, Status, a build's PR, a review (GH_TOKEN)",
   configure(command) {
     command
-      .requiredOption('--in <dir>', 'the job directory ($AGENT_IN)')
-      .requiredOption('--out <dir>', "the agent's output directory ($AGENT_OUT)")
+      .option('--in <dir>', 'the job directory ($AGENT_IN)')
+      .option('--out <dir>', "the agent's output directory ($AGENT_OUT)")
       .option('--checkout <dir>', "a build's target repo at the job's source, with push access")
       .option('--round <n>', "a review's repair round: 0 for the build's review", Number)
       .option('--rounds <n>', 'the repair-round cap; default REPAIR_ROUNDS', Number)
-      .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed");
+      .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed")
+      .option('--failed <json>', 'memory report: the calling jobs and results')
+      .option('--repo <owner/name>', 'memory report: the merged PR repository')
+      .option('--issue <n>', 'memory report: the merged PR number', Number);
   },
   async run(options) {
+    if (options.failed === undefined && (!options.in || !options.out))
+      throw new Error('--in and --out are required');
+    if (options.failed !== undefined && (!options.repo || !options.issue))
+      throw new Error('--repo and --issue are required for --failed');
     const { publish } = await import('../../agent/publish.ts');
     await publish(options);
   },
