@@ -110,6 +110,7 @@ jobs:
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionContents: read
           permissionIssues: write
+          permissionPullRequests: read
           permissionOrganizationProjects: write
 
       # The run's 👀 (devkit#148). The webhook receiver adds it for the App's
@@ -356,7 +357,7 @@ jobs:
   repair-1:
     name: Repair 1
     needs: [start, review]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.review.outputs.next) || needs.start.outputs.resume == '1') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.review.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.review.outputs.next)) || needs.start.outputs.resume == '1') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -382,7 +383,7 @@ jobs:
   repair-2:
     name: Repair 2
     needs: [start, repair-1]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-1.outputs.next) || needs.start.outputs.resume == '2') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-1.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-1.outputs.next)) || needs.start.outputs.resume == '2') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -408,7 +409,7 @@ jobs:
   repair-3:
     name: Repair 3
     needs: [start, repair-2]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-2.outputs.next) || needs.start.outputs.resume == '3') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-2.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-2.outputs.next)) || needs.start.outputs.resume == '3') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -434,7 +435,7 @@ jobs:
   repair-4:
     name: Repair 4
     needs: [start, repair-3]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-3.outputs.next) || needs.start.outputs.resume == '4') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-3.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-3.outputs.next)) || needs.start.outputs.resume == '4') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -460,7 +461,7 @@ jobs:
   repair-5:
     name: Repair 5
     needs: [start, repair-4]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-4.outputs.next) || needs.start.outputs.resume == '5') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-4.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-4.outputs.next)) || needs.start.outputs.resume == '5') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -486,7 +487,7 @@ jobs:
   repair-6:
     name: Repair 6
     needs: [start, repair-5]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-5.outputs.next) || needs.start.outputs.resume == '6') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-5.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-5.outputs.next)) || needs.start.outputs.resume == '6') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -512,7 +513,7 @@ jobs:
   repair-7:
     name: Repair 7
     needs: [start, repair-6]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-6.outputs.next) || needs.start.outputs.resume == '7') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-6.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-6.outputs.next)) || needs.start.outputs.resume == '7') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -538,7 +539,7 @@ jobs:
   repair-8:
     name: Repair 8
     needs: [start, repair-7]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-7.outputs.next) || needs.start.outputs.resume == '8') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-7.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-7.outputs.next)) || needs.start.outputs.resume == '8') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -564,7 +565,7 @@ jobs:
   repair-9:
     name: Repair 9
     needs: [start, repair-8]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-8.outputs.next) || needs.start.outputs.resume == '9') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-8.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-8.outputs.next)) || needs.start.outputs.resume == '9') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read
@@ -590,7 +591,7 @@ jobs:
   repair-10:
     name: Repair 10
     needs: [start, repair-9]
-    if: ${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.repair-9.outputs.next) || needs.start.outputs.resume == '10') }}
+    if: ${{ !cancelled() && needs.start.result == 'success' && ((needs.repair-9.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.repair-9.outputs.next)) || needs.start.outputs.resume == '10') }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read

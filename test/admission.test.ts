@@ -52,7 +52,7 @@ test('every round passes the cap and base, chains repair or rerun, and reaches f
       assert.deepEqual(job.needs, ['start', previous]);
       assert.equal(
         job.if,
-        `\${{ !cancelled() && needs.start.result == 'success' && (contains(fromJSON('["repair","rerun"]'), needs.${previous}.outputs.next) || needs.start.outputs.resume == '${round}') }}`,
+        `\${{ !cancelled() && needs.start.result == 'success' && ((needs.${previous}.result == 'success' && contains(fromJSON('["repair","rerun"]'), needs.${previous}.outputs.next)) || needs.start.outputs.resume == '${round}') }}`,
       );
       assert.equal(
         job.with.candidate,
@@ -277,6 +277,8 @@ test('each repair is gated by replan and resume skips the builder', () => {
   const build = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8')).jobs;
   for (const id of ['build', 'publish'])
     assert.ok(build[id].if.includes("needs.start.outputs.resume == ''"));
+  const app = build.start.steps.find((s: { id?: string }) => s.id === 'app');
+  assert.equal(app.with.permissionPullRequests, 'read');
   const read = build.start.steps.find((s: { id?: string }) => s.id === 'read');
   assert.ok(read.if.includes("steps.render.outputs.resume == ''"));
   for (const field of ['base', 'resume', 'candidate'])

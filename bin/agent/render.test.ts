@@ -1018,6 +1018,7 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
     ],
   };
   let writes = 0;
+  const refusals: string[] = [];
   const refs: string[] = [];
   vi.stubEnv('GH_TOKEN', 'test');
   vi.stubEnv('MEMORY_TOKEN', 'test');
@@ -1032,7 +1033,14 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
         user: { id: OPERATOR_ID },
         labels: [],
       });
-    if (path === '/repos/o/r/issues/1/comments') return Response.json([comment()]);
+    if (path === '/repos/o/r/issues/1/comments') {
+      if (init.method === 'POST') {
+        const { body } = JSON.parse(String(init.body));
+        refusals.push(body);
+        return Response.json({ body });
+      }
+      return Response.json([comment()]);
+    }
     if (path === '/repos/o/r/pulls')
       return Response.json([{ number: 2, head: { sha: 'new-head' } }]);
     if (path === '/repos/o/r/issues/2/comments')
@@ -1066,6 +1074,10 @@ test('only a trusted spec stop resumes build and records approval; repair holds 
       render({ ...options, role: 'repair' }),
       /plan changed in review and is not approved/,
     );
+    assert.equal(refusals.length, 1);
+    assert.ok(refusals[0]!.startsWith(marker('repair')));
+    assert.match(refusals[0]!, /Repair refused:.*plan changed in review and is not approved/);
+    assert.match(refusals[0]!, /Reply `\/approve` to resume/);
     const job = await render({ ...options, role: 'build' });
     assert.deepEqual(JSON.parse(readFileSync(join(out, 'resume.json'), 'utf8')), {
       round: 4,

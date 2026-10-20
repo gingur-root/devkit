@@ -442,10 +442,13 @@ export async function render(options: RenderOptions): Promise<Job> {
         options.role === 'repair' &&
         state.approved &&
         state.approved !== approved.contract.planRevision
-      )
-        throw new Error(
+      ) {
+        const error = new Error(
           'The plan changed in review and is not approved yet. Reply `/approve` to resume.',
         );
+        await refuse(options, error.message).catch(console.error);
+        throw error;
+      }
       const last = state.entries.at(-1);
       if (options.role === 'build' && last?.step === 'spec') {
         state.approved = approved.contract.planRevision;
