@@ -30,7 +30,7 @@ keeps its own caller, which runs the same plan and build workflows.
 | 2. Plan            | Nothing: the board loop starts it. To jump the queue, add `agent:plan` or comment `/plan`.                                                                                          | Writes one plan comment, removes the label. The plan opens with **What**: the intent behind the ask, related work and what to defer. | Planning         |
 | 3. Answer          | Read the plan. If it asks questions, edit the issue to answer them, then `agent:plan` again.                                                                                        | Rewrites the same plan comment.                                                                                                      | Needs you        |
 | 4. Approve / build | When the plan says **ready for `agent:build`**, add `agent:build`. That label is the approval. Or press **Continue** on the dashboard: the plan then hands off to the build itself. | Builds on `agent/issue-<n>`, opens a draft PR, comments a link, removes the label.                                                   | Building → Ready |
-| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | In the same run, Claude reviews the PR; Codex fixes findings, up to 2 rounds; then ready or Needs you.                               | Ready → Done     |
+| 5. Review / merge  | If the review passed, merge the PR, or have a project thread merge it. Otherwise answer its findings.                                                                               | Claude reviews; Codex fixes findings. Repairs and stale reruns share a cap of 10 rounds; then ready or Needs you.                    | Ready → Done     |
 
 Anything that stops a run (a failed check, a missing result, a push error, a
 cancelled run or a lost runner) posts **"… stopped at `<stage>`"** on the
@@ -117,28 +117,34 @@ Advisory findings allow an otherwise clean review to pass.
 - **Changes requested, nothing to ask you:** Codex fixes the findings and
   pushes a new commit to the same PR, then Claude reviews the whole change
   again. The card stays in **Building** meanwhile, and the issue gets a
-  **Repair** comment with what Codex changed. This repeats up to 2 rounds
-  (`REPAIR_ROUNDS` in `bin/agent/constants.ts`). A repair must map every
+  **Repair** comment with what Codex changed. This repeats up to 10 rounds by
+  default (`rounds` in `agent.build.yml`, capped by `REPAIR_ROUNDS` in
+  `bin/agent/constants.ts`). A repair must map every
   supplied finding ID in `changes[].ref`. A dispute needs non-empty
   `evidence`; an incomplete map stops at `validate` before a push.
 - **Anything else** (a question for you, an inconclusive review, findings left
-  after 2 rounds, or a repair that changed nothing): the review comment says
+  after the round cap, or a repair that changed nothing): the review comment says
   the PR needs your call, lists open blocking IDs, and links the PR's loop
-  log. The card moves to **Needs you**. A stale candidate also stops here,
-  without posting a PR review or marking the PR ready.
+  log. The card moves to **Needs you**.
+- **Stale review:** the next round reviews the current PR head without a
+  repair or a push. The card stays in **Building**, and the issue comment
+  names the commit being re-reviewed and the next round. Reruns count toward
+  the cap; a stale review at the cap stops at **Needs you**. A stale review
+  never posts a PR review or changes the PR's ready state.
 
 The PR has one loop-log comment, updated after each repair and review. It
 shows the round and cap, failure count, candidate short SHA, CI result,
 review outcome, open blocking IDs, and the repair's hypotheses. Its hidden
 `<!-- devkit:loop-state {json} -->` line keeps state between jobs. Round 0
-reviews the build; rounds 1 and 2 review repairs.
+reviews the build; rounds 1 through 10 review repairs or rerun stale reviews.
+Each round runs through `agent.round.yml`.
 
 For a direct controller call, set the repair cap with
 `pnpm agent publish --in <job-dir> --out <output-dir> --round <r> --rounds <n>`.
 Pass the same cap to each publish in the run. Without `--rounds`, the cap is
-`REPAIR_ROUNDS` (2). The current workflow schedules only two repair jobs;
-a larger CLI cap does not add jobs. Ten rounds and stale reruns need the
-separate workflow change.
+`REPAIR_ROUNDS` (10). The build workflow's `rounds` input sets the cap for all
+rounds in that run. The CLI accepts only integers from 0 to 10; 0 reviews the
+build without repairs or reruns. Local eval keeps its separate cap of 2 repairs.
 
 The pipeline never merges. Merging is yours, or a Claude project thread's under
 the project's merge policy. The board moves the card to **Done** when the PR

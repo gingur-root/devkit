@@ -182,16 +182,31 @@ test('publish carries repair hypotheses into the same-round review and upserts o
 
 test('a stale review never posts a PR review or changes readiness, at or below the cap', async () => {
   const h = harness();
-  for (const round of [0, 2]) {
-    const result = await h.stage(ready, round, { candidate: 'older' });
-    assert.match(result.output, new RegExp(`next=${round === 0 ? 'rerun' : 'stop'}`));
+  for (const round of [0, 1, 10]) {
+    const result = await h.stage(ready, round, {
+      ...(round === 1 ? { jobCandidate: 'old-head' } : { candidate: 'older' }),
+      rounds: 10,
+    });
+    const stopped = round === 10;
+    assert.match(result.output, new RegExp(`next=${stopped ? 'stop' : 'rerun'}`));
     assert.ok(!h.writes.some((w) => w.path.endsWith('/reviews') || w.path === '/graphql'));
     assert.ok(!result.output.includes('repair=true'));
-    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
-    assert.ok(h.writes.some((w) => String(w.body.body).includes('stopped at `stale`')));
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], stopped ? 'Needs you' : 'Building');
+    assert.equal(result.output.includes('retro=true'), stopped);
+    assert.equal(
+      readLoopState(h.comments[0]!.body).entries.at(-1)?.step,
+      stopped ? 'stop' : 'rerun',
+    );
+    const comment = h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!;
+    if (stopped) assert.match(String(comment.body.body), /stopped at `stale`/);
+    else {
+      assert.match(result.output, /head=candidate\n/);
+      assert.match(String(comment.body.body), /Re-reviewing `candida`:/);
+      assert.ok(String(comment.body.body).includes(`Round ${round + 1} of 10`));
+      assert.ok(!String(comment.body.body).includes('stopped at'));
+      assert.notEqual(process.exitCode, 1);
+    }
   }
-  await h.stage(ready, 1, { jobCandidate: 'old-head' });
-  assert.ok(!h.writes.some((w) => w.path.endsWith('/reviews') || w.path === '/graphql'));
   assert.ok(h.writes.some((w) => String(w.body.body).includes('the PR has a newer commit')));
 });
 

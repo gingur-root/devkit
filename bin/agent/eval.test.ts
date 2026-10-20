@@ -3,12 +3,37 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'vite-plus/test';
+import { onTestFinished, test, vi } from 'vite-plus/test';
 
 import { evaluate } from './eval.ts';
+
+test('eval stops after two repairs even when reviews keep requesting changes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'devkit-eval-cap-'));
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+    rmSync(root, { recursive: true, force: true });
+  });
+  vi.stubEnv('DEVKIT_STUB_FIXTURE', 'never');
+  const repo = join(root, 'repo');
+  const caseDir = join(repo, 'eval', 'never');
+  mkdirSync(caseDir, { recursive: true });
+  writeFileSync(join(repo, 'README.md'), '# Eval fixture\n');
+  writeFileSync(join(caseDir, 'issue.md'), '# Never passes\n\nKeep trying.\n');
+  writeFileSync(join(caseDir, 'case.json'), '{ "plan": "ready" }\n');
+  writeFileSync(join(caseDir, 'check.sh'), 'test -f STUB.md\n');
+  execFileSync('git', ['init', '--quiet'], { cwd: repo });
+
+  const out = join(root, 'out');
+  const [score] = evaluate({ repo, out, executor: 'stub' });
+  assert.equal(score?.repairs, 2);
+  assert.equal(score?.review, 'changes-requested');
+  assert.equal(score?.stopped, null);
+  assert.ok(existsSync(join(out, 'never', 'review-2', 'out', 'result.json')));
+  assert.ok(!existsSync(join(out, 'never', 'repair-3')));
+});
 
 test('a case runs without its eval folder or history, and a passed review over a failing check is missed', () => {
   const repo = mkdtempSync(join(tmpdir(), 'devkit-eval-'));

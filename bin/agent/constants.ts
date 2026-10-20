@@ -125,10 +125,10 @@ export const STAGE_LABELS = {
 } as const;
 
 /**
- * How many times Codex may fix a review's findings in one build run before the
- * card goes to Needs you. agent.build.yml has one `repair-<n>` job per round.
+ * The repair or stale-rerun cap in one build run before the card goes to Needs
+ * you. agent.build.yml has one `repair-<n>` job per round.
  */
-export const REPAIR_ROUNDS = 2;
+export const REPAIR_ROUNDS = 10;
 
 /** The pipeline App's bot user, which authors the build's commits. */
 export const PIPELINE_BOT = {

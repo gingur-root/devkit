@@ -27,6 +27,20 @@ test('agent publish accepts the numeric repair-round cap', () => {
   assert.deepEqual(command.opts(), { in: 'input', out: 'output', round: 1, rounds: 3 });
 });
 
+test('agent publish refuses repair caps outside the scheduled integer rounds', () => {
+  for (const rounds of ['11', '-1', '1.5', 'NaN']) {
+    const command = new Command().exitOverride().configureOutput({ writeErr() {} });
+    publishCommand.configure(command);
+    assert.throws(() => command.parse(['--rounds', rounds], { from: 'user' }), /0.*10/);
+  }
+  for (const rounds of ['0', '10']) {
+    const command = new Command();
+    publishCommand.configure(command);
+    command.parse(['--rounds', rounds], { from: 'user' });
+    assert.equal(command.opts().rounds, Number(rounds));
+  }
+});
+
 /** Every command path Commander actually ended up with, as dotted strings. */
 function registered(command: Command, prefix: string[] = []): string[] {
   return command.commands.flatMap((child) => {

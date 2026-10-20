@@ -620,6 +620,15 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
       ...(result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
       step,
     }));
+  if (step === 'rerun' && pull && 'stage' in v) {
+    if (process.env.GITHUB_OUTPUT)
+      appendFileSync(process.env.GITHUB_OUTPUT, `head=${pull.head.sha}\n`);
+    return {
+      body: `Re-reviewing \`${pull.head.sha.slice(0, 7)}\`: ${v.reason}. Round ${(options.round ?? 0) + 1} of ${options.rounds ?? REPAIR_ROUNDS}.`,
+      status: 'Building',
+      stopped: false,
+    };
+  }
   if ('stage' in v)
     return {
       body: [

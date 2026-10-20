@@ -32,7 +32,73 @@ test('build runs have one repair job per configured repair round', () => {
     jobs: Record<string, unknown>;
   };
   const repairs = Object.keys(workflow.jobs).filter((id) => /^repair-\d+$/.test(id));
-  assert.equal(repairs.length, REPAIR_ROUNDS);
+  assert.equal(REPAIR_ROUNDS, 10);
+  assert.equal(repairs.length, 10);
+});
+
+test('every round passes the cap and base, chains repair or rerun, and reaches finalization', () => {
+  const { jobs, on } = parse(readFileSync(new URL('agent.build.yml', workflows), 'utf8'));
+  assert.equal(on.workflow_call.inputs.rounds.default, 10);
+  const rounds = ['review', ...Array.from({ length: 10 }, (_, i) => `repair-${i + 1}`)];
+  for (const [round, id] of rounds.entries()) {
+    const job = jobs[id];
+    assert.equal(job.uses, './.github/workflows/agent.round.yml');
+    assert.equal(job.with.round, round);
+    assert.equal(job.with.rounds, '${{ inputs.rounds }}');
+    assert.equal(job.with.base, '${{ needs.start.outputs.source }}');
+    if (round === 0) assert.deepEqual(job.needs, ['start', 'publish']);
+    else {
+      const previous = rounds[round - 1];
+      assert.deepEqual(job.needs, ['start', previous]);
+      assert.equal(
+        job.if,
+        `contains(fromJSON('["repair","rerun"]'), needs.${previous}.outputs.next)`,
+      );
+      assert.equal(job.with.candidate, `\${{ needs.${previous}.outputs.candidate }}`);
+      assert.equal(job.with.readToken, `\${{ needs.${previous}.outputs.readToken }}`);
+      assert.equal(job.with.rerun, `\${{ needs.${previous}.outputs.next == 'rerun' }}`);
+    }
+  }
+  assert.deepEqual(jobs.retro.needs, ['start', 'build', 'publish', ...rounds]);
+  assert.deepEqual(jobs.next.needs, [...jobs.retro.needs, 'retro']);
+  assert.ok(jobs.retro.if.includes("contains(needs.*.outputs.retro, 'true')"));
+});
+
+test('a rerun skips repair and publish but prepares the input candidate for review', () => {
+  const { jobs, on } = parse(readFileSync(new URL('agent.round.yml', workflows), 'utf8'));
+  assert.equal(on.workflow_call.inputs.rerun.default, false);
+  assert.ok(jobs.repair.if.endsWith('&& inputs.round > 0 && !inputs.rerun'));
+  assert.ok(admits(jobs.push.if));
+  assert.ok(
+    jobs.push.if.endsWith(
+      "&& inputs.round > 0 && (needs.repair.result != 'skipped' || inputs.rerun)",
+    ),
+  );
+  assert.equal(
+    jobs.push.outputs.candidate,
+    '${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}',
+  );
+  for (const step of jobs.push.steps.filter(
+    (s: { uses?: string; id?: string }) =>
+      s.uses?.startsWith('actions/download-artifact@') || s.id === 'publish',
+  ))
+    assert.equal(step.if, '${{ !inputs.rerun }}');
+  const render = jobs.push.steps.find((s: { name?: string }) => s.name === 'Render review');
+  assert.equal(render.env.BASE, '${{ inputs.base }}');
+  assert.equal(
+    render.env.CANDIDATE,
+    '${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}',
+  );
+  for (const id of ['push', 'verdict']) {
+    const publish = jobs[id].steps.find((s: { id?: string }) => s.id === 'publish');
+    assert.equal(publish.env.ROUNDS, '${{ inputs.rounds }}');
+    assert.ok(publish.run.includes('--rounds "$ROUNDS"'));
+  }
+  assert.equal(jobs.verdict.outputs.next, '${{ steps.publish.outputs.next }}');
+  assert.equal(
+    jobs.verdict.outputs.candidate,
+    '${{ steps.next.outputs.candidate || steps.publish.outputs.head }}',
+  );
 });
 
 // Splits on an operator at paren depth 0, outside string literals.

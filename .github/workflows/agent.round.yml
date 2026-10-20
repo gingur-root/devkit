@@ -1,9 +1,10 @@
-name: Review
+name: Round
 
 # One review round inside a build run. Round 0 reviews the build's commit. Each
-# later round first has Codex fix the previous review's findings (the repair),
-# pushes that fix to the same PR branch, then verifies and reviews the new
-# commit. The verdict marks a clean pass with CI green on that same commit
+# later round repairs the previous findings or reruns a stale review on the
+# current PR head without a repair. Repairs push to the same PR branch. Each
+# round verifies and reviews its candidate; reruns count toward the rounds cap
+# (up to 10). The verdict marks a clean pass with CI green on that same commit
 # ready, starts the next round when the findings (CI's included) are Codex's to
 # fix and rounds are left, and otherwise moves the card to Needs you.
 # The pipeline never merges. agent.build.yml calls this once per round.
@@ -40,11 +41,23 @@ on:
         required: false
         default: ''
       round:
-        description: '0 reviews the build; n repairs, then reviews, for the nth time.'
+        description: '0 reviews the build; n repairs or reruns, then reviews, for the nth time.'
         type: number
         required: true
+      rounds:
+        description: 'The repair or rerun cap, from 0 to 10.'
+        type: number
+        required: true
+      base:
+        description: "The build's base commit, used to review the whole change."
+        type: string
+        required: true
+      rerun:
+        description: 'Review the candidate again without a repair.'
+        type: boolean
+        default: false
       candidate:
-        description: 'Round 0: the commit to review. Later rounds: the reviewed commit to repair.'
+        description: 'The reviewed commit to repair, or the PR head to review on a rerun.'
         type: string
         required: true
       readToken:
@@ -65,17 +78,17 @@ on:
       PIPELINE_SECRETS_TOKEN:
         required: false
     outputs:
-      repair:
-        description: "`true` when the next round should repair this round's findings."
-        value: ${{ jobs.verdict.outputs.repair }}
+      next:
+        description: 'The next step: ready, repair, rerun or stop.'
+        value: ${{ jobs.verdict.outputs.next }}
       candidate:
-        description: 'The commit this round reviewed.'
+        description: 'The reviewed commit to repair, or the current PR head to re-review.'
         value: ${{ jobs.verdict.outputs.candidate }}
       retro:
         description: '`true` when this round left the card in Needs you.'
         value: ${{ jobs.verdict.outputs.retro }}
       readToken:
-        description: "The next round's sealed read token for its repair, when `repair` is `true`."
+        description: "The next round's sealed read token for its repair, when `next` is `repair`."
         value: ${{ jobs.verdict.outputs.readToken }}
 
 permissions: {}
@@ -83,7 +96,7 @@ permissions: {}
 jobs:
   repair:
     name: Repair
-    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0
+    if: (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && !inputs.rerun
     runs-on: ${{ inputs.runner }}
     environment: agents
     permissions:
@@ -103,11 +116,11 @@ jobs:
   push:
     name: Push
     needs: repair
-    if: always() && needs.repair.result != 'skipped' && inputs.round > 0
+    if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && inputs.round > 0 && (needs.repair.result != 'skipped' || inputs.rerun)
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
-      candidate: ${{ steps.publish.outputs.candidate }}
+      candidate: ${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}
       readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app
@@ -142,31 +155,35 @@ jobs:
         with:
           cwd: devkit
 
-      - uses: actions/download-artifact@v8
+      - if: ${{ !inputs.rerun }}
+        uses: actions/download-artifact@v8
         with:
           name: repair-${{ inputs.round }}-in
           path: ${{ runner.temp }}/agent/in
 
       # Missing when the repair job died before writing anything; publish names that stage.
-      - uses: actions/download-artifact@v8
+      - if: ${{ !inputs.rerun }}
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: repair-${{ inputs.round }}-out
           path: ${{ runner.temp }}/agent/out
 
       - id: publish
+        if: ${{ !inputs.rerun }}
         name: Publish
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           ROUND: ${{ inputs.round }}
+          ROUNDS: ${{ inputs.rounds }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/agent/in" --out "$RUNNER_TEMP/agent/out" \
-            --checkout "$GITHUB_WORKSPACE/repo" --round "$ROUND"
+            --checkout "$GITHUB_WORKSPACE/repo" --round "$ROUND" --rounds "$ROUNDS"
 
       # The review sees the whole change since the build's base, not just this fix.
       - id: memory
-        if: steps.publish.outputs.candidate != ''
+        if: steps.publish.outputs.candidate != '' || inputs.rerun
         uses: gingur-root/devkit/actions/app.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -175,39 +192,39 @@ jobs:
           permissionContents: read
 
       - name: Render review
-        if: steps.publish.outputs.candidate != ''
+        if: steps.publish.outputs.candidate != '' || inputs.rerun
         working-directory: devkit
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           MEMORY_TOKEN: ${{ steps.memory.outputs.token }}
           REPO: ${{ github.repository_owner }}/${{ inputs.repo || github.event.repository.name }}
           ISSUE: ${{ inputs.issue || github.event.issue.number }}
-          CANDIDATE: ${{ steps.publish.outputs.candidate }}
+          CANDIDATE: ${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}
           APP_ID: ${{ inputs.appId }}
+          BASE: ${{ inputs.base }}
         run: |
-          base=$(node -p 'require(process.argv[1]).base' "$RUNNER_TEMP/agent/in/job.json")
           pnpm agent render --repo "$REPO" --issue "$ISSUE" --role review --source "$CANDIDATE" \
-            --base "$base" --app-id "$APP_ID" --out "$RUNNER_TEMP/review/in"
-          git -C "$GITHUB_WORKSPACE/repo" fetch --depth=1 origin "$base"
-          git -C "$GITHUB_WORKSPACE/repo" diff --binary "$base" "$CANDIDATE" >"$RUNNER_TEMP/review/in/candidate.patch"
+            --base "$BASE" --app-id "$APP_ID" --out "$RUNNER_TEMP/review/in"
+          git -C "$GITHUB_WORKSPACE/repo" fetch --depth=1 origin "$BASE"
+          git -C "$GITHUB_WORKSPACE/repo" diff --binary "$BASE" "$CANDIDATE" >"$RUNNER_TEMP/review/in/candidate.patch"
 
-      - if: steps.publish.outputs.candidate != ''
+      - if: steps.publish.outputs.candidate != '' || inputs.rerun
         uses: actions/upload-artifact@v7
         with:
           name: review-${{ inputs.round }}-in
           path: ${{ runner.temp }}/review/in
 
-      - if: steps.publish.outputs.candidate != ''
+      - if: steps.publish.outputs.candidate != '' || inputs.rerun
         uses: gingur-root/devkit/actions/repo.pack@main
         with:
           repo: ${{ inputs.repo }}
-          ref: ${{ steps.publish.outputs.candidate }}
+          ref: ${{ steps.publish.outputs.candidate || inputs.rerun && inputs.candidate }}
           token: ${{ steps.app.outputs.token }}
           name: review-${{ inputs.round }}-repo
 
       # The reviewer's read token.
       - id: read
-        if: steps.publish.outputs.candidate != ''
+        if: steps.publish.outputs.candidate != '' || inputs.rerun
         uses: gingur-root/devkit/actions/agent.token@main
         with:
           appId: ${{ inputs.appId }}
@@ -260,9 +277,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     environment: agents
     outputs:
-      repair: ${{ steps.publish.outputs.repair }}
+      next: ${{ steps.publish.outputs.next }}
       retro: ${{ steps.publish.outputs.retro }}
-      candidate: ${{ steps.next.outputs.candidate }}
+      candidate: ${{ steps.next.outputs.candidate || steps.publish.outputs.head }}
       readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app
@@ -306,10 +323,11 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           ROUND: ${{ inputs.round }}
+          ROUNDS: ${{ inputs.rounds }}
           VERIFIED: ${{ needs.verify.outputs.verified }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
-            --round "$ROUND" --verified "$VERIFIED"
+            --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED"
 
       # The next round's repair job: the reviewed commit, the build's base, and this review.
       - id: memory
