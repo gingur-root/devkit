@@ -13,8 +13,10 @@ import { Result } from './result.ts';
 
 vi.mock('./board.ts', () => ({ setStatus: vi.fn(), proposePriority: vi.fn() }));
 
-function harness() {
+function harness(scanner = 'process.exit(0);') {
   const root = mkdtempSync(join(tmpdir(), 'criticism-publish-'));
+  writeFileSync(join(root, 'gitleaks'), `#!${process.execPath}\n${scanner}`, { mode: 0o755 });
+  vi.stubEnv('PATH', `${root}:${process.env.PATH}`);
   const input = join(root, 'in'),
     output = join(root, 'out'),
     critic = join(root, 'critic');
@@ -319,3 +321,26 @@ for (const kind of ['story', 'triage'] as const) {
     );
   });
 }
+
+test('a secret screen stop in criticism names validation without quoting the result', async () => {
+  const token = 'gh' + 'p_' + 'A1b2C3d4'.repeat(4) + 'Zz9Y';
+  const h = harness(`
+    const fs = require('node:fs');
+    fs.writeFileSync(process.argv[process.argv.indexOf('-r') + 1], JSON.stringify([
+      { File: 'result.json', RuleID: 'github-pat', Secret: 'REDACTED' }
+    ]));
+    process.exit(2);
+  `);
+  writeFileSync(
+    join(h.critic, 'out/result.json'),
+    JSON.stringify({ ...h.criticResult, summary: token }),
+  );
+  await publish({ in: join(h.critic, 'in'), out: join(h.critic, 'out'), appId: 7 });
+  const comment = h.writes.find(
+    (w) => w.method === 'POST' && w.body.body?.includes('Build blocked'),
+  );
+  assert.match(comment!.body.body!, /stopped at `validate`.*result.json.*github-pat/s);
+  assert.ok(!JSON.stringify(h.writes).includes(token));
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});

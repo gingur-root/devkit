@@ -1228,6 +1228,8 @@ test('subtasks and follow-ups ignore copied markers unless the issue is from the
 /** Writes the job and the agent's result as the run left them, and returns publish's options. */
 function staged(job: Job, result: Result): { in: string; out: string } {
   const dir = mkdtempSync(join(tmpdir(), 'publish-'));
+  writeFileSync(join(dir, 'gitleaks'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  vi.stubEnv('PATH', `${dir}:${process.env.PATH}`);
   const paths = { in: join(dir, 'in'), out: join(dir, 'out') };
   mkdirSync(paths.in);
   mkdirSync(paths.out);

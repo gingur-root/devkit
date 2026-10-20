@@ -6,6 +6,10 @@ description: 'Scan git history or a directory for secrets with a pinned, checksu
 # together, from the release's gitleaks_<version>_checksums.txt.
 
 inputs:
+  installOnly:
+    description: 'Only put gitleaks on PATH for publish; skip the scan.'
+    required: false
+    default: 'false'
   path:
     description: 'Directory to scan. Empty scans git history.'
     required: false
@@ -33,6 +37,7 @@ runs:
         echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
 
     - name: Scan
+      if: inputs.installOnly != 'true'
       shell: bash
       env:
         LOG_OPTS: ${{ inputs.logOpts }}

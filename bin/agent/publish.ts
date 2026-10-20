@@ -91,6 +91,7 @@ import { approvedPlan } from './render.ts';
 import { denyRules } from './merge.ts';
 import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
+import { screen } from './screen.ts';
 
 export interface PublishOptions {
   in: string;
@@ -427,7 +428,7 @@ interface Assessment {
 }
 
 function readCriticism(job: Job, out: string): Assessment {
-  const v = verdict(job, job.issue.revision, out);
+  const v = screen(out) ?? verdict(job, job.issue.revision, out);
   const valid =
     'result' in v &&
     v.result.status === 'complete' &&
@@ -450,7 +451,7 @@ function readCriticism(job: Job, out: string): Assessment {
               (finding) => `- ${finding.id}: ${finding.scenario} ${finding.impact} ${finding.fix}`,
             ),
         ].join('\n\n')
-      : v.reason;
+      : stopped(job.role, v);
   return { criticism, text, valid };
 }
 
@@ -533,7 +534,9 @@ async function publishCriticism(job: Job, issue: Issue, options: PublishOptions)
       job.repo,
       job.issue.number,
       'build',
-      mention(`${marker('build')}\n\n${body}`),
+      mention(
+        [marker('build'), body, ...(!assessment.valid ? [assessment.text] : [])].join('\n\n'),
+      ),
     );
     await removeLabel(job.repo, job.issue.number, STAGE_LABELS.build);
     await setStatus(job.repo, issue.node_id, 'Needs you');
@@ -979,7 +982,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
     readFileSync(join(options.in, CHECKS_FILE), 'utf8'),
   );
   const planFile = join(options.out, PLAN_FILE);
-  const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
+  const plan = 'result' in v && existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
   const changed =
     'result' in v && specChanged({ revision: job.plan!.revision, checks }, v.result, plan);
   const step =
@@ -1075,7 +1078,7 @@ function readVerifier(job: Job, liveRevision: string, options: PublishOptions): 
     };
   if (verifier.candidate !== job.candidate)
     return { stage: 'stale', reason: 'the verifier job is for a different candidate' };
-  return verdict(verifier, liveRevision, options.verifierOut);
+  return screen(options.verifierOut) ?? verdict(verifier, liveRevision, options.verifierOut);
 }
 
 async function publishReview(
@@ -1973,7 +1976,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   if (job.role === 'memory') {
     // This stage proposes from the recorded merged-PR snapshot. The publish
     // token writes pipeline only; the evidence token reads repository contents.
-    const v = verdict(job, job.issue.revision, options.out);
+    const v = screen(options.out) ?? verdict(job, job.issue.revision, options.out);
     if ('stage' in v) throw new Error(`Memory stopped at ${v.stage}: ${v.reason}.`);
     const changed = readFileSync(join(options.in, 'changed.txt'), 'utf8')
       .split('\n')
@@ -1997,7 +2000,7 @@ export async function publish(options: PublishOptions): Promise<void> {
     await publishCriticism(job, issue, options);
     return;
   }
-  let v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  let v = screen(options.out) ?? verdict(job, revision(issue.title, issue.body ?? ''), options.out);
   const reviewFile = join(options.in, REVIEW_FILE);
   if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {
     const reason = repairMap(Result.parse(JSON.parse(readFileSync(reviewFile, 'utf8'))), v.result);

@@ -221,6 +221,12 @@ jobs:
           token: ${{ secrets.PIPELINE_SECRETS_TOKEN }}
           permissionIssues: write
 
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
+
       - name: Publish
         working-directory: devkit
         env:
