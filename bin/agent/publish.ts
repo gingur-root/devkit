@@ -137,8 +137,7 @@ export function nextStep(gate: Gate): Step {
     return gate.round < gate.rounds ? 'rerun' : 'stop';
   if ('stage' in gate.review) return 'stop';
   const check = criterionVerdict(gate);
-  if (check.kind === 'stop')
-    return check.stage === 'stale' && gate.round < gate.rounds ? 'rerun' : 'stop';
+  if (check.kind === 'stop') return 'stop';
   const result = gated(
     gate.review.result,
     gate.candidate || null,
@@ -164,10 +163,11 @@ export function criterionVerdict(
     reason: `the verifier could not check ${ids.join(', ')}: ${reason}`,
   });
   if (gate.check === null) return stop('verify', 'the verifier did not run');
-  if ('stage' in gate.check) return stop(gate.check.stage, gate.check.reason);
+  if ('stage' in gate.check)
+    return stop(gate.check.stage === 'stale' ? 'verify' : gate.check.stage, gate.check.reason);
   const result = gate.check.result;
   if (result.inputs.candidate !== gate.candidate)
-    return stop('stale', 'the verifier checked a different candidate');
+    return stop('verify', 'the verifier checked a different candidate');
   const findings: Finding[] = ids.flatMap((id) => {
     const entry = result.evidence.find((e) => e.criterion === id && e.result === 'fail');
     return entry

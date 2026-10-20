@@ -629,19 +629,40 @@ test('publication stops and names missing verifier IDs, without marking Ready or
   }
 });
 
-test('publication reruns stale verifier results and rejects a mismatched verifier contract', async () => {
-  for (const round of [0, 10]) {
-    const h = harness();
-    const verifier = {
+test('publication stops stale verifier results and posts review findings on an unchanged head', async () => {
+  for (const verifier of [
+    {
       ...ready,
-      role: 'verify',
       outcome: 'verified' as const,
-      inputs: { ...ready.inputs, candidate: 'old' },
-    };
-    const { output } = await h.stage(ready, round, { checks: { A1: 'agent' }, verifier });
-    assert.match(output, round === 0 ? /next=rerun\nhead=candidate/ : /next=stop/);
-    assert.ok(!h.writes.some((w) => w.path.endsWith('/reviews')));
+      inputs: { ...ready.inputs, candidate: 'candida' },
+    },
+    { ...ready, status: 'stale' as const, outcome: null, summary: 'Candidate superseded.' },
+  ]) {
+    for (const round of [0, 10]) {
+      const h = harness();
+      h.threads.push(newThread('<!-- devkit:finding V-A1 -->', 'STUB.md', 1, 1));
+      const { output } = await h.stage(changes, round, { checks: { A1: 'agent' }, verifier });
+      assert.match(output, /next=stop/);
+      assert.doesNotMatch(output, /head=/);
+      assert.equal(h.writes.filter((w) => w.path.endsWith('/reviews')).length, 1);
+      assert.equal(h.threads.length, 2);
+      assert.match(h.threads[1]!.comments.nodes[0]!.body, /^<!-- devkit:finding F1 -->/);
+      assert.equal(h.threads[0]!.isResolved, false);
+      const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+      assert.match(String(comment.body.body), /stopped at `verify`/);
+      assert.match(String(comment.body.body), /verifier.*A1/);
+      assert.ok(
+        String(comment.body.body).includes('[F1](https://github.com/o/r/pull/2#discussion-2)'),
+      );
+      assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+      assert.ok(
+        !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+      );
+    }
   }
+});
+
+test('publication rejects a mismatched verifier contract', async () => {
   for (const verifierJob of [
     { plan: { revision: 'other', criteria: ['A1'], checks: { A1: 'agent' } } },
     { issue: { number: 99, title: 'T', revision: revision('T', 'B'), bodySeen: true } },

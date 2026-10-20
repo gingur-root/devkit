@@ -118,8 +118,9 @@ blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
 `CI`. Its stable ID lets a later passing round resolve its thread.
 Missing verifier output, a missing evidence entry, `not-verified`, or an
 inconclusive result stops at **Needs you** and names the criterion IDs.
-Stale verifier results rerun on the current head within the round cap, then
-stop at **Needs you**. The loop log records `verify: verified`, the verifier's
+Stale verifier results stop at **Needs you** in stage `verify` and preserve the
+current review findings. A moved PR head still reruns within the round cap.
+The loop log records `verify: verified`, the verifier's
 other outcome or stopped stage, or `verify: skipped` when no job is needed.
 
 The controller posts one `COMMENT` review and one resolvable thread per finding.

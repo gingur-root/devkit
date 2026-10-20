@@ -65,17 +65,26 @@ test('a failed agent criterion requests repair even when the verifier claims ver
   assert.equal(nextStep({ ...gate, check, round: 10 }), 'stop');
 });
 
-test('stale verifier results rerun up to the cap; other verifier stages stop', () => {
-  const check = { stage: 'stale', reason: 'candidate changed' };
-  assert.equal(nextStep({ ...gate, check }), 'rerun');
-  assert.equal(nextStep({ ...gate, check, round: 10 }), 'stop');
-  assert.equal(
-    nextStep({
-      ...gate,
-      check: { result: { ...checked, inputs: { ...checked.inputs, candidate: 'old' } } },
-    }),
-    'rerun',
-  );
+test('stale verifier results stop at verify unless the PR head moved', () => {
+  for (const check of [
+    { stage: 'stale', reason: 'candidate changed' },
+    { result: { ...checked, inputs: { ...checked.inputs, candidate: 'old' } } },
+  ]) {
+    for (const round of [0, 10]) {
+      assert.equal(nextStep({ ...gate, check, round }), 'stop');
+      const verdict = criterionVerdict({ ...gate, check });
+      assert.equal(verdict.kind, 'stop');
+      if (verdict.kind === 'stop') {
+        assert.equal(verdict.stage, 'verify');
+        assert.match(verdict.reason, /could not check A1:/);
+      }
+    }
+    assert.equal(nextStep({ ...gate, check, head: 'newer' }), 'rerun');
+    assert.equal(nextStep({ ...gate, check, head: 'newer', round: 10 }), 'stop');
+  }
+});
+
+test('other verifier stages stop', () => {
   assert.equal(
     nextStep({ ...gate, check: { stage: 'validate', reason: 'invalid result' } }),
     'stop',
