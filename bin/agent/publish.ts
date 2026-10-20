@@ -111,7 +111,7 @@ interface Outcome {
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
-export type Verdict = { result: Result } | { stage: string; reason: string };
+export type Verdict = { result: Result } | { stage: string; reason: string; step?: string };
 
 export type Step = 'ready' | 'repair' | 'rerun' | 'stop';
 export interface Gate {
@@ -146,6 +146,7 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
         return {
           stage: job.role,
           reason: `the ${job.role} job failed at ${failed[0]} before the agent started; see the job log`,
+          step: failed[0],
         };
     }
     return { stage: job.role, reason: 'the agent ended without a result' };
@@ -257,11 +258,13 @@ function retry(role: string): string {
   return 'reply `/approve`';
 }
 
-export function stopped(role: string, v: { stage: string; reason: string }): string {
+export function stopped(role: string, v: { stage: string; reason: string; step?: string }): string {
   return [
     marker(role),
     `**${role[0]?.toUpperCase()}${role.slice(1)} stopped at \`${v.stage}\`:** ${v.reason}.`,
-    `Fix the cause, then ${retry(role)} again.`,
+    v.step
+      ? `Likely the environment (runner, Bitwarden), not the code: read step \`${v.step}\` in job \`${role}\` before you ${retry(role)} again.`
+      : `Fix the cause, then ${retry(role)} again.`,
   ].join('\n\n');
 }
 

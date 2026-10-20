@@ -470,6 +470,7 @@ test("a stop names the CLI's failure class and a rate limit's reset time", () =>
     body,
     /stopped at `plan`:\*\* `rate_limit`, resets 2026-10-14 04:00 UTC: Hit a limit\./,
   );
+  assert.ok(body.endsWith('Fix the cause, then add `agent:plan` again.'));
   assert.match(failureReason({ ...limited, resetsAt: null }, 'x'), /reset time unknown/);
 });
 
@@ -527,7 +528,15 @@ test('a missing result names the first failed setup step, but not a failed run',
   const setupFailure = {
     stage: 'review',
     reason: 'the review job failed at toolchain before the agent started; see the job log',
+    step: 'toolchain',
   };
+  const body = stopped('review', setupFailure);
+  assert.ok(
+    body.endsWith(
+      'Likely the environment (runner, Bitwarden), not the code: read step `toolchain` in job `review` before you reply `/approve` again.',
+    ),
+  );
+  assert.doesNotMatch(body, /Fix the cause/);
   assert.deepEqual(verdict(job, 'rev', out), setupFailure, 'a failed setup step');
 
   writeFileSync(join(out, STEPS_FILE), JSON.stringify({ ...steps, jobIn: 'failure' }));
