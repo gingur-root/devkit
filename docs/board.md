@@ -53,9 +53,10 @@ What Planning does on each entry:
   if the plan is ready, it moves straight to Building. If not, it asks and
   returns to Needs you.
 
-The pipeline never merges, except memory PRs on pipeline (see
-[Memory after a merge](pipeline.md#memory-after-a-merge)). **Merge** is Troy's
-own action, done through his token, the same as clicking Merge on GitHub.
+A PR that passes review with green CI merges itself unless a deny rule stops
+it ([merge gate](pipeline.md), devkit#267); a stopped PR goes to Needs you.
+The board's **Merge** button is Troy's own action, done through his token, the
+same as clicking Merge on GitHub.
 
 ## How a Continue becomes a build
 

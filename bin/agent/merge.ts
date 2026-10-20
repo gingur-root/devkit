@@ -10,6 +10,7 @@ export const DENY_RULES = [
   'money',
   'data',
   'dependency',
+  'size',
 ] as const;
 export type DenyRule = (typeof DENY_RULES)[number];
 
@@ -20,8 +21,15 @@ const SELF_GUARD = new Set([
   'bin/agent/result.ts',
   'agents/review.md',
   'agents/sdlc.md',
+  'agents/contract.md',
+  'agents/worker.md',
+  'bin/agent/roles.ts',
+  'bin/agent/run.ts',
   '.github/admission.txt',
 ]);
+
+// GitHub's PR file list stops at 3000 entries, so a list that long may be incomplete.
+export const FILE_LIST_CAP = 3000;
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
@@ -53,6 +61,7 @@ export function denyRules(
       /^dockerfile/.test(name) ||
       /^compose.*\.y.*ml$/.test(name) ||
       /^wrangler\.[^/]*$/.test(path) ||
+      ['vercel.json', 'netlify.toml', 'fly.toml'].includes(path) ||
       path.startsWith('.devkit/')
     )
       rules.add('deploy');
@@ -75,10 +84,12 @@ export function denyRules(
     if (
       segments.slice(0, -1).includes('migrations') ||
       name.endsWith('.sql') ||
-      name === 'schema.prisma'
+      name === 'schema.prisma' ||
+      segments.some((segment) => /^(e?mail|smtp)/.test(segment))
     )
       rules.add('data');
   }
+  if (files.length >= FILE_LIST_CAP) rules.add('size');
   try {
     const base = pkgBase === null ? {} : object(JSON.parse(pkgBase));
     const head = pkgHead === null ? {} : object(JSON.parse(pkgHead));

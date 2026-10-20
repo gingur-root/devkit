@@ -21,6 +21,9 @@ const paths = {
     'compose.yaml',
     'app/compose.prod.yml',
     'wrangler.toml',
+    'vercel.json',
+    'netlify.toml',
+    'fly.toml',
     '.devkit/review.md',
   ],
   secrets: [
@@ -46,6 +49,10 @@ const paths = {
     'bin/agent/result.ts',
     'agents/review.md',
     'agents/sdlc.md',
+    'agents/contract.md',
+    'agents/worker.md',
+    'bin/agent/roles.ts',
+    'bin/agent/run.ts',
   ],
   money: ['billing.ts', 'src/payment/client.ts', 'src/mystripe.ts', 'src/invoice.ts'],
   data: [
@@ -55,6 +62,9 @@ const paths = {
     'db/query.sql',
     'schema.prisma',
     'db/schema.prisma',
+    'src/email/send.ts',
+    'mailer.ts',
+    'smtp/client.ts',
   ],
 };
 for (const [rule, files] of Object.entries(paths)) {
@@ -96,6 +106,9 @@ test('rules are unique and follow the table order', () => {
     ),
     ['repo', 'ci', 'deploy', 'secrets', 'auth', 'money', 'data', 'dependency'],
   );
+  const many = Array.from({ length: 3000 }, (_, i) => `docs/${i}.md`);
+  assert.deepEqual(denyRules(repo, many, null, null), ['size']);
+  assert.deepEqual(denyRules(repo, many.slice(1), null, null), []);
   assert.deepEqual(denyRules(repo, ['.github/admission.txt'], null, null), ['ci', 'auth']);
 });
 

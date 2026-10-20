@@ -226,16 +226,18 @@ do not decide which files the gate checks. Paths and repos ignore case.
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `repo`       | The repo is `gingur-root/infra`.                                                                                                                                                                                          |
 | `ci`         | A path matches `.github/**`, `actions/**`, `configs/**`, `.node-version`, `.prototools`, `pnpm-workspace.yaml` or `vite.config.*`, or the `package.json` `scripts` block changes.                                         |
-| `deploy`     | A path matches `Pulumi*.yaml`, `**/Dockerfile*`, `**/compose*.y*ml`, `wrangler.*` or `.devkit/**`.                                                                                                                        |
+| `deploy`     | A path matches `Pulumi*.yaml`, `**/Dockerfile*`, `**/compose*.y*ml`, `wrangler.*`, `vercel.json`, `netlify.toml`, `fly.toml` or `.devkit/**`.                                                                             |
 | `secrets`    | A path contains `secret` or matches `**/.env*`, `.gitleaks*`, `.sops.yaml` or `**/*.sops.*`.                                                                                                                              |
 | `auth`       | A path segment starts with `auth`, `oauth`, `permission`, `identity`, `login` or `session`; a path is `test/admission.test.ts` or `test/agent.token.test.ts`; or devkit changes one of its merge gate files listed below. |
 | `money`      | A path segment contains `billing`, `payment`, `stripe` or `invoice`.                                                                                                                                                      |
-| `data`       | A path matches `**/migrations/**`, `**/*.sql` or `**/schema.prisma`.                                                                                                                                                      |
+| `data`       | A path matches `**/migrations/**`, `**/*.sql` or `**/schema.prisma`, or a path segment starts with `mail`, `email` or `smtp` (sends email).                                                                               |
 | `dependency` | `dependencies`, `optionalDependencies` or `peerDependencies` gains a key or changes a version, or `package.json` cannot be parsed. `devDependencies` changes alone pass.                                                  |
+| `size`       | GitHub lists 3000 or more changed files, so the list may be incomplete.                                                                                                                                                   |
 
 The devkit merge gate files are `bin/agent/merge.ts`, `bin/agent/github.ts`,
-`bin/agent/publish.ts`, `bin/agent/result.ts`, `agents/review.md`,
-`agents/sdlc.md` and `.github/admission.txt`.
+`bin/agent/publish.ts`, `bin/agent/result.ts`, `bin/agent/roles.ts`,
+`bin/agent/run.ts`, `agents/review.md`, `agents/sdlc.md`, `agents/contract.md`,
+`agents/worker.md` and `.github/admission.txt`.
 
 The reviewer can add a stop, never remove one. It returns `troy` with a short
 rule for auth or money logic outside matched paths, production data writes,
