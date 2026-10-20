@@ -207,9 +207,10 @@ Pass the same cap to each publish in the run. Without `--rounds`, the cap is
 rounds in that run. The CLI accepts only integers from 0 to 10; 0 reviews the
 build without repairs or reruns. Local eval keeps its separate cap of 2 repairs and runs without a planner.
 
-The pipeline never merges. Merging is yours, or a Claude project thread's under
-the project's merge policy. The board moves the card to **Done** when the PR
-merges.
+The pipeline never merges, except memory PRs on pipeline (see
+[Memory after a merge](#memory-after-a-merge)). For other PRs, merging is yours,
+or a Claude project thread's under the project's merge policy. The board moves
+the card to **Done** when the PR merges.
 
 ## What a stage can reach
 
@@ -241,11 +242,21 @@ The controller validates all proposed paths and requires evidence for every
 written entry before applying anything. It writes only `memory/_org/` and
 `memory/<repo>/` in a pipeline checkout at the recorded `job.memory` commit.
 It checks the changed evidence. Memory PRs carry entry files only: the index
-is generated from entry frontmatter, so open memory PRs never conflict on it. A check failure
-opens a draft with the check output; a passing check opens a ready PR.
+is generated from entry frontmatter, so open memory PRs never conflict on it.
+A check failure opens a draft with the check output; a passing check opens a
+ready PR and enables GitHub auto-merge (squash, pinned to the pushed commit).
+The PR merges once the required `Check` passes. If it can already merge,
+the controller squash-merges that same commit. A draft never auto-merges.
+A rerun that fails turns auto-merge off before making the PR a draft; a
+passing rerun resets auto-merge to the new commit. The controller refuses
+staged paths outside `memory/` before committing or pushing.
 Changes go to `memory/<repo>-<pr>` on `gingur-root/pipeline`, with a PR into
 `main`. Nothing changes directly on `main`. No changes means no branch, PR
 or comment.
+
+Auto-merge needs `allowAutoMerge` enabled on `gingur-root/pipeline` by infra
+(infra#168, applied with `pulumi up`). An enable or merge failure stops the
+publish job with GitHub's error.
 
 A failed or cancelled run updates one `<!-- devkit:memory -->` comment on the
 merged PR, naming the stopped job and linking its run. The merged card stays Done, and

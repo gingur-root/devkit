@@ -40,7 +40,14 @@ const result = Result.parse({
   role: job.role,
   outcome: 'implemented',
 });
-function fixture() {
+function fixture(
+  options: {
+    open?: { draft: boolean; auto_merge: object | null };
+    enableError?: string;
+    mergeError?: string;
+    disableError?: string;
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'publish-memory-'));
   const checkout = join(root, 'store');
   const out = join(root, 'out');
@@ -72,6 +79,19 @@ function fixture() {
       });
     }
     assert.equal(new Headers(init.headers).get('authorization'), 'Bearer write');
+    if (path === '/graphql') {
+      const query = String(body.query);
+      const error = query.includes('enablePullRequestAutoMerge')
+        ? options.enableError
+        : query.includes('mergePullRequest')
+          ? options.mergeError
+          : query.includes('disablePullRequestAutoMerge')
+            ? options.disableError
+            : undefined;
+      return Response.json(error ? { errors: [{ message: error }] } : { data: {} });
+    }
+    if (method === 'GET' && options.open)
+      return Response.json([{ number: 99, node_id: 'PR_99', ...options.open }]);
     return Response.json(method === 'GET' ? [] : { number: 99, node_id: 'PR_99' });
   });
   const put = (path: string, text: string) => {
@@ -164,7 +184,7 @@ test('valid memory becomes one pipeline PR from the pinned store, never main', a
   try {
     f.put('_org/a.md', entry());
     await publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout);
-    const posts = f.calls.filter((c) => c.method === 'POST');
+    const posts = f.calls.filter((c) => c.method === 'POST' && c.path !== '/graphql');
     assert.equal(posts.length, 1);
     assert.equal(posts[0]!.path, '/repos/gingur-root/pipeline/pulls');
     assert.equal(posts[0]!.body.head, 'memory/scratch-12');
@@ -174,6 +194,16 @@ test('valid memory becomes one pipeline PR from the pinned store, never main', a
     assert.match(String(posts[0]!.body.body), /scratch\/pull\/12/);
     assert.equal(git(f.root, ['--git-dir', f.remote, 'rev-parse', 'main']), f.memory);
     assert.equal(git(f.root, ['--git-dir', f.remote, 'rev-parse', 'memory/scratch-12^']), f.memory);
+    const mutations = f.calls.filter((call) => call.path === '/graphql');
+    assert.equal(mutations.length, 1);
+    assert.match(String(mutations[0]!.body.query), /enablePullRequestAutoMerge/);
+    assert.deepEqual(mutations[0]!.body.variables, {
+      input: {
+        pullRequestId: 'PR_99',
+        mergeMethod: 'SQUASH',
+        expectedHeadOid: git(f.root, ['--git-dir', f.remote, 'rev-parse', 'memory/scratch-12']),
+      },
+    });
   } finally {
     f.cleanup();
   }
@@ -238,6 +268,7 @@ test('a failed evidence check opens a draft containing the failure', async () =>
     assert.equal(pr.body.draft, true);
     assert.match(String(pr.body.body), /Memory check failed/);
     assert.match(String(pr.body.body), /quote not found in gingur-root\/scratch:README.md/);
+    assert.equal(f.calls.filter((call) => call.path === '/graphql').length, 0);
   } finally {
     f.cleanup();
   }
@@ -377,12 +408,14 @@ test('publish binds memory to the recorded snapshot and uses only trusted change
     assert.equal(existsSync(join(f.checkout, 'memory/_org/a.md')), false);
     writeFileSync(resultFile, JSON.stringify(output));
     await publish({ in: input, out: f.out, checkout: f.checkout });
-    assert.equal(f.calls.filter((call) => call.method === 'POST').length, 1);
+    assert.equal(f.calls.filter((call) => call.method === 'POST').length, 2);
     assert.equal(f.calls.filter((call) => call.path.includes('/contents/')).length, 1);
     assert.ok(
       f.calls.every(
         (call) =>
-          call.path.startsWith('/repos/gingur-root/pipeline/') || call.path.includes('/contents/'),
+          call.path.startsWith('/repos/gingur-root/pipeline/') ||
+          call.path.includes('/contents/') ||
+          call.path === '/graphql',
       ),
     );
   } finally {
@@ -454,6 +487,189 @@ test('updating an existing memory PR preserves one branch and sets the draft sta
     assert.equal(updates[0]!.method, 'PATCH');
     assert.equal(updates[0]!.path, '/repos/gingur-root/pipeline/pulls/99');
     assert.match(JSON.stringify(updates[1]!.body), /convertPullRequestToDraft/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+for (const passed of [true, false]) {
+  for (const draft of [true, false]) {
+    for (const enabled of [true, false]) {
+      test(`existing memory PR: passed=${passed}, draft=${draft}, auto_merge=${enabled}`, async () => {
+        const f = fixture({ open: { draft, auto_merge: enabled ? {} : null } });
+        try {
+          f.put('_org/a.md', entry(passed ? 'real evidence' : 'missing quote'));
+          await publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout);
+          const writes = f.calls.filter((call) => call.method !== 'GET');
+          assert.equal(writes[0]!.method, 'PATCH');
+          assert.equal(writes[0]!.path, '/repos/gingur-root/pipeline/pulls/99');
+          const mutations = writes.filter((call) => call.path === '/graphql');
+          const names = mutations.map(
+            (call) => String(call.body.query).match(/\b(\w+)\(input:/)![1],
+          );
+          const expected: string[] = [];
+          if (passed && draft) expected.push('markPullRequestReadyForReview');
+          if (enabled) expected.push('disablePullRequestAutoMerge');
+          if (passed) expected.push('enablePullRequestAutoMerge');
+          else if (!draft) expected.push('convertPullRequestToDraft');
+          assert.deepEqual(names, expected);
+          if (passed) {
+            assert.deepEqual(mutations.at(-1)!.body.variables, {
+              input: {
+                pullRequestId: 'PR_99',
+                mergeMethod: 'SQUASH',
+                expectedHeadOid: git(f.root, [
+                  '--git-dir',
+                  f.remote,
+                  'rev-parse',
+                  'memory/scratch-12',
+                ]),
+              },
+            });
+          }
+          assert.equal(
+            git(f.root, ['--git-dir', f.remote, 'branch', '--list', 'memory/*']),
+            'memory/scratch-12',
+          );
+        } finally {
+          f.cleanup();
+        }
+      });
+    }
+  }
+}
+
+test('a clean-status enable error falls back to a squash merge of the pushed head', async () => {
+  const f = fixture({ enableError: 'Pull request is in clean status' });
+  try {
+    f.put('_org/a.md', entry());
+    await publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout);
+    const mutations = f.calls.filter((call) => call.path === '/graphql');
+    assert.equal(mutations.length, 2);
+    assert.match(String(mutations[0]!.body.query), /enablePullRequestAutoMerge/);
+    assert.match(String(mutations[1]!.body.query), /\bmergePullRequest\(/);
+    const expected = {
+      input: {
+        pullRequestId: 'PR_99',
+        mergeMethod: 'SQUASH',
+        expectedHeadOid: git(f.root, ['--git-dir', f.remote, 'rev-parse', 'memory/scratch-12']),
+      },
+    };
+    assert.deepEqual(mutations[0]!.body.variables, expected);
+    assert.deepEqual(mutations[1]!.body.variables, expected);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test.each(['Auto-merge is not allowed', 'Expected head OID did not match'])(
+  'an enable error rejects publishMemory without merging: %s',
+  async (enableError) => {
+    const f = fixture({ enableError });
+    try {
+      f.put('_org/a.md', entry());
+      await assert.rejects(
+        publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout),
+        (error: Error) => error.message.includes(enableError),
+      );
+      const mutations = f.calls.filter((call) => call.path === '/graphql');
+      assert.equal(mutations.length, 1);
+      assert.match(String(mutations[0]!.body.query), /enablePullRequestAutoMerge/);
+    } finally {
+      f.cleanup();
+    }
+  },
+);
+
+test('a fallback merge error rejects publishMemory', async () => {
+  const f = fixture({
+    enableError: 'Pull request is in CLEAN STATUS',
+    mergeError: 'Expected head OID did not match',
+  });
+  try {
+    f.put('_org/a.md', entry());
+    await assert.rejects(
+      publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout),
+      /Expected head OID did not match/,
+    );
+    assert.equal(f.calls.filter((call) => call.path === '/graphql').length, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a disable error stops a failed rerun before converting the PR to a draft', async () => {
+  const f = fixture({
+    open: { draft: false, auto_merge: {} },
+    disableError: 'Could not disable auto-merge',
+  });
+  try {
+    f.put('_org/a.md', entry('missing quote'));
+    await assert.rejects(
+      publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout),
+      /Could not disable auto-merge/,
+    );
+    const mutations = f.calls.filter((call) => call.path === '/graphql');
+    assert.equal(mutations.length, 1);
+    assert.match(String(mutations[0]!.body.query), /disablePullRequestAutoMerge/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a staged path outside memory is refused before committing or pushing', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.checkout, 'stray.txt'), 'unrelated');
+    git(f.checkout, ['add', 'stray.txt']);
+    f.put('_org/a.md', entry());
+    await assert.rejects(
+      publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout),
+      /stray\.txt.*outside memory\//,
+    );
+    assert.equal(git(f.checkout, ['rev-parse', 'HEAD']), f.memory);
+    assert.equal(git(f.root, ['--git-dir', f.remote, 'branch', '--list', 'memory/*']), '');
+    assert.equal(f.calls.length, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a staged outside path with leading whitespace is refused without trimming its name', async () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.checkout, '\nmemory'));
+    writeFileSync(join(f.checkout, '\nmemory/stray.md'), 'unrelated');
+    git(f.checkout, ['add', '--', '\nmemory/stray.md']);
+    f.put('_org/a.md', entry());
+    await assert.rejects(
+      publishMemory({ ...job, memory: f.memory }, result, f.out, f.checkout),
+      /stray\.md.*outside memory\//,
+    );
+    assert.equal(git(f.checkout, ['rev-parse', 'HEAD']), f.memory);
+    assert.equal(git(f.root, ['--git-dir', f.remote, 'branch', '--list', 'memory/*']), '');
+    assert.equal(f.calls.length, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a staged rename into memory cannot hide an outside deletion', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.checkout, 'stray.md'), entry());
+    git(f.checkout, ['add', 'stray.md']);
+    git(f.checkout, ['commit', '-m', 'outside entry'], PIPELINE_BOT);
+    const memory = git(f.checkout, ['rev-parse', 'HEAD']);
+    git(f.checkout, ['mv', 'stray.md', 'memory/_org/a.md']);
+    f.put('_org/a.md', entry());
+    await assert.rejects(
+      publishMemory({ ...job, memory }, result, f.out, f.checkout),
+      /stray\.md.*outside memory\//,
+    );
+    assert.equal(git(f.checkout, ['rev-parse', 'HEAD']), memory);
+    assert.equal(git(f.root, ['--git-dir', f.remote, 'branch', '--list', 'memory/*']), '');
+    assert.equal(f.calls.length, 0);
   } finally {
     f.cleanup();
   }
