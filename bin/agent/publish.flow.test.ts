@@ -10,9 +10,18 @@ import { git, gitAsOperator } from '../git.ts';
 import { setStatus } from './board.ts';
 import { PIPELINE_BOT } from './constants.ts';
 import { type Comment } from './github.ts';
-import { CANDIDATE_FILE, JOB_FILE, type Job, RESULT_FILE, REVIEW_FILE, revision } from './job.ts';
+import {
+  CANDIDATE_FILE,
+  JOB_FILE,
+  type Job,
+  RESULT_FILE,
+  REVIEW_FILE,
+  THREADS_FILE,
+  revision,
+} from './job.ts';
 import { loopComment, publish, readLoopState } from './publish.ts';
 import { Result } from './result.ts';
+import { readThreads } from './threads.ts';
 
 vi.mock('./board.ts', () => ({ setStatus: vi.fn(), proposePriority: vi.fn() }));
 vi.mock('../git.ts', () => ({ git: vi.fn(), gitAsOperator: vi.fn() }));
@@ -161,6 +170,7 @@ function harness() {
         candidate: options.candidate ?? job.candidate,
       },
     };
+    writeFileSync(join(dir, THREADS_FILE), JSON.stringify(await readThreads('o/r', pull.number)));
     writeFileSync(join(dir, JOB_FILE), JSON.stringify(job));
     writeFileSync(join(dir, RESULT_FILE), JSON.stringify(matched));
     writeFileSync(
@@ -542,4 +552,40 @@ test('publication threads questions alongside findings and stops a question-only
   );
   const second = await h.stage({ ...review, findings: [] }, 1);
   assert.match(second.output, /next=stop/);
+});
+
+test('new questions get new threads past every open, resolved and current Q ID', async () => {
+  const h = harness();
+  await h.stage({ ...changes, questions: ['Original API question?'] }, 0);
+  h.threads.push({
+    ...newThread('<!-- devkit:finding Q20 -->', 'STUB.md', 1, 20),
+    isResolved: true,
+  });
+  const second = await h.stage(
+    {
+      ...changes,
+      findings: [...changes.findings!, { ...changes.findings![0]!, id: 'Q12', blocking: false }],
+      questions: ['New API question?', 'Another question?'],
+    },
+    1,
+  );
+  const review = Result.parse(JSON.parse(readFileSync(join(second.dir, REVIEW_FILE), 'utf8')));
+  assert.deepEqual(
+    review.findings?.slice(-2).map((f) => f.id),
+    ['Q21', 'Q22'],
+  );
+  assert.deepEqual(review.questions, []);
+  assert.equal(h.threads[1]!.isResolved, true, 'the old question is resolved');
+  for (const [id, text] of [
+    ['Q21', 'New API question?'],
+    ['Q22', 'Another question?'],
+  ]) {
+    const t = h.threads.find((t) =>
+      t.comments.nodes[0]!.body.startsWith(`<!-- devkit:finding ${id} -->`),
+    );
+    assert.ok(t, id);
+    assert.equal(t.isResolved, false, 'the new question stays open for the planner');
+    assert.equal(t.comments.nodes.length, 1, 'a fresh thread, not a reply on the old one');
+    assert.ok(t.comments.nodes[0]!.body.includes(text!));
+  }
 });

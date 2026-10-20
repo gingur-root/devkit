@@ -1449,6 +1449,8 @@ test('replan publication replies, gates changes, preserves approval, and stops a
     'repair',
     'spec',
     'checks-only',
+    'moved',
+    'moved-cap',
     'questions',
     'inconclusive',
     'missing',
@@ -1520,7 +1522,9 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       const path = new URL(url).pathname;
       const body = init.body === undefined ? undefined : JSON.parse(String(init.body));
       if (path === '/repos/o/r/pulls')
-        return Response.json([{ number: 2, head: { sha: job.source } }]);
+        return Response.json([
+          { number: 2, head: { sha: scenario.startsWith('moved') ? 'new-head' : job.source } },
+        ]);
       if (path === '/repos/o/r/issues/2/comments') return Response.json([log]);
       if (path === '/repos/o/r/issues/comments/50') {
         log = { ...log, body: body.body };
@@ -1542,18 +1546,23 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       return fallback(url, init);
     });
     try {
-      await publish({ ...paths, round: 3, rounds: 10 });
+      await publish({ ...paths, round: 3, rounds: scenario === 'moved-cap' ? 3 : 10 });
       const next = readFileSync(output, 'utf8');
       const expected =
-        scenario === 'repair'
-          ? 'repair'
-          : scenario === 'spec' || scenario === 'checks-only'
-            ? 'spec'
-            : 'stop';
+        scenario === 'moved'
+          ? 'rerun'
+          : scenario === 'repair'
+            ? 'repair'
+            : scenario === 'spec' || scenario === 'checks-only'
+              ? 'spec'
+              : 'stop';
       assert.ok(next.includes(`next=${expected}`), `${scenario}: ${next}`);
       assert.ok(!next.includes('retro='));
       assert.equal(next.includes('repair=true'), expected === 'repair');
-      assert.equal(mutations.length, scenario === 'missing' || scenario === 'invalid' ? 0 : 2);
+      assert.equal(
+        mutations.length,
+        ['missing', 'invalid', 'moved', 'moved-cap'].includes(scenario) ? 0 : 2,
+      );
       if (mutations.length)
         assert.match(mutations[0]!.body, /^Planner `candida`\n\nFix the parser/);
       const state = readLoopState(log.body);
@@ -1562,7 +1571,13 @@ test('replan publication replies, gates changes, preserves approval, and stops a
       assert.equal(state.entries.at(-1)?.round, 3);
       const stage = bodies.find((b) => b.startsWith(marker('replan')))!;
       assert.ok(stage);
-      if (expected !== 'repair') {
+      if (expected === 'rerun') {
+        assert.ok(next.includes('head=new-head'));
+        assert.equal(state.entries.at(-1)?.step, 'rerun');
+        assert.equal(process.exitCode, exitCode);
+        assert.ok(github.statuses.includes('item-I_1 Building'));
+        assert.match(stage, /Re-reviewing `new-hea`/);
+      } else if (expected !== 'repair') {
         assert.match(stage, /round 3/);
         assert.match(stage, /\[F1\]\(/);
         assert.ok(github.statuses.includes('item-I_1 Needs you'));

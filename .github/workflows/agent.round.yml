@@ -84,10 +84,10 @@ on:
         value: ${{ jobs.verdict.outputs.next || (jobs.gate.outputs.next != 'repair' && jobs.gate.outputs.next || '') }}
       candidate:
         description: 'The reviewed commit to repair, or the current PR head to re-review.'
-        value: ${{ jobs.verdict.outputs.candidate }}
+        value: ${{ jobs.verdict.outputs.candidate || jobs.gate.outputs.candidate }}
       retro:
         description: '`true` when this round left the card in Needs you.'
-        value: ${{ jobs.verdict.outputs.retro || jobs.gate.outputs.retro }}
+        value: ${{ jobs.verdict.outputs.retro }}
       readToken:
         description: "The next round's sealed read token for its replan, when `next` is `repair`."
         value: ${{ jobs.verdict.outputs.readToken }}
@@ -122,7 +122,7 @@ jobs:
     environment: agents
     outputs:
       next: ${{ steps.publish.outputs.next }}
-      retro: ${{ steps.publish.outputs.retro }}
+      candidate: ${{ steps.publish.outputs.head }}
       readToken: ${{ steps.read.outputs.sealed }}
     steps:
       - id: app

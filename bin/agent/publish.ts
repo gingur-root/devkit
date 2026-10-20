@@ -757,7 +757,10 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
   const changed =
     'result' in v && specChanged({ revision: job.plan!.revision, checks }, v.result, plan);
-  const step = replanStep(v, changed);
+  const step =
+    pull.head.sha !== job.source && round < (options.rounds ?? REPAIR_ROUNDS)
+      ? 'rerun'
+      : replanStep(v, changed);
   if ('result' in v)
     await replyChanges(job.repo, pull.number, v.result.changes ?? [], job.source, 'Planner');
   // Record approval before rewriting the plan comment, so the render guard holds even after a partial publish.
@@ -788,8 +791,14 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `next=${step}\n${step === 'repair' ? 'repair=true\n' : ''}`,
+      `next=${step}\n${step === 'repair' ? 'repair=true\n' : ''}${step === 'rerun' ? `head=${pull.head.sha}\n` : ''}`,
     );
+  if (step === 'rerun')
+    return {
+      body: `${marker('replan')}\n\nRe-reviewing \`${pull.head.sha.slice(0, 7)}\`: the PR has a newer commit than the planner saw. Round ${round + 1} of ${options.rounds ?? REPAIR_ROUNDS}.`,
+      status: 'Building',
+      stopped: false,
+    };
   const reason =
     'stage' in v
       ? `stopped at \`${v.stage}\`: ${v.reason}`
@@ -823,7 +832,17 @@ async function publishReview(job: Job, v: Verdict, options: PublishOptions): Pro
     appendFileSync(process.env.GITHUB_OUTPUT, `next=${step}\n`);
     if (step === 'repair') appendFileSync(process.env.GITHUB_OUTPUT, 'repair=true\n');
   }
-  const result = 'result' in v ? gated(v.result, job.candidate, options.verified ?? '') : null;
+  const threads: Thread[] =
+    'result' in v ? JSON.parse(readFileSync(join(options.in, THREADS_FILE), 'utf8')) : [];
+  const result =
+    'result' in v
+      ? gated(
+          v.result,
+          job.candidate,
+          options.verified ?? '',
+          threads.map((t) => t.id),
+        )
+      : null;
   const log =
     pull &&
     (await updateLoop(job, pull, options, {
@@ -871,7 +890,12 @@ export const CI_FINDING = 'CI';
  * itself (devkit#9). Otherwise it carries a blocking CI finding for the repair,
  * so a pass from an earlier or failed verify never reaches Ready.
  */
-export function gated(result: Result, candidate: string | null, verified: string): Result {
+export function gated(
+  result: Result,
+  candidate: string | null,
+  verified: string,
+  threadIds: string[] = [],
+): Result {
   const green = candidate !== null && verified === candidate;
   const finding = {
     id: CI_FINDING,
@@ -894,14 +918,13 @@ export function gated(result: Result, candidate: string | null, verified: string
           outcome: result.outcome === 'pass' ? 'changes-requested' : result.outcome,
           findings,
         };
-  const ids = new Set(findings.map((f) => f.id));
-  let question = 0;
+  let question = [...threadIds, ...findings.map((f) => f.id)].reduce(
+    (max, id) => Math.max(max, Number(/^Q(\d+)$/.exec(id)?.[1] ?? 0)),
+    0,
+  );
   for (const text of result.questions) {
-    while (ids.has(`Q${++question}`)) {
-      /* keep existing finding IDs */
-    }
     findings.push({
-      id: `Q${question}`,
+      id: `Q${++question}`,
       axis: 'spec',
       blocking: false,
       criterion: null,
