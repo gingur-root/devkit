@@ -474,8 +474,9 @@ jobs:
           shopt -s nullglob
           passed=()
           for script in "$RUNNER_TEMP/verify/out/checks/"*.sh; do
-            if env -i PATH="$PATH" HOME="$HOME" bash "$script"; then
-              id=$(basename "$script" .sh)
+            id=$(basename "$script" .sh)
+            [[ $id =~ ^[A-Za-z0-9_-]+$ ]] || continue
+            if env -i PATH="$PATH" HOME="$HOME" RUNNER_TRACKING_ID="$RUNNER_TRACKING_ID" bash "$script"; then
               passed+=("$id")
             fi
           done

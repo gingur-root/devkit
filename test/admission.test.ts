@@ -5,7 +5,15 @@
 // that did.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vite-plus/test';
@@ -382,7 +390,7 @@ test('criteria verification reuses the review pack and token and feeds every ver
   }
 });
 
-test('recheck reports only successful scripts and keeps its output out of their environment', () => {
+test('recheck reports valid successful IDs, preserves runner tracking and hides its output', () => {
   const round = parse(readFileSync(new URL('agent.round.yml', workflows), 'utf8'));
   const step = round.jobs.recheck?.steps.find((s: { id?: string }) => s.id === 'recheck');
   assert.ok(step, 'recheck step exists');
@@ -393,19 +401,31 @@ test('recheck reports only successful scripts and keeps its output out of their 
   mkdirSync(repo);
   mkdirSync(checks, { recursive: true });
   writeFileSync(join(repo, 'candidate.txt'), 'candidate');
-  writeFileSync(join(checks, 'A1.sh'), 'test "$(cat candidate.txt)" = candidate\n');
+  writeFileSync(
+    join(checks, 'A1.sh'),
+    'test "$(cat candidate.txt)" = candidate &&\nbash -c \'printf "%s\\n" "$RUNNER_TRACKING_ID" > tracking.txt\'\n',
+  );
   writeFileSync(join(checks, 'A2.sh'), 'exit 1\n');
   writeFileSync(join(checks, 'A3.sh'), 'echo passed=A3 >>"$GITHUB_OUTPUT"\n');
+  writeFileSync(join(checks, 'A1,A2.sh'), 'touch invalid-ran\n');
   writeFileSync(output, '');
   try {
     const run = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
       cwd: repo,
-      env: { PATH: process.env.PATH, HOME: dir, RUNNER_TEMP: dir, GITHUB_OUTPUT: output },
+      env: {
+        PATH: process.env.PATH,
+        HOME: dir,
+        RUNNER_TEMP: dir,
+        GITHUB_OUTPUT: output,
+        RUNNER_TRACKING_ID: 'github_recheck_test',
+      },
       encoding: 'utf8',
     });
     assert.equal(run.status, 0, run.stderr);
     assert.equal(readFileSync(output, 'utf8'), 'passed=A1\n');
-    for (const name of ['A1', 'A2', 'A3']) rmSync(join(checks, `${name}.sh`));
+    assert.equal(existsSync(join(repo, 'invalid-ran')), false);
+    assert.equal(readFileSync(join(repo, 'tracking.txt'), 'utf8'), 'github_recheck_test\n');
+    for (const name of ['A1', 'A2', 'A3', 'A1,A2']) rmSync(join(checks, `${name}.sh`));
     writeFileSync(output, '');
     const empty = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
       cwd: repo,
