@@ -67,12 +67,14 @@ A stage that fails the parse or writes no envelope has stopped (step 9).
 
 Build and repair run on Codex, from the controller, with the same prompt.
 `--output-schema` makes its last message the envelope, as the pipeline's Codex
-run does:
+run does. Write the prompt to `$JOB/<stage>.prompt.md` and pass it on stdin
+with `-`. Keep that redirect: in a multi-line Bash command, Claude Code leaves
+stdin open, and `codex exec` then waits on it forever.
 
 ```bash
 node --input-type=module -e "import {RESULT_JSON_SCHEMA} from '<devkit>/bin/agent/result.ts'; console.log(JSON.stringify(RESULT_JSON_SCHEMA))" > $JOB/result.schema.json
 codex exec -C <worktree> --add-dir $JOB -s danger-full-access -c model_reasoning_effort=high \
-  --output-schema $JOB/result.schema.json -o $JOB/<stage>.json "<prompt>"
+  --output-schema $JOB/result.schema.json -o $JOB/<stage>.json - < $JOB/<stage>.prompt.md
 ```
 
 ## Preflight
