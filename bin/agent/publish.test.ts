@@ -12,6 +12,9 @@ import { test, vi } from 'vite-plus/test';
 import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import {
   capText,
+  stalled,
+  noProgressText,
+  unchangedText,
   restoreHeading,
   replanStopText,
   changedCriteria,
@@ -41,7 +44,7 @@ import {
   replyChanges,
   verdict,
 } from './publish.ts';
-import type { Gate, LoopState } from './publish.ts';
+import type { Gate, LoopState, LoopEntry } from './publish.ts';
 import {
   CONTRACT_PREFIX,
   ISSUES_FILE,
@@ -1761,4 +1764,105 @@ test('restoring a spec heading preserves the approved plan and its contract', ()
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
+});
+
+function historyEntry(
+  round: number,
+  open: string[],
+  step: LoopEntry['step'] = 'repair',
+): LoopEntry {
+  return {
+    round,
+    open,
+    step,
+    candidate: 'new',
+    ci: 'green',
+    review: 'changes-requested',
+    verify: 'skipped',
+    replan: null,
+    hypotheses: [],
+  };
+}
+
+test('three counted reviews stop only the blocking IDs that never moved', () => {
+  const history = [historyEntry(0, ['F1', 'F2']), historyEntry(1, ['F1'])];
+  const gate: Gate = {
+    candidate: 'new',
+    head: 'new',
+    verified: 'new',
+    checks: {},
+    check: null,
+    round: 2,
+    rounds: 10,
+    review: { result: { ...pass, outcome: 'changes-requested', findings: [finding] } },
+    history,
+  };
+  assert.equal(nextStep(gate), 'stop');
+  assert.deepEqual(stalled(history, 2, ['F1', 'F2']), ['F1']);
+  assert.equal(nextStep({ ...gate, history: history.slice(1) }), 'repair');
+  assert.equal(nextStep({ ...gate, history: [historyEntry(0, ['other']), history[1]!] }), 'repair');
+  const reruns = [history[0]!, historyEntry(1, ['F1'], 'rerun'), historyEntry(2, ['F1'])];
+  assert.equal(nextStep({ ...gate, history: reruns, round: 3 }), 'stop');
+  assert.equal(nextStep({ ...gate, history: reruns.slice(0, 2) }), 'repair');
+  for (const step of ['stop', 'spec', null] as const)
+    assert.equal(
+      nextStep({ ...gate, history: [history[0]!, historyEntry(1, ['F1'], step)] }),
+      'repair',
+    );
+  assert.equal(nextStep({ ...gate, history: [], review: { result: pass } }), 'ready');
+  assert.equal(
+    nextStep({
+      ...gate,
+      review: { result: { ...pass, findings: [{ ...finding, blocking: false }] } },
+    }),
+    'ready',
+  );
+  assert.equal(nextStep({ ...gate, history: history.filter((e) => e.round >= 1) }), 'repair');
+  assert.match(noProgressText(['V-A2']), /no progress on V-A2 for 3 rounds/);
+  assert.match(
+    unchangedText(2, 'abcdef123'),
+    /repair round 2 left the PR head at `abcdef1` unchanged/,
+  );
+});
+
+test('per-check CI and verifier findings participate in the same no-progress gate', () => {
+  const gate: Gate = {
+    candidate: 'new',
+    head: 'new',
+    verified: '',
+    checks: {},
+    check: null,
+    round: 2,
+    rounds: 10,
+    review: { result: pass },
+    failed: ['test'],
+    history: [historyEntry(0, ['CI:test']), historyEntry(1, ['CI:test'])],
+  };
+  assert.equal(nextStep(gate), 'stop');
+  assert.deepEqual(stalled(gate.history!, 2, ['CI:test']), ['CI:test']);
+  assert.equal(
+    nextStep({ ...gate, history: [historyEntry(0, ['CI:lint']), historyEntry(1, ['CI:test'])] }),
+    'repair',
+  );
+  assert.equal(
+    nextStep({
+      ...gate,
+      verified: 'new',
+      failed: [],
+      history: [historyEntry(0, ['V-A2']), historyEntry(1, ['V-A2'])],
+      review: {
+        result: { ...pass, outcome: 'changes-requested', findings: [{ ...finding, id: 'V-A2' }] },
+      },
+    }),
+    'stop',
+  );
+  assert.deepEqual(
+    gated(pass, 'new', '', [], [], ['lint', 'test']).findings?.map((f) => f.id),
+    ['CI:lint', 'CI:test'],
+  );
+  assert.deepEqual(
+    gated(pass, 'new', '', [], [], []).findings?.map((f) => f.id),
+    ['CI'],
+  );
+  assert.ok(gated(pass, 'new', '', [], [], ['test']).findings?.every((f) => f.blocking));
 });

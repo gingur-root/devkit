@@ -116,7 +116,7 @@ from the approved contract, never from the candidate's proposed criteria.
 Ready needs review pass, green CI and `verified` with passing evidence for
 every `agent` ID, all on the same candidate. A failed criterion creates a
 blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
-`CI`. Its stable ID lets a later passing round resolve its thread.
+`CI` findings. Its stable ID lets a later passing round resolve its thread.
 
 Publish screens agent text and patch additions with gitleaks before any write.
 A hit or scanner failure stops at `validate`.
@@ -152,7 +152,12 @@ a resolved thread gets a new thread.
   it, the controller squash-merges the reviewed commit and marks the card
   **Done**. A denied PR stays open at **Needs you**, naming every rule.
   A merge failure also goes to **Needs you**, with GitHub's error.
-  Red CI adds a blocking `CI` finding, which Codex fixes like any other.
+  Red CI adds one blocking `CI:<check>` finding per failed check (for example,
+  `CI:test`). With no check list, it adds a plain `CI` finding.
+  A weakened test, workflow, test/lint config or `package.json` script adds a
+  blocking `T-<path>` finding unless the approved plan names that exact file.
+  The controller checks the whole change each round; the reviewer cannot clear
+  this finding by disputing it.
 - **Changes requested:** Claude (Opus 5.5, medium effort) replans before
   each repair. It replies on every unresolved thread, using its finding ID
   in `changes[].ref` and the answer in `response`. A missing reply stops at
@@ -182,6 +187,13 @@ a resolved thread gets a new thread.
   gives the latest planner summary as the agents' suggestion. Other stops
   (an inconclusive review, a question-only review or a failed repair) also
   name the round, link open threads and link the loop log.
+- **No progress:** the same blocking ID in three counted reviews stops early
+  at **Needs you**, with “no progress on <ID> for 3 rounds”. This includes
+  `CI:<check>`, `V-*` and `T-*` IDs. Earlier repair rounds count; stale reruns
+  are skipped. Other steps break the chain, and a spec approval starts the
+  count again at the stopped round. A repair that pushes no commit says which
+  PR head stayed unchanged and stops. Transient failures keep their resumable
+  stop without a no-progress claim.
 - **Stale review:** the next round reviews the current PR head without a
   repair or a push. The card stays in **Building**, and the issue comment
   names the commit being re-reviewed and the next round. Reruns count toward
@@ -243,7 +255,8 @@ do not decide which files the gate checks. Paths and repos ignore case.
 | `size`       | GitHub lists 3000 or more changed files, so the list may be incomplete.                                                                                                                                                   |
 
 The devkit merge gate files are `bin/agent/merge.ts`, `bin/agent/github.ts`,
-`bin/agent/publish.ts`, `bin/agent/result.ts`, `bin/agent/roles.ts`,
+`bin/agent/publish.ts`, `bin/agent/guard.ts`, `bin/agent/patch.ts`,
+`bin/agent/result.ts`, `bin/agent/roles.ts`,
 `bin/agent/run.ts`, `agents/review.md`, `agents/sdlc.md`, `agents/contract.md`,
 `agents/worker.md` and `.github/admission.txt`.
 
@@ -479,8 +492,8 @@ on a scratch issue.
    blocking F1 thread repaired and resolved in round 1, and `advisory` for a
    passing review with an advisory thread. For `changes`, check that the PR
    has one F1 thread, resolved after round 1, with the repair's reply.
-   With `never`, check that ten replans and ten repairs run, then the cap
-   comment lists open threads and the last planner summary in **Needs you**.
+   With `never`, check that two replans and two repairs run, then round 2
+   stops with "no progress on F1 for 3 rounds" in **Needs you**.
    With `spec`, round 1 stops before repair: the plan comment adds `A2` and
    the card moves to **Needs you**. Approve it, then dispatch the build again
    from the same proof branch with `fixture=spec`. Check that Build is skipped,

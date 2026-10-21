@@ -14,6 +14,8 @@ compatibility effects. Fix verified defects; respond to unsupported claims
 with evidence. Clarify related ambiguous findings before changing their
 shared behavior. Independent, understood findings may proceed within scope.
 
+Restore the check to fix a `T-<path>` finding; a dispute alone does not clear it.
+
 If a finding requires a product decision or contract change, return it as a
 question with the exact conflict. If you dispute a finding, return code or
 execution evidence for the reviewer to assess. An implementer's dismissal

@@ -139,6 +139,7 @@ export const STAGE_LABELS = {
  * you. agent.build.yml has one `repair-<n>` job per round.
  */
 export const REPAIR_ROUNDS = 10;
+export const NO_PROGRESS_ROUNDS = 3;
 
 /** The pipeline App's bot user, which authors the build's commits. */
 export const PIPELINE_BOT = {

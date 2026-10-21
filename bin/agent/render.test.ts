@@ -1620,6 +1620,7 @@ test('build resumes only an unchanged transient stop and restores a spec heading
           scenario,
         );
       if (scenario === 'spec') {
+        assert.equal(state.since, 6);
         assert.deepEqual(writes, [
           '/repos/o/r/issues/comments/23',
           '/repos/o/r/issues/comments/24',

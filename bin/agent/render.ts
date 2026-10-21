@@ -17,7 +17,14 @@ import {
   TRANSIENT_FAILURES,
 } from './constants.ts';
 import { setStatus } from './board.ts';
-import { removeLabel, rest, restAll, stageComment, upsertStageComment } from './github.ts';
+import {
+  removeLabel,
+  rest,
+  restAll,
+  stageComment,
+  upsertStageComment,
+  trustedContents,
+} from './github.ts';
 import {
   CHANGED_FILE,
   CHECKS_FILE,
@@ -51,15 +58,6 @@ import { MANIFEST_PATH } from './tools.ts';
 
 const MEMORY_REPO = 'gingur-root/pipeline';
 const CLOSED_ISSUE_STATE = 'closed';
-
-async function trustedContents<T>(repo: string, path: string, ref: string): Promise<T | null> {
-  return rest<T>('GET', `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`).catch(
-    (error: Error) => {
-      if (!error.message.includes(' 404 ')) throw error;
-      return null;
-    },
-  );
-}
 
 async function trustedFile(repo: string, path: string, ref: string): Promise<Buffer | null> {
   const file = await trustedContents<{ content: string }>(repo, path, ref);
@@ -541,6 +539,7 @@ export async function render(options: RenderOptions): Promise<Job> {
       const last = state.entries.at(-1);
       if (options.role === 'build' && last?.step === 'spec') {
         state.approved = approved.contract.planRevision;
+        state.since = last.round;
         await upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
         const plan = await stageComment(job.repo, job.issue.number, 'plan');
         if (plan?.body) {

@@ -38,6 +38,8 @@ import {
   OPERATOR_LOGIN,
   PIPELINE_BOT,
   REPAIR_ROUNDS,
+  NO_PROGRESS_ROUNDS,
+  TRANSIENT_FAILURES,
   RETRO_LABEL,
   STAGE_LABELS,
   type Status,
@@ -92,6 +94,8 @@ import { denyRules } from './merge.ts';
 import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
 import { screen } from './screen.ts';
+import { patchPath } from './patch.ts';
+import { changedScripts, guardFindings } from './guard.ts';
 
 export interface PublishOptions {
   in: string;
@@ -106,6 +110,7 @@ export interface PublishOptions {
   rounds?: number;
   /** A review's round: the commit toolchain.verify passed on, or empty when it did not pass. */
   verified?: string;
+  ciFailed?: string;
   verifierIn?: string;
   verifierOut?: string;
   /** A memory run's failed jobs, encoded as the caller's toJSON(needs). */
@@ -148,6 +153,9 @@ export interface Gate {
   check: Verdict | null;
   round: number;
   rounds: number;
+  history?: LoopEntry[];
+  failed?: string[];
+  guard?: Finding[];
 }
 
 /** The only decision point for a review round, bound to its exact candidate. */
@@ -161,10 +169,19 @@ export function nextStep(gate: Gate): Step {
     gate.review.result,
     gate.candidate || null,
     gate.verified,
-    check.kind === 'findings' ? check.findings : [],
+    [...(check.kind === 'findings' ? check.findings : []), ...(gate.guard ?? [])],
+    [],
+    gate.failed ?? [],
   );
   if (passes(result)) return 'ready';
-  return repairable(result) && gate.round < gate.rounds ? 'repair' : 'stop';
+  if (!repairable(result) || gate.round >= gate.rounds) return 'stop';
+  return stalled(
+    gate.history ?? [],
+    gate.round,
+    (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id),
+  ).length
+    ? 'stop'
+    : 'repair';
 }
 
 /** Evidence comes from the verifier, while the IDs come from the approved plan. */
@@ -741,28 +758,6 @@ function reviewText(result: Result): string {
 
 type Finding = NonNullable<Result['findings']>[number];
 
-/** Git quotes control characters and encodes non-ASCII bytes as octal escapes. */
-function patchPath(name: string): string {
-  if (!name.startsWith('"')) return name;
-  const escapes: Record<string, string> = {
-    a: '\x07',
-    b: '\b',
-    f: '\f',
-    n: '\n',
-    r: '\r',
-    t: '\t',
-    v: '\v',
-  };
-  return Buffer.concat(
-    [...name.slice(1, -1).matchAll(/\\([0-7]{3}|.)|([^\\]+)/g)].map(([, escaped, plain]) => {
-      if (plain !== undefined) return Buffer.from(plain);
-      return /^[0-7]{3}$/.test(escaped!)
-        ? Buffer.from([Number.parseInt(escaped!, 8)])
-        : Buffer.from(escapes[escaped!] ?? escaped!);
-    }),
-  ).toString('utf8');
-}
-
 /** Only added and context lines on the new side can receive GitHub comments. */
 export function reviewComments(
   patch: string,
@@ -904,6 +899,7 @@ export interface LoopState {
   entries: LoopEntry[];
   approved?: string;
   base?: string;
+  since?: number;
 }
 
 export function loopComment(state: LoopState): string {
@@ -958,6 +954,26 @@ async function updateLoop(
   );
   state.failures = state.entries.filter((e) => e.step !== 'ready').length;
   return upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
+}
+
+export function stalled(entries: LoopEntry[], round: number, open: string[]): string[] {
+  let ids = open;
+  let counted = 0;
+  for (const entry of entries.filter((e) => e.round < round).sort((a, b) => b.round - a.round)) {
+    if (entry.step === 'rerun') continue;
+    if (entry.step !== 'repair') break;
+    ids = ids.filter((id) => entry.open.includes(id));
+    if (++counted === NO_PROGRESS_ROUNDS - 1) return ids;
+  }
+  return [];
+}
+
+export function noProgressText(ids: string[]): string {
+  return `The review loop stopped early: no progress on ${ids.join(', ')} for ${NO_PROGRESS_ROUNDS} rounds.`;
+}
+
+export function unchangedText(round: number, head: string): string {
+  return `No progress: repair round ${round} left the PR head at \`${head.slice(0, 7)}\` unchanged.`;
 }
 
 export function needsYouText(round: number, threads: Thread[], logUrl: string): string {
@@ -1126,7 +1142,29 @@ async function publishReview(
     check,
     candidate: job.candidate ?? '',
   });
+  const round = options.round ?? 0;
+  const state = readLoopState(
+    round === 0 || !pull
+      ? null
+      : ((await stageComment(job.repo, pull.number, 'loop'))?.body ?? null),
+  );
+  const history = state.entries.filter((entry) => entry.round >= (state.since ?? 0));
+  const failed = options.ciFailed?.split(',').filter(Boolean) ?? [];
+  let guard: Finding[] = [];
+  if ('result' in v && job.base && job.candidate) {
+    const patch = readFileSync(join(options.in, CANDIDATE_FILE), 'utf8');
+    const planFile = join(options.in, PLAN_FILE);
+    guard = guardFindings(
+      patch,
+      existsSync(planFile) ? readFileSync(planFile, 'utf8') : '',
+      await changedScripts(job.repo, job.base, job.candidate, patch),
+      job.base,
+    );
+  }
   const step = nextStep({
+    history,
+    failed,
+    guard,
     checks: job.plan?.checks ?? {},
     check,
     candidate: job.candidate ?? '',
@@ -1148,8 +1186,9 @@ async function publishReview(
           v.result,
           job.candidate,
           options.verified ?? '',
-          criteria.kind === 'findings' ? criteria.findings : [],
+          [...(criteria.kind === 'findings' ? criteria.findings : []), ...guard],
           threads.map((t) => t.id),
+          failed,
         )
       : null;
   const failure =
@@ -1239,24 +1278,27 @@ export function gated(
   verified: string,
   extra: Finding[] = [],
   threadIds: string[] = [],
+  failed: string[] = [],
 ): Result {
   const green = candidate !== null && verified === candidate;
-  const finding = {
-    id: CI_FINDING,
+  const ciFindings: Finding[] = (failed.length ? failed : [null]).map((check) => ({
+    id: check ? `${CI_FINDING}:${check}` : CI_FINDING,
     axis: 'correctness',
     blocking: true,
     criterion: null,
     path: null,
     line: null,
     evidence: runUrl(),
-    scenario: `toolchain.verify did not pass on ${candidate}.`,
+    scenario: check
+      ? `toolchain.verify's ${check} check failed on ${candidate}.`
+      : `toolchain.verify did not pass on ${candidate}.`,
     impact: 'CI is red on this commit, so it is not safe to merge.',
     fix: 'Run the failing check from the run log locally and make it pass.',
-  } as const;
+  }));
+  const deterministic = [...extra, ...(!green ? ciFindings : [])];
   const findings: Finding[] = [
-    ...(result.findings ?? []).filter((f) => !extra.some((check) => check.id === f.id)),
-    ...extra,
-    ...(!green ? [finding] : []),
+    ...(result.findings ?? []).filter((f) => !deterministic.some((check) => check.id === f.id)),
+    ...deterministic,
   ];
   if (!findings.some((f) => f.blocking) || result.questions.length === 0)
     return green && !extra.length
@@ -1317,6 +1359,11 @@ async function postReview(
 ): Promise<Outcome> {
   const round = options.round ?? 0;
   const rounds = options.rounds ?? REPAIR_ROUNDS;
+  const stalledIds = stalled(
+    state.entries.filter((entry) => entry.round >= (state.since ?? 0)),
+    round,
+    (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id),
+  );
   const actions = threadActions(await readThreads(job.repo, pull.number), result.findings ?? []);
   const comments = reviewComments(
     readFileSync(join(options.in, CANDIDATE_FILE), 'utf8'),
@@ -1417,6 +1464,7 @@ async function postReview(
         round === rounds &&
         (result.findings ?? []).some((f) => f.blocking) &&
         capText(round, state),
+      step === 'stop' && round < rounds && stalledIds.length > 0 && noProgressText(stalledIds),
       step === 'stop' && needsYouText(round, await readThreads(job.repo, pull.number), logUrl),
     ]
       .filter(Boolean)
@@ -1571,6 +1619,7 @@ async function publishBuildOrPlan(
       await updateLoop(job, logPull, options, {
         candidate: candidate || job.source,
         failure: 'stage' in v ? (v.failure ?? null) : null,
+        ...(!candidate && { step: 'stop' as const }),
         ...('result' in v
           ? { hypotheses: v.result.hypotheses ?? [] }
           : { step: 'stop' as const, review: v.stage }),
@@ -1585,12 +1634,23 @@ async function publishBuildOrPlan(
         : pull && job.role !== 'repair'
           ? 'Ready'
           : 'Needs you';
-  if ('stage' in v) return { body: stopped(job.role, v), status, stopped: true };
+  const unchanged =
+    job.role === 'repair' &&
+    !candidate &&
+    !('stage' in v && TRANSIENT_FAILURES.some((failure) => failure === v.failure))
+      ? unchangedText(options.round ?? 0, job.source)
+      : '';
+  if ('stage' in v)
+    return {
+      body: [stopped(job.role, v), unchanged].filter(Boolean).join('\n\n'),
+      status,
+      stopped: true,
+    };
   const body =
     job.role === 'plan'
       ? planComment(job, v.result, out, handoff, story, criticismPassed, undefined, assessment)
       : buildComment(job, v.result, pull);
-  return { body, status, stopped: false };
+  return { body: [body, unchanged].filter(Boolean).join('\n\n'), status, stopped: false };
 }
 
 /** A retro's findings, each with the fix it suggests: the retro issue's body, or a comment when it files none. */

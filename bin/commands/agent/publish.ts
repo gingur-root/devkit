@@ -22,6 +22,10 @@ export default {
           throw new InvalidArgumentError(`--rounds must be an integer from 0 to ${REPAIR_ROUNDS}`);
         return rounds;
       })
+      .option(
+        '--ci-failed <checks>',
+        "a review's round: the comma-separated checks that failed on CI",
+      )
       .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed")
       .option('--verifier-in <dir>', 'the verifier job directory')
       .option('--verifier-out <dir>', 'the verifier output directory')
