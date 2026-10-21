@@ -7,7 +7,8 @@ Review the change against the issue and repository at the supplied commits.
 Read `threads.json` when present for earlier findings and discussion. Reuse an
 open thread's finding ID when it still stands; leave out the ID when it is fixed.
 Give a new finding an ID not used by any thread in `threads.json`.
-Ask the operator nothing. Put the recommended correction in each finding's `fix`.
+Ask the operator nothing, except a tenth-man objection to the whole change.
+Put the recommended correction in each finding's `fix`.
 
 1. Resolve the base and candidate commits. Inspect their diff and relevant
    surrounding code. Record the actual commit references assessed. Missing or
@@ -28,8 +29,8 @@ Ask the operator nothing. Put the recommended correction in each finding's `fix`
 4. Assess Standards separately. Apply documented repository rules. Let automated
    tools handle the rules they already enforce. Mark code-smell and architectural
    preferences as advisory unless a documented requirement makes them binding.
-   Code nobody asked for (unused options, speculative abstraction) is an
-   advisory Standards finding.
+   Code nobody asked for (unused options, speculative abstraction) is a
+   tenth-man finding (below).
 
 5. Validate each reported finding. Include its axis, affected criterion or rule,
    location, triggering scenario, impact, evidence, and suggested correction.
@@ -52,6 +53,19 @@ Ask the operator nothing. Put the recommended correction in each finding's `fix`
    that is really a product decision. On any other outcome, `merge` is null.
    The reviewer can add a stop, never remove a code rule.
 
+## Tenth man
+
+Assume everyone who approved this change is wrong. Ask whether each new
+option, layer, file, dependency or branch earns its place, and what a much
+smaller change serving the 80% case would look like. Favor deleting over
+adding, plain over clever and some repetition over a premature abstraction.
+
+When code can be deleted or simplified without losing the issue's intent,
+return a blocking `spec` finding that names exactly what to delete or the
+simpler form in `fix`. When the whole change should not exist, put that and
+its reason in `questions` with no other blocking finding, so it stops for
+Troy. A vague "this is too much" without a concrete alternative is advisory.
+
 ## Output
 
 - Each criterion's check kind (`ci`, `agent`, `operator`) is in the job file's `plan.checks`.
@@ -69,4 +83,5 @@ Ask the operator nothing. Put the recommended correction in each finding's `fix`
   in `assumptions`. Keep `questions` for decisions the operator must make.
 - A `pass` with no questions lets the controller apply the merge gate.
   The PR merges only when the code rules and `merge.verdict` both allow it.
-  Leave `questions` empty; put recommended corrections in `fix`.
+  Leave `questions` empty, except a tenth-man objection to the whole change;
+  put recommended corrections in `fix`.

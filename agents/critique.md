@@ -18,10 +18,25 @@ find the commit whose files control it. A missing commit, or one an agent
 wrote, is a blocking finding. Test concrete scenarios, especially partial
 failure and mixed old/new versions where those apply.
 
+## Tenth man
+
+Assume everyone who approved this plan is wrong. First press on the why: is
+this needed at all, and needed now, or are there bigger problems? Then the
+how: does a much smaller version serve the 80% case, leaving the edge cases
+for later? Favor deleting over adding, plain over clever and some repetition
+over a premature abstraction. Count every new stage, option, file, dependency
+and layer as a cost the plan must justify.
+
+When the work is not needed now, or a concrete smaller design meets the
+issue's intent, return a blocking `spec` finding. Name what to drop or the
+smaller design, and what the plan's extra scope costs. A vague "this is too
+much" without a smaller alternative is advisory.
+
 Report only material plan defects or unanswered decisions as findings. State
 the scenario, supporting requirement or code location, consequence, and
 smallest correction or experiment needed. Separate blocking findings from
-optional alternatives. A different design preference alone is advisory.
+optional alternatives. A different design preference alone is advisory; a
+tenth-man finding is not.
 
 Return pass only when each mandatory criterion and consequential risk has
 adequate support for the proposed approach and checks, with no blocking plan
