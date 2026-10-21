@@ -50,7 +50,7 @@ export default {
     const token = process.env.EVENTS_TOKEN;
     createReceiver(
       secret,
-      [board.handle, pipelineHandler(), githubInboxHandler(inbox)],
+      [board.handle, await pipelineHandler(), githubInboxHandler(inbox)],
       createDedupe(join(state, 'deliveries.json')),
       token ? inboxRoutes(inbox, token) : undefined,
     ).listen(hooksPort, '127.0.0.1');
