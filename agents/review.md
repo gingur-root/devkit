@@ -54,6 +54,7 @@ Ask the operator nothing. Put the recommended correction in each finding's `fix`
 
 ## Output
 
+- Each criterion's check kind (`ci`, `agent`, `operator`) is in the job file's `plan.checks`.
 - The checkout is the candidate. The change under review is `candidate.patch`
   in the job directory: the diff from the job's `base` to its `candidate`. The
   approved plan is `plan.md` there. Don't edit the checkout; it is thrown away.

@@ -23,7 +23,7 @@
       "expected": "STUB.md matches repair.md",
       "observed": "STUB.md differs from repair.md",
       "exit": 1,
-      "location": "STUB.md",
+      "location": "A1.log",
       "result": "fail"
     }
   ],

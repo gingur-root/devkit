@@ -23,7 +23,7 @@
       "expected": "STUB.md exists",
       "observed": "STUB.md exists",
       "exit": 0,
-      "location": "STUB.md",
+      "location": "A1.log",
       "result": "pass"
     }
   ],

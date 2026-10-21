@@ -144,7 +144,9 @@ or model call: green CI counts as verified. The controller reads `plan.checks`
 from the approved contract, never from the candidate's proposed criteria.
 
 Ready needs review pass, green CI and `verified` with passing evidence for
-every `agent` ID, all on the same candidate. A failed criterion creates a
+every `agent` ID, all on the same candidate. A pass counts only with `exit: 0`
+and a `location` naming a file the verifier saved in its output folder; a bad
+receipt stops at `verify`. A failed criterion creates a
 blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
 `CI` findings. Its stable ID lets a later passing round resolve its thread.
 

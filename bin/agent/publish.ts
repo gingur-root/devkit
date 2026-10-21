@@ -21,7 +21,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix, relative, sep } from 'node:path';
 
 import { git, gitAsOperator, gitBytes } from '../git.ts';
 import { check as checkMemory, frontmatter } from '../memory/check.ts';
@@ -156,6 +156,7 @@ export interface Gate {
   verified: string;
   checks: Record<string, string>;
   check: Verdict | null;
+  outputs: string[];
   round: number;
   rounds: number;
   history?: LoopEntry[];
@@ -191,7 +192,7 @@ export function nextStep(gate: Gate): Step {
 
 /** Evidence comes from the verifier, while the IDs come from the approved plan. */
 export function criterionVerdict(
-  gate: Pick<Gate, 'checks' | 'check' | 'candidate'>,
+  gate: Pick<Gate, 'checks' | 'check' | 'candidate' | 'outputs'>,
 ):
   | { kind: 'verified' }
   | { kind: 'findings'; findings: Finding[] }
@@ -229,6 +230,22 @@ export function criterionVerdict(
       : [];
   });
   if (findings.length) return { kind: 'findings', findings };
+  for (const entry of result.evidence) {
+    if (!ids.includes(entry.criterion ?? '') || entry.result !== 'pass') continue;
+    if (entry.exit !== 0) return stop('verify', `${entry.criterion}: exit ${entry.exit}`);
+    const location = posix.normalize(entry.location);
+    if (
+      !/^[A-Za-z0-9._/-]+$/.test(entry.location) ||
+      posix.isAbsolute(entry.location) ||
+      entry.location.split('/').includes('..') ||
+      location === RESULT_FILE ||
+      !gate.outputs.includes(location)
+    )
+      return stop(
+        'verify',
+        `${entry.criterion}: location ${entry.location} is not in the verifier output`,
+      );
+  }
   const missing = ids.filter((id) => {
     const entries = result.evidence.filter((e) => e.criterion === id);
     return !entries.length || entries.some((e) => e.result !== 'pass');
@@ -240,6 +257,13 @@ export function criterionVerdict(
     stage: 'verify',
     reason: `the verifier could not check ${(missing.length ? missing : ids).join(', ')}: ${result.summary}`,
   };
+}
+
+export function outputFiles(dir: string | undefined): string[] {
+  if (!dir || !existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join('/'));
 }
 
 export function changedCriteria(
@@ -1149,9 +1173,11 @@ async function publishReview(
   if (!pull) v = { stage: 'publish', reason: 'the build has no open PR' };
   else if (pull.head.sha !== job.candidate)
     v = { stage: 'stale', reason: 'the PR has a newer commit than the one reviewed' };
+  const outputs = outputFiles(options.verifierOut);
   const criteria = criterionVerdict({
     checks: job.plan?.checks ?? {},
     check,
+    outputs,
     candidate: job.candidate ?? '',
   });
   const round = options.round ?? 0;
@@ -1179,6 +1205,7 @@ async function publishReview(
     guard,
     checks: job.plan?.checks ?? {},
     check,
+    outputs,
     candidate: job.candidate ?? '',
     head: pull?.head.sha ?? job.candidate ?? '',
     review: v,

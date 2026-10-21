@@ -47,6 +47,7 @@ and record what changed in `assumptions`.
 
 - The approved plan is `plan.md` in the job directory. Its criteria IDs are in
   the job file's `plan.criteria`.
+- Each criterion's check kind (`ci`, `agent`, `operator`) is in the job file's `plan.checks`.
 - Leave your change in the working tree, which is the repo checked out at the
   job's `source`. Committing is optional; the controller takes the whole tree
   as the candidate and publishes it. Never push.

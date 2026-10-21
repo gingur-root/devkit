@@ -34,7 +34,62 @@ const gate = {
   rounds: 10,
   checks: { A1: 'agent' },
   check: { result: checked },
+  outputs: ['check.log'],
 };
+
+for (const exit of [1, null]) {
+  test(`a verifier pass with exit ${exit} stops at verify`, () => {
+    const input = {
+      ...gate,
+      check: { result: { ...checked, evidence: [{ ...evidence, exit }] } },
+    };
+    const verdict = criterionVerdict(input);
+    assert.equal(verdict.kind, 'stop');
+    if (verdict.kind === 'stop') {
+      assert.equal(verdict.stage, 'verify');
+      assert.ok(verdict.reason.includes(`A1: exit ${exit}`), verdict.reason);
+    }
+    assert.equal(nextStep(input), 'stop');
+  });
+}
+
+for (const [location, outputs] of [
+  ['check.log', []],
+  ['/etc/passwd', ['/etc/passwd']],
+  ['../in/job.json', ['../in/job.json']],
+  ['checks/../check.log', ['check.log']],
+  ['result.json', ['result.json']],
+  ['./result.json', ['result.json']],
+  ['check log', ['check log']],
+  ['C:/check.log', ['C:/check.log']],
+] as const) {
+  test(`a verifier pass with location ${location} and outputs ${outputs.join(', ')} stops at verify`, () => {
+    const input = {
+      ...gate,
+      outputs: [...outputs],
+      check: { result: { ...checked, evidence: [{ ...evidence, location }] } },
+    };
+    const verdict = criterionVerdict(input);
+    assert.equal(verdict.kind, 'stop');
+    if (verdict.kind === 'stop') {
+      assert.equal(verdict.stage, 'verify');
+      assert.ok(verdict.reason.includes(`A1: location ${location}`), verdict.reason);
+    }
+    assert.equal(nextStep(input), 'stop');
+  });
+}
+
+test('relative verifier files accept a leading dot and nested directories', () => {
+  for (const location of ['check.log', './check.log', 'checks/A1.sh']) {
+    const input = {
+      ...gate,
+      outputs: ['check.log', 'checks/A1.sh'],
+      check: { result: { ...checked, evidence: [{ ...evidence, location }] } },
+    };
+    assert.deepEqual(criterionVerdict(input), { kind: 'verified' });
+    assert.equal(nextStep(input), 'ready');
+  }
+});
 
 test('agent criteria need passing evidence, a complete verified result, review and CI on the candidate', () => {
   assert.equal(nextStep(gate), 'ready');

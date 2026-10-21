@@ -21,18 +21,19 @@ GitHub pipeline can't drift apart.
 | Plan, review, repair       | Subagents, as in the table below                                                 |
 | Publish                    | You: branch, push, draft PR, PR reviews, issues                                  |
 
-| Stage  | Subagent model (`bin/agent/roles.ts`) | Role files after `worker.md`, `contract.md` |
-| ------ | ------------------------------------- | ------------------------------------------- |
-| plan   | Opus 5.5                              | `plan.md`                                   |
-| build  | Codex (preflight 2)                   | `build.md`                                  |
-| review | Opus 5.5, read-only tools             | `review.md`                                 |
-| repair | same as build                         | `build.md`, `repair.md`                     |
-| retro  | Opus 5.5, read-only tools             | `retro.md`                                  |
-| memory | Sonnet 5.5 (planned, devkit#260)      | `memory.md`, once it exists                 |
+| Stage  | Subagent model (`bin/agent/roles.ts`)        | Role files after `worker.md`, `contract.md` |
+| ------ | -------------------------------------------- | ------------------------------------------- |
+| plan   | Opus 5.5                                     | `plan.md`                                   |
+| build  | Codex (preflight 2)                          | `build.md`                                  |
+| review | Opus 5.5, read-only tools                    | `review.md`                                 |
+| verify | Codex, writes only in `$JOB/verify-<round>/` | `verify.md`                                 |
+| repair | same as build                                | `build.md`, `repair.md`                     |
+| retro  | Opus 5.5, read-only tools                    | `retro.md`                                  |
+| memory | Sonnet 5.5 (planned, devkit#260)             | `memory.md`, once it exists                 |
 
 Use each role's effort from `bin/agent/roles.ts`. Every stage also gets each
 `skills/*/SKILL.md` whose `roles:` line names it, and a repo's `.devkit/<path>`
-replaces devkit's file of the same path. For review and repair, give the stage
+replaces devkit's file of the same path. For review, verify and repair, give the stage
 the repo's `.devkit/` files from the build's base (for example,
 `git show <base>:.devkit/agents/review.md`), never from the candidate worktree.
 Codex builds and Claude reviews, so a
@@ -124,18 +125,37 @@ names its fix; show Troy the fix and stop. Don't install anything yourself.
      `agent/<slug>`, push, and open a draft PR. Its body is the build
      `summary`, then the issue and the plan.
 5. **Review.** Run the review subagent on the pushed commit, with
-   `candidate.patch` (`git diff <base>..<candidate>`). At the same time, run
+   `candidate.patch` (`git diff <base>..<candidate>`). Desk stages have no
+   `job.json`; each criterion's check kind is its `check` field in `$JOB/plan.json`
+   `criteria`. If any criterion is `agent`, run the verify subagent on the same
+   commit as review, with `issue.md`, `plan.md`, `plan.json` and `candidate.patch`.
+   Use the verify role's effort from `bin/agent/roles.ts` (medium). It writes its
+   envelope as `$JOB/verify-<round>/result.json` and its scripts or logs in that
+   folder. At the same time, run
    the repo's own checks (its `package.json` format, lint, typecheck, test
    and build scripts, as `toolchain.verify` does) and wait for PR CI on that
    commit. Red CI is a
    blocking `CI` finding. Post the review as one `COMMENT` review on the PR:
    `gh pr review <n> --comment --body-file $JOB/review.md`.
-6. **Repair.** If the review requested changes and asked nothing, run the
-   repair subagent with `review.json`. It must map every finding ID in
+6. **Repair.** With no questions from either stage, run the repair subagent
+   with `review.json` if the review requested changes or verify returned a failed criterion.
+   Turn each failed agent criterion into a blocking Spec finding `V-<id>` and
+   include it in `review.json`. It must map every finding ID in
    `changes[].ref`. Comment what it changed on the PR, push, and review again
-   (step 5). Cap: `REPAIR_ROUNDS` in `bin/agent/constants.ts` (2).
+   (step 5), including fresh verification on the repaired commit.
+   Cap: `REPAIR_ROUNDS` in `bin/agent/constants.ts` (2).
 7. **Finish.** A pass (every axis passes, nothing blocking, no question, CI
-   green) gets `gh pr ready <n>`. Anything else leaves the PR draft and goes
+   green) also needs a verifier envelope with `status: complete`, `outcome: verified`
+   and `inputs.candidate` matching that exact commit when any `agent` criteria exist.
+   Every `agent` criterion needs evidence, and every entry for it must be `pass`.
+   Read the envelope and list the files in `$JOB/verify-<round>/`: each pass needs
+   `exit: 0` and a `location` naming a file there, relative to that folder.
+   A leading `./` is allowed. Absolute paths, `..` path components,
+   `result.json`, and characters outside letters, digits, `.`, `-`, `_` and `/`
+   never count. A missing or invalid receipt stops at `verify`; report the
+   criterion and broken rule to Troy, rather than sending it to repair.
+   Only a pass meeting these rules gets `gh pr ready <n>`.
+   Anything else leaves the PR draft and goes
    to Troy, with the open blocking IDs: a question, an inconclusive review,
    findings left after the cap, or a repair that changed nothing. A pass merges
    only when `denyRules` (`bin/agent/merge.ts`) returns no stop; the deny
