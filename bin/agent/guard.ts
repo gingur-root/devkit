@@ -58,9 +58,11 @@ function files(patch: string): FilePatch[] {
       else if (line.startsWith('rename from ')) file.before = patchPath(line.slice(12));
       else if (line.startsWith('rename to ')) file.after = patchPath(line.slice(10));
       else if (line.startsWith('--- '))
-        file.before = line === '--- /dev/null' ? null : patchPath(line.slice(4)).slice(2);
+        file.before =
+          line === '--- /dev/null' ? null : patchPath(line.slice(4).replace(/\t$/, '')).slice(2);
       else if (line.startsWith('+++ '))
-        file.after = line === '+++ /dev/null' ? null : patchPath(line.slice(4)).slice(2);
+        file.after =
+          line === '+++ /dev/null' ? null : patchPath(line.slice(4).replace(/\t$/, '')).slice(2);
     }
   }
   return result;
@@ -76,7 +78,13 @@ export async function changedScripts(
   for (const file of files(patch)) {
     if (!file.before || !/(?:^|\/)package\.json$/.test(file.before)) continue;
     const read = async (path: string | null, ref: string) => {
-      const blob = path && (await trustedContents<{ content: string }>(repo, path, ref));
+      const blob =
+        path &&
+        (await trustedContents<{ content: string }>(
+          repo,
+          path.split('/').map(encodeURIComponent).join('/'),
+          ref,
+        ));
       return blob
         ? (Package.parse(JSON.parse(Buffer.from(blob.content, 'base64').toString('utf8')))
             .scripts ?? {})

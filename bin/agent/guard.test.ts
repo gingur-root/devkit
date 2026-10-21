@@ -138,6 +138,36 @@ test('script changes use committed package contents, ignore new packages, and su
   await assert.rejects(changedScripts('o/r', 'base', 'head', input), /403 lookup failed/);
 });
 
+test('spaced paths drop Git header tabs and retain exact findings and approvals', async () => {
+  vi.stubEnv('GH_TOKEN', 'test');
+  const reads: string[] = [];
+  vi.stubGlobal('fetch', async (url: string) => {
+    reads.push(url);
+    const scripts = { test: new URL(url).searchParams.get('ref') === 'base' ? 'vitest' : 'true' };
+    return Response.json({ content: Buffer.from(JSON.stringify({ scripts })).toString('base64') });
+  });
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+  for (const path of ['my dir/a.test.ts', 'my dir/.eslintrc', 'my dir/package.json']) {
+    const input = patch(path, ['test("a", () => {});'], ['test.skip("a", () => {});'])
+      .replace(`--- a/${path}\n`, `--- a/${path}\t\n`)
+      .replace(`+++ b/${path}\n`, `+++ b/${path}\t\n`);
+    const scripts = await changedScripts('o/r', 'base', 'head', input);
+    assert.deepEqual(scripts, path.endsWith('package.json') ? [path] : []);
+    assert.deepEqual(
+      guardFindings(input, '', scripts).map((f) => [f.id, f.path, f.blocking]),
+      [[`T-${path}`, path, true]],
+    );
+    assert.deepEqual(guardFindings(input, `Edit \`${path}\`.`, scripts), []);
+  }
+  assert.deepEqual(reads, [
+    'https://api.github.com/repos/o/r/contents/my%20dir/package.json?ref=base',
+    'https://api.github.com/repos/o/r/contents/my%20dir/package.json?ref=head',
+  ]);
+});
+
 test('renaming a workflow away cannot borrow approval for its destination', () => {
   const input =
     'diff --git a/.github/workflows/ci.yml b/notes.yml\nsimilarity index 100%\nrename from .github/workflows/ci.yml\nrename to notes.yml\n';
