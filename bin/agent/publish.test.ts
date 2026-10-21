@@ -948,6 +948,13 @@ function teardown() {
   vi.unstubAllEnvs();
 }
 
+function fakeScanner(root: string) {
+  writeFileSync(join(root, 'gitleaks'), `#!${process.execPath}\nprocess.exit(0);`, {
+    mode: 0o755,
+  });
+  vi.stubEnv('PATH', `${root}:${process.env.PATH}`);
+}
+
 const storyJob: Job = {
   job: 'plan-1',
   role: 'plan',
@@ -984,6 +991,7 @@ for (const role of ['plan', 'research', 'review'] as const) {
       JSON.stringify({ ...pass, job: job.job, role, failure }),
     );
     const github = fakeGitHub();
+    fakeScanner(root);
     const exitCode = process.exitCode;
     try {
       await publish({ in: root, out: root });
@@ -1014,6 +1022,7 @@ for (const role of ['plan', 'research', 'review'] as const) {
 
 test('memory failures make no source-repo request and report no-reset status only in the error', async () => {
   const root = mkdtempSync(join(tmpdir(), 'publish-memory-failure-'));
+  fakeScanner(root);
   const job = { ...storyJob, role: 'memory' };
   const calls: string[] = [];
   vi.stubEnv('GH_TOKEN', 'pipeline-only');
@@ -1066,6 +1075,7 @@ test('memory failures make no source-repo request and report no-reset status onl
 test('a trusted roles snapshot making plan Codex sets no Claude hold', async () => {
   const root = mkdtempSync(join(tmpdir(), 'publish-codex-'));
   const github = fakeGitHub();
+  fakeScanner(root);
   const exitCode = process.exitCode;
   writeFileSync(join(root, JOB_FILE), JSON.stringify(storyJob));
   writeFileSync(join(root, 'roles.json'), '{"plan":{"executor":"codex"}}');
@@ -1104,6 +1114,7 @@ test('only no-reset quota and outage failures get a provider status line, fetche
           JSON.stringify({ ...pass, failure: { class: kind, resetsAt } }),
         );
         const github = fakeGitHub();
+        fakeScanner(root);
         const request = globalThis.fetch;
         let fetched = 0;
         vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {

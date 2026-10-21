@@ -130,19 +130,25 @@ export async function pipelineHandler(): Promise<WebhookHandler> {
     return pending;
   }
 
-  function arm(delay = activeHold() - Date.now()): void {
+  function arm(delay?: number): void {
     clearTimeout(timer);
-    if (!cards.size) return;
+    if (!cards.size && delay === undefined) return;
     timer = setTimeout(
       () => {
-        void enqueue(resume).catch((error: unknown) => {
-          console.error('Held work could not resume:', error);
-          arm(60_000);
-        });
+        void resumeHeld();
       },
-      Math.max(1, delay),
+      Math.max(1, delay ?? activeHold() - Date.now()),
     );
     timer.unref();
+  }
+
+  async function resumeHeld(): Promise<void> {
+    try {
+      await enqueue(resume);
+    } catch (error) {
+      console.error('Held work could not resume:', error);
+      arm(60_000);
+    }
   }
 
   async function readHeld(repo: string, issue: number): Promise<void> {
@@ -220,7 +226,7 @@ export async function pipelineHandler(): Promise<WebhookHandler> {
     arm();
   }
 
-  await resume();
+  await resumeHeld();
   return (delivery) =>
     enqueue(async () => {
       const { action, sender, repository, label, issue, pull_request } =

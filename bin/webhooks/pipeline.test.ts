@@ -513,15 +513,18 @@ test('a cleanup failure retries the card update without dispatching it twice', a
   }
 });
 
-test('a restart after dispatch and failed cleanup never dispatches the replay twice', async () => {
+test('startup survives failed cleanup and retries without dispatching the replay twice', async () => {
   const f = holdsFixture();
   f.put('scratch', 5, replay, '2026-10-20T13:00:00.000Z');
   f.failCleanupOnce();
   try {
-    await assert.rejects(pipelineHandler(), /503 try again/);
+    const handle = await pipelineHandler();
+    assert.equal(typeof handle, 'function');
     assert.equal(f.dispatches().length, 1);
     assert.match(f.cards.get('scratch#5')!.comments[0]!.body, /"state":"replaying"/);
-    await pipelineHandler();
+    await vi.advanceTimersByTimeAsync(59_999);
+    assert.equal(f.cards.get('scratch#5')!.labeled, true);
+    await vi.advanceTimersByTimeAsync(1);
     assert.equal(f.dispatches().length, 1);
     assert.equal(f.cards.get('scratch#5')!.labeled, false);
     assert.match(
@@ -529,6 +532,35 @@ test('a restart after dispatch and failed cleanup never dispatches the replay tw
       /plan replay's outcome is unknown.*add `agent:plan`/,
     );
     assert.deepEqual(f.statuses, ['I_scratch_5 needs-you']);
+    await pipelineHandler();
+    assert.equal(f.dispatches().length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('startup retries a failed search even before any held cards are cached', async () => {
+  const f = holdsFixture();
+  f.put('scratch', 5, replay, '2026-10-20T13:00:00.000Z');
+  const request = globalThis.fetch;
+  let searches = 0;
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    if (new URL(url).pathname === '/search/issues' && ++searches === 1)
+      return new Response('search unavailable', { status: 503 });
+    return request(url, init);
+  });
+  try {
+    const handle = await pipelineHandler();
+    assert.equal(typeof handle, 'function');
+    assert.equal(f.dispatches().length, 0);
+    await vi.advanceTimersByTimeAsync(59_999);
+    assert.equal(searches, 1);
+    await vi.advanceTimersByTimeAsync(1);
+    assert.equal(f.dispatches().length, 1);
+    assert.equal(f.cards.get('scratch#5')!.labeled, false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    assert.equal(searches, 2);
+    assert.equal(f.dispatches().length, 1);
   } finally {
     f.cleanup();
   }
