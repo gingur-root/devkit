@@ -271,6 +271,12 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
+
       - id: publish
         name: Publish
         working-directory: devkit
@@ -355,6 +361,12 @@ jobs:
         with:
           name: agent-out
           path: ${{ runner.temp }}/agent/out
+
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
 
       - id: publish
         name: Publish

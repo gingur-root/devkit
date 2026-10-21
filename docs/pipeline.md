@@ -117,6 +117,10 @@ Ready needs review pass, green CI and `verified` with passing evidence for
 every `agent` ID, all on the same candidate. A failed criterion creates a
 blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
 `CI`. Its stable ID lets a later passing round resolve its thread.
+
+Publish screens agent text and patch additions with gitleaks before any write.
+A hit or scanner failure stops at `validate`.
+
 Missing verifier output, a missing evidence entry, `not-verified`, or an
 inconclusive result stops at **Needs you** and names the criterion IDs.
 Stale verifier results stop at **Needs you** in stage `verify` and preserve the

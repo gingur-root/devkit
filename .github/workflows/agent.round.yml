@@ -164,6 +164,12 @@ jobs:
           name: replan-${{ inputs.round }}-out
           path: ${{ runner.temp }}/replan/out
 
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
+
       - id: publish
         name: Publish
         working-directory: devkit
@@ -308,6 +314,12 @@ jobs:
         with:
           name: repair-${{ inputs.round }}-out
           path: ${{ runner.temp }}/agent/out
+
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
 
       - id: publish
         if: ${{ !inputs.rerun }}
@@ -502,6 +514,12 @@ jobs:
         with:
           name: verify-${{ inputs.round }}-out
           path: ${{ runner.temp }}/verify/out
+
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
 
       - id: publish
         name: Publish

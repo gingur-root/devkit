@@ -64,9 +64,15 @@ function harness(
     research?: boolean;
     buildPull?: boolean;
     researchError?: string;
+    scanner?: string;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'publish-flow-'));
+  const scanner = join(root, 'gitleaks');
+  writeFileSync(scanner, `#!${process.execPath}\n${options.scanner ?? 'process.exit(0);'}`, {
+    mode: 0o755,
+  });
+  vi.stubEnv('PATH', `${root}:${process.env.PATH}`);
   const issue = { number: 1, node_id: 'issue', title: 'T', body: 'B', labels: [] };
   const pull = {
     number: 2,
@@ -203,6 +209,8 @@ function harness(
       verifierJob?: Partial<Job>;
       verifierJobText?: string;
       researchText?: string | false;
+      patch?: string;
+      planText?: string;
     } = {},
   ) {
     const dir = join(root, String(calls++));
@@ -246,8 +254,10 @@ function harness(
     writeFileSync(join(dir, RESULT_FILE), JSON.stringify(matched));
     writeFileSync(
       join(dir, CANDIDATE_FILE),
-      'diff --git a/STUB.md b/STUB.md\n--- a/STUB.md\n+++ b/STUB.md\n@@ -1 +1 @@\n-old\n+new\n',
+      options.patch ??
+        'diff --git a/STUB.md b/STUB.md\n--- a/STUB.md\n+++ b/STUB.md\n@@ -1 +1 @@\n-old\n+new\n',
     );
+    if (options.planText) writeFileSync(join(dir, 'plan.md'), options.planText);
     if (options.review) writeFileSync(join(dir, REVIEW_FILE), JSON.stringify(options.review));
     if (role === 'research' && options.researchText !== false)
       writeFileSync(
@@ -294,6 +304,135 @@ function harness(
   }
   return { stage, pull, comments, researchComments, reads, writes, threads };
 }
+
+const planted = 'gh' + 'p_' + 'A1b2C3d4'.repeat(4) + 'Zz9Y';
+
+function scannerHit(file: string) {
+  return `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    if (!fs.existsSync(${JSON.stringify(file)}) ||
+        !fs.readFileSync(${JSON.stringify(file)}, 'utf8').includes(${JSON.stringify(planted)}))
+      process.exit(0);
+    const args = process.argv.slice(2);
+    fs.writeFileSync(args[args.indexOf('-r') + 1], JSON.stringify([
+      { File: ${JSON.stringify(file)}, RuleID: 'github-pat', Secret: 'REDACTED' }
+    ]));
+    console.error(${JSON.stringify(planted)});
+    process.exit(2);
+  `;
+}
+
+test('publish screens plan text and blocked summaries before echoing them', async () => {
+  for (const status of ['complete', 'blocked'] as const) {
+    const h = harness({ scanner: scannerHit('result.json') });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    await h.stage(
+      {
+        ...ready,
+        role: 'plan',
+        status,
+        outcome: status === 'complete' ? 'ready' : null,
+        summary: `Result ${planted}`,
+        priority: 'P2',
+        subtasks: [{ title: 'Subtask', body: 'Body', pr: true, blockedBy: null }],
+        followups: [{ title: 'Follow-up', body: 'Body' }],
+      },
+      0,
+      { planText: `Plan ${planted}` },
+    );
+    const comment = h.writes.filter((w) => w.path.endsWith('/issues/1/comments'));
+    assert.equal(comment.length, 1);
+    assert.match(String(comment[0]!.body.body), /stopped at `validate`.*result.json.*github-pat/);
+    assert.ok(!JSON.stringify(h.writes).includes(planted));
+    assert.ok(!JSON.stringify([...log.mock.calls, ...error.mock.calls]).includes(planted));
+    assert.ok(!h.writes.some((w) => w.path.endsWith('/issues') || w.path.includes('/pulls')));
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.equal(process.exitCode, 1);
+  }
+});
+
+test('publish screens candidate additions before any git push or PR write', async () => {
+  const h = harness({ scanner: scannerHit('candidate.patch') });
+  await h.stage({ ...repair, role: 'build' }, 0, { patch: `+${planted}\n` });
+  const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+  assert.match(String(comment?.body.body), /stopped at `validate`.*candidate.patch/);
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.ok(!h.writes.some((w) => w.path.includes('/pulls')));
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});
+
+test('publish screens verifier output before it reaches review threads', async () => {
+  const h = harness({ scanner: scannerHit('result.json') });
+  await h.stage(ready, 0, {
+    checks: { A1: 'agent' },
+    verifier: {
+      ...ready,
+      summary: `Verification ${planted}`,
+      outcome: 'inconclusive',
+      evidence: [
+        {
+          criterion: 'A1',
+          check: planted,
+          expected: 'pass',
+          observed: 'fail',
+          exit: 1,
+          location: 'fixture',
+          result: 'fail',
+        },
+      ],
+    },
+  });
+  const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+  assert.match(String(comment?.body.body), /validate.*result.json.*github-pat/s);
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});
+
+test('publish screens findings before opening review threads', async () => {
+  const h = harness({ scanner: scannerHit('result.json') });
+  await h.stage(
+    {
+      ...changes,
+      findings: changes.findings!.map((finding) => ({ ...finding, fix: planted })),
+    },
+    0,
+  );
+  const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+  assert.match(String(comment?.body.body), /stopped at `validate`.*github-pat/);
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.equal(h.threads.length, 0);
+});
+
+test('memory screens its output before touching the store', async () => {
+  const h = harness({ scanner: scannerHit('result.json') });
+  await assert.rejects(
+    h.stage({ ...ready, role: 'memory', summary: planted }, 0),
+    /Memory stopped at validate:.*github-pat/,
+  );
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+});
+
+test('publish posts a readable validation stop when gitleaks is missing', async () => {
+  const h = harness();
+  vi.stubEnv('PATH', '/nonexistent');
+  await h.stage({ ...ready, role: 'plan' }, 0, { planText: 'Plan' });
+  const comments = h.writes.filter((w) => w.path.endsWith('/issues/1/comments'));
+  assert.equal(comments.length, 1);
+  assert.match(String(comments[0]!.body.body), /stopped at `validate`.*could not run.*PATH/);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});
 
 test('publish carries repair hypotheses into the same-round review and upserts one loop log', async () => {
   const h = harness();

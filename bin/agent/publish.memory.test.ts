@@ -50,6 +50,8 @@ function fixture(
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'publish-memory-'));
+  writeFileSync(join(root, 'gitleaks'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  vi.stubEnv('PATH', `${root}:${process.env.PATH}`);
   const checkout = join(root, 'store');
   const out = join(root, 'out');
   const remote = join(root, 'remote.git');
