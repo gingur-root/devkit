@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { onTestFinished, test, vi } from 'vite-plus/test';
 
 import { git, gitAsOperator } from '../git.ts';
@@ -207,6 +207,7 @@ function harness(
       review?: Result;
       checks?: Record<string, string>;
       verifier?: Result | null;
+      verifierFiles?: string[];
       verifierJob?: Partial<Job>;
       verifierJobText?: string;
       researchText?: string | false;
@@ -271,6 +272,11 @@ function harness(
     const verifierDir = join(dir, 'verifier');
     if (options.verifier) {
       mkdirSync(verifierDir);
+      for (const file of options.verifierFiles ?? ['STUB.md']) {
+        const path = join(verifierDir, file);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, 'STUB.md exists');
+      }
       const verifierJob = { ...job, role: 'verify', ...options.verifierJob };
       writeFileSync(
         join(verifierDir, JOB_FILE),
@@ -819,6 +825,49 @@ test('publication threads verifier failures and resolves V-A1 only after fresh p
   assert.equal(h.threads[0]!.isResolved, true);
   assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.verify, 'verified');
 });
+
+test('publication reads nested verifier output files before marking Ready', async () => {
+  const h = harness();
+  const { output } = await h.stage(ready, 0, {
+    checks: { A1: 'agent' },
+    verifier: {
+      ...ready,
+      outcome: 'verified',
+      evidence: ready.evidence.map((entry) => ({ ...entry, location: './checks/A1.log' })),
+    },
+    verifierFiles: ['checks/A1.log'],
+  });
+  assert.match(output, /next=ready/);
+});
+
+for (const [exit, location, verifierFiles] of [
+  [1, 'STUB.md', ['STUB.md']],
+  [null, 'STUB.md', ['STUB.md']],
+  [0, 'STUB.md', []],
+  [0, 'checks', ['checks/A1.log']],
+  [0, 'result.json', []],
+] as const) {
+  test(`publication stops a pass with exit ${exit}, location ${location} and files ${verifierFiles.join(', ')}`, async () => {
+    const h = harness();
+    const { output } = await h.stage(ready, 0, {
+      checks: { A1: 'agent' },
+      verifier: {
+        ...ready,
+        outcome: 'verified',
+        evidence: ready.evidence.map((entry) => ({ ...entry, exit, location })),
+      },
+      verifierFiles: [...verifierFiles],
+    });
+    assert.match(output, /next=stop/);
+    const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+    assert.match(String(comment.body.body), /stopped at `verify`/);
+    assert.match(String(comment.body.body), /A1: (exit|location)/);
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.ok(
+      !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+    );
+  });
+}
 
 test('publication stops and names missing verifier IDs, without marking Ready or resolving open findings', async () => {
   for (const verifier of [

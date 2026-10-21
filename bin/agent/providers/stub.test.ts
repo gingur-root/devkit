@@ -167,6 +167,7 @@ test('the verifier stub checks ready and unverified fixtures without changing th
       assert.equal(result.outcome, fixture === 'ready' ? 'verified' : 'failed');
       assert.equal(result.evidence[0]?.criterion, 'A1');
       assert.equal(result.evidence[0]?.result, fixture === 'ready' ? 'pass' : 'fail');
+      assert.equal(readFileSync(join(out, 'A1.log'), 'utf8'), result.evidence[0]?.observed);
       assert.equal(result.inputs.candidate, 'head');
       assert.equal(readFileSync(join(cwd, 'STUB.md'), 'utf8'), content);
     }
@@ -178,6 +179,7 @@ test('the verifier stub checks ready and unverified fixtures without changing th
     const result = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
     assert.equal(result.outcome, 'verified');
     assert.equal(result.evidence[0]?.result, 'pass');
+    assert.equal(readFileSync(join(out, 'A1.log'), 'utf8'), result.evidence[0]?.observed);
   } finally {
     process.exitCode = exitCode;
     vi.unstubAllEnvs();

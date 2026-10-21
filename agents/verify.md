@@ -19,6 +19,12 @@ logs and proposed regression checks in the output directory.
 Return one evidence entry per `agent` ID. Set `criterion` to its ID and include
 the command or scenario, expected and observed results, exit status and evidence
 location. Distinguish product failures from an unusable test environment.
+Save each criterion's script or log in the output directory (`$AGENT_OUT`).
+Set `location` to that file's path relative to the output directory and `exit`
+to the command's exit status. A pass requires `exit: 0`; wrap a check without
+a command in a script. A leading `./` is allowed. Absolute paths, `..` path
+components and `result.json` never count. Use only letters, digits, `.`, `-`,
+`_` and `/` in paths so artifact upload preserves their names.
 `inputs.candidate` is the job's candidate. Set `axes`, `findings` and `criteria`
 to null. The controller turns failed criteria into repair findings.
 
