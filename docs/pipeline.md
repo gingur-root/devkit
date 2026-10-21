@@ -172,8 +172,8 @@ clean review to pass.
 Review, replan and repair jobs read `threads.json`, which holds App-authored marked
 threads (open and resolved) and their operator or App replies. Comments from
 other authors are excluded. The reviewer reuses an open finding's ID when it
-still stands, omits fixed IDs, asks nothing and puts the recommended fix in
-`fix`. The controller replies to continuing findings, resolves IDs no longer
+still stands, omits fixed IDs, asks nothing (except a tenth-man objection)
+and puts the recommended fix in `fix`. The controller replies to continuing findings, resolves IDs no longer
 raised as blocking, and creates threads only for new IDs. A finding that
 becomes advisory gets a reply and is resolved. A finding whose ID matches only
 a resolved thread gets a new thread.
@@ -596,6 +596,12 @@ issue revision and current base commit. A missing or stale pass runs criticism
 again. When the default branch moved since the plan, `job.json` records
 `baseMoved: true`; the builder rechecks the plan's assumptions against that base.
 A review-loop resume keeps its existing approval path and skips this check.
+
+The critic also plays the tenth man: it asks whether the work is needed now,
+then whether a much smaller version serves the 80% case. A concrete "drop
+this" or "do this smaller thing instead" is a blocking finding. The reviewer
+asks the same of every PR: removable code is a blocking finding, and an
+objection to the whole change is a question that stops at Needs you.
 
 A non-pass blocks build, comments on the card, removes `agent:build` and moves
 the card to Needs you. This is a normal stop and does not trigger a retro.
