@@ -21,15 +21,15 @@ GitHub pipeline can't drift apart.
 | Plan, review, repair       | Subagents, as in the table below                                                 |
 | Publish                    | You: branch, push, draft PR, PR reviews, issues                                  |
 
-| Stage  | Subagent model (`bin/agent/roles.ts`) | Role files after `worker.md`, `contract.md` |
-| ------ | ------------------------------------- | ------------------------------------------- |
-| plan   | Opus 5.5                              | `plan.md`                                   |
-| build  | Codex (preflight 2)                   | `build.md`                                  |
-| review | Opus 5.5, read-only tools             | `review.md`                                 |
-| verify | Codex, read-only tools                | `verify.md`                                 |
-| repair | same as build                         | `build.md`, `repair.md`                     |
-| retro  | Opus 5.5, read-only tools             | `retro.md`                                  |
-| memory | Sonnet 5.5 (planned, devkit#260)      | `memory.md`, once it exists                 |
+| Stage  | Subagent model (`bin/agent/roles.ts`)        | Role files after `worker.md`, `contract.md` |
+| ------ | -------------------------------------------- | ------------------------------------------- |
+| plan   | Opus 5.5                                     | `plan.md`                                   |
+| build  | Codex (preflight 2)                          | `build.md`                                  |
+| review | Opus 5.5, read-only tools                    | `review.md`                                 |
+| verify | Codex, writes only in `$JOB/verify-<round>/` | `verify.md`                                 |
+| repair | same as build                                | `build.md`, `repair.md`                     |
+| retro  | Opus 5.5, read-only tools                    | `retro.md`                                  |
+| memory | Sonnet 5.5 (planned, devkit#260)             | `memory.md`, once it exists                 |
 
 Use each role's effort from `bin/agent/roles.ts`. Every stage also gets each
 `skills/*/SKILL.md` whose `roles:` line names it, and a repo's `.devkit/<path>`
