@@ -46,6 +46,8 @@ const paths = {
     'bin/agent/merge.ts',
     'bin/agent/github.ts',
     'bin/agent/publish.ts',
+    'bin/agent/guard.ts',
+    'bin/agent/patch.ts',
     'bin/agent/result.ts',
     'agents/review.md',
     'agents/sdlc.md',

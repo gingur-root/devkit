@@ -7,6 +7,7 @@ name: Round
 # (up to 10). The verdict marks a clean pass with CI green on that same commit
 # ready, starts the next round when the findings (CI's included) are Codex's to
 # fix and rounds are left, and otherwise moves the card to Needs you.
+# The loop stops early when the same blocking ID persists for three reviews.
 # Each repair runs replan → gate → repair; spec changes wait for /approve.
 # The pipeline never merges. agent.build.yml calls this once per round.
 
@@ -529,9 +530,10 @@ jobs:
           ROUND: ${{ inputs.round }}
           ROUNDS: ${{ inputs.rounds }}
           VERIFIED: ${{ needs.verify.outputs.verified }}
+          FAILED: ${{ needs.verify.outputs.failed }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
-            --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED" \
+            --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED" --ci-failed "$FAILED" \
             --verifier-in "$RUNNER_TEMP/verify/in" --verifier-out "$RUNNER_TEMP/verify/out"
 
       # The next round's replan job: the reviewed commit, the build's base, and this review.

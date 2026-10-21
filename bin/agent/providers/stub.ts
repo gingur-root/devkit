@@ -11,7 +11,8 @@
 // `crash` throws, `timeout` reports a timeout, and `missing` returns no result.
 // `changes` asks for repair until STUB.md matches the repair fixture.
 // `unverified` fails verification until repair rewrites STUB.md. `never`
-// always asks for repair; `advisory` passes with an inline advisory finding.
+// always asks for repair and stops early at round 2 for no progress on F1;
+// `advisory` passes with an inline advisory finding.
 
 import { appendFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

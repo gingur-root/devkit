@@ -176,3 +176,16 @@ export async function removeLabel(repo: string, issue: number, label: string): P
     },
   );
 }
+
+export async function trustedContents<T>(
+  repo: string,
+  path: string,
+  ref: string,
+): Promise<T | null> {
+  return rest<T>('GET', `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`).catch(
+    (error: Error) => {
+      if (!error.message.includes(' 404 ')) throw error;
+      return null;
+    },
+  );
+}

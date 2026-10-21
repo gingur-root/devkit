@@ -199,6 +199,7 @@ function harness(
     round: number,
     options: {
       verified?: string;
+      ciFailed?: string;
       rounds?: number;
       candidate?: string;
       jobCandidate?: string;
@@ -298,6 +299,7 @@ function harness(
       checkout: root,
       round,
       verified: options.verified ?? pull.head.sha,
+      ciFailed: options.ciFailed,
       rounds: options.rounds,
     });
     return { dir, output: readFileSync(output, 'utf8') };
@@ -1316,4 +1318,100 @@ test('a verifier failure is logged when the reviewer has no failure class', asyn
     verifier: { ...ready, role: 'verify', failure: { class: 'timeout', resetsAt: null } },
   });
   assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'server_error');
+});
+
+test('a third unchanged blocking review stops early and names the stalled ID', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  await h.stage(changes, 1);
+  const result = await h.stage(changes, 2);
+  assert.match(result.output, /next=stop/);
+  const body = String(
+    h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!.body.body,
+  );
+  assert.match(body, /no progress on F1 for 3 rounds/);
+  assert.doesNotMatch(body, /Codex is fixing/);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.step, 'stop');
+});
+
+test('a spec resume boundary excludes matching reviews from the old plan', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  await h.stage(changes, 1);
+  const state = readLoopState(h.comments[0]!.body);
+  state.since = 1;
+  h.comments[0]!.body = loopComment(state);
+  assert.match((await h.stage(changes, 2)).output, /next=repair/);
+});
+
+for (const kind of ['blocked', 'empty', 'rate_limit'] as const) {
+  test(`a ${kind} repair records its unchanged head except on a transient stop`, async () => {
+    const h = harness();
+    await h.stage(changes, 0);
+    const result = await h.stage(
+      {
+        ...repair,
+        ...(kind === 'empty' ? {} : { status: 'blocked', outcome: null }),
+        ...(kind === 'rate_limit' ? { failure: { class: 'rate_limit', resetsAt: null } } : {}),
+      },
+      1,
+      { review: changes, ...(kind === 'empty' ? { patch: '' } : {}) },
+    );
+    assert.ok(!result.output.includes('candidate='));
+    const body = String(
+      h.writes.filter((w) => w.path.endsWith('/issues/1/comments')).at(-1)!.body.body,
+    );
+    if (kind === 'rate_limit') assert.doesNotMatch(body, /No progress/);
+    else assert.match(body, /left the PR head at `candida` unchanged/);
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    const entry = readLoopState(h.comments[0]!.body).entries.at(-1)!;
+    assert.equal(entry.step, 'stop');
+    if (kind === 'rate_limit') assert.equal(entry.failure, 'rate_limit');
+    assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+  });
+}
+
+test('publish preserves per-check CI IDs in the repair artifact', async () => {
+  const h = harness();
+  const result = await h.stage(ready, 0, { verified: '', ciFailed: 'test' });
+  assert.match(result.output, /next=repair/);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(result.dir, REVIEW_FILE), 'utf8')).findings.map(
+      (f: { id: string }) => f.id,
+    ),
+    ['CI:test'],
+  );
+});
+
+test('the deterministic guard overrides a reviewer who clears a weakened test', async () => {
+  const h = harness();
+  const input = {
+    patch:
+      "diff --git a/a.test.ts b/a.test.ts\n--- a/a.test.ts\n+++ b/a.test.ts\n@@ -1 +1 @@\n-test('a', () => {});\n+test.skip('a', () => {});\n",
+  };
+  const result = await h.stage(
+    {
+      ...ready,
+      findings: [
+        { ...changes.findings![0]!, id: 'T-a.test.ts', blocking: false, evidence: 'reviewer copy' },
+      ],
+    },
+    0,
+    input,
+  );
+  assert.match(result.output, /next=repair/);
+  const findings = Result.parse(
+    JSON.parse(readFileSync(join(result.dir, REVIEW_FILE), 'utf8')),
+  ).findings!;
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]!.id, 'T-a.test.ts');
+  assert.equal(findings[0]!.blocking, true);
+  assert.notEqual(findings[0]!.evidence, 'reviewer copy');
+  assert.ok(h.threads.some((t) => t.comments.nodes[0]?.body.includes('T-a.test.ts')));
+  // Whole-patch screening must persist even if a later reviewer omits the finding.
+  const second = await h.stage(ready, 1, input);
+  assert.match(second.output, /next=repair/);
+  const allowed = await h.stage(ready, 2, { ...input, planText: 'Edit `a.test.ts`.' });
+  assert.match(allowed.output, /next=ready/);
 });
