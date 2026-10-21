@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -167,7 +168,18 @@ test('the verifier stub checks ready and unverified fixtures without changing th
       assert.equal(result.outcome, fixture === 'ready' ? 'verified' : 'failed');
       assert.equal(result.evidence[0]?.criterion, 'A1');
       assert.equal(result.evidence[0]?.result, fixture === 'ready' ? 'pass' : 'fail');
-      assert.equal(readFileSync(join(out, 'A1.log'), 'utf8'), result.evidence[0]?.observed);
+      assert.equal(
+        readFileSync(join(out, result.evidence[0]!.location), 'utf8'),
+        result.evidence[0]?.check,
+      );
+      if (fixture === 'ready') {
+        assert.equal(result.evidence[0]?.location, 'checks/A1.sh');
+        const script = join(out, 'checks/A1.sh');
+        assert.equal(spawnSync('bash', [script], { cwd }).status, 0);
+        rmSync(join(cwd, 'STUB.md'));
+        assert.equal(spawnSync('bash', [script], { cwd }).status, 1);
+        writeFileSync(join(cwd, 'STUB.md'), content);
+      }
       assert.equal(result.inputs.candidate, 'head');
       assert.equal(readFileSync(join(cwd, 'STUB.md'), 'utf8'), content);
     }
@@ -179,7 +191,10 @@ test('the verifier stub checks ready and unverified fixtures without changing th
     const result = Result.parse(JSON.parse(readFileSync(join(out, RESULT_FILE), 'utf8')));
     assert.equal(result.outcome, 'verified');
     assert.equal(result.evidence[0]?.result, 'pass');
-    assert.equal(readFileSync(join(out, 'A1.log'), 'utf8'), result.evidence[0]?.observed);
+    assert.equal(
+      readFileSync(join(out, result.evidence[0]!.location), 'utf8'),
+      result.evidence[0]?.check,
+    );
   } finally {
     process.exitCode = exitCode;
     vi.unstubAllEnvs();

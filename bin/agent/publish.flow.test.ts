@@ -200,6 +200,7 @@ function harness(
     options: {
       verified?: string;
       ciFailed?: string;
+      rechecked?: string;
       rounds?: number;
       candidate?: string;
       jobCandidate?: string;
@@ -306,6 +307,7 @@ function harness(
       round,
       verified: options.verified ?? pull.head.sha,
       ciFailed: options.ciFailed,
+      rechecked: options.rechecked,
       rounds: options.rounds,
     });
     return { dir, output: readFileSync(output, 'utf8') };
@@ -806,7 +808,13 @@ test('publication threads questions alongside findings and stops a question-only
 
 test('publication threads verifier failures and resolves V-A1 only after fresh passing verification', async () => {
   const h = harness();
-  const check = { ...ready, role: 'verify', axes: null, outcome: 'verified' as const };
+  const check = {
+    ...ready,
+    role: 'verify',
+    axes: null,
+    outcome: 'verified' as const,
+    evidence: ready.evidence.map((entry) => ({ ...entry, location: 'checks/A1.sh' })),
+  };
   const failed = {
     ...check,
     evidence: ready.evidence.map((entry) => ({ ...entry, result: 'fail' as const })),
@@ -820,25 +828,41 @@ test('publication threads verifier failures and resolves V-A1 only after fresh p
   );
   assert.match(h.threads[0]!.comments.nodes[0]!.body, /V-A1/);
   assert.equal(h.threads[0]!.isResolved, false);
-  const second = await h.stage(ready, 1, { checks: { A1: 'agent' }, verifier: check });
+  const second = await h.stage(ready, 1, {
+    checks: { A1: 'agent' },
+    verifier: check,
+    verifierFiles: ['checks/A1.sh'],
+    rechecked: 'A1',
+  });
   assert.match(second.output, /next=ready/);
   assert.equal(h.threads[0]!.isResolved, true);
   assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.verify, 'verified');
 });
 
-test('publication reads nested verifier output files before marking Ready', async () => {
-  const h = harness();
-  const { output } = await h.stage(ready, 0, {
-    checks: { A1: 'agent' },
-    verifier: {
-      ...ready,
-      outcome: 'verified',
-      evidence: ready.evidence.map((entry) => ({ ...entry, location: './checks/A1.log' })),
-    },
-    verifierFiles: ['checks/A1.log'],
+for (const rechecked of [undefined, '', 'A2', ',A1,']) {
+  test(`publication counts a saved script only with its rechecked ID: ${rechecked}`, async () => {
+    const h = harness();
+    const { output } = await h.stage(ready, 0, {
+      checks: { A1: 'agent' },
+      verifier: {
+        ...ready,
+        outcome: 'verified',
+        evidence: ready.evidence.map((entry) => ({ ...entry, location: './checks/A1.sh' })),
+      },
+      verifierFiles: ['checks/A1.sh'],
+      rechecked,
+    });
+    assert.match(output, rechecked === ',A1,' ? /next=ready/ : /next=stop/);
+    if (rechecked !== ',A1,') {
+      const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'))!;
+      assert.match(String(comment.body.body), /stopped at `verify`.*A1:.*re-run/s);
+      assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+      assert.ok(
+        !h.writes.some((w) => String(w.body.query).includes('markPullRequestReadyForReview')),
+      );
+    }
   });
-  assert.match(output, /next=ready/);
-});
+}
 
 for (const [exit, location, verifierFiles] of [
   [1, 'STUB.md', ['STUB.md']],

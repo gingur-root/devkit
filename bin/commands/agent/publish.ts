@@ -27,6 +27,10 @@ export default {
         "a review's round: the comma-separated checks that failed on CI",
       )
       .option('--verified <sha>', "a review's round: the commit CI passed on, empty if it failed")
+      .option(
+        '--rechecked <ids>',
+        "a review's round: the agent criteria whose saved script exited 0 on re-run",
+      )
       .option('--verifier-in <dir>', 'the verifier job directory')
       .option('--verifier-out <dir>', 'the verifier output directory')
       .option('--failed <json>', 'memory report: the calling jobs and results')

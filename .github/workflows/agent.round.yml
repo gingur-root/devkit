@@ -440,6 +440,48 @@ jobs:
           readToken: ${{ inputs.round == 0 && inputs.readToken || needs.push.outputs.readToken }}
           devkitRef: ${{ inputs.devkitRef }}
 
+  recheck:
+    name: Recheck
+    needs: criteria
+    if: ${{ !cancelled() && needs.criteria.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    outputs:
+      passed: ${{ steps.recheck.outputs.passed }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: review-${{ inputs.round }}-repo
+          path: ${{ runner.temp }}/pack
+
+      # A self-hosted runner keeps the workspace between jobs.
+      - run: |
+          find . -mindepth 1 -delete
+          tar -xzf "$RUNNER_TEMP/pack/repo.tgz"
+          rm -rf "$RUNNER_TEMP/pack"
+
+      - uses: gingur-root/devkit/actions/toolchain.setup@main
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: verify-${{ inputs.round }}-out
+          path: ${{ runner.temp }}/verify/out
+
+      - id: recheck
+        run: |
+          shopt -s nullglob
+          passed=()
+          for script in "$RUNNER_TEMP/verify/out/checks/"*.sh; do
+            id=$(basename "$script" .sh)
+            [[ $id =~ ^[A-Za-z0-9_-]+$ ]] || continue
+            if env -i PATH="$PATH" HOME="$HOME" RUNNER_TRACKING_ID="$RUNNER_TRACKING_ID" bash "$script"; then
+              passed+=("$id")
+            fi
+          done
+          (IFS=,; echo "passed=${passed[*]}") >>"$GITHUB_OUTPUT"
+
   # CI on the same commit the review reads (devkit#9). A repo's own checks are
   # the scripts toolchain.verify runs; Ready needs them green.
   verify:
@@ -459,7 +501,7 @@ jobs:
 
   verdict:
     name: Verdict
-    needs: [push, review, verify, criteria]
+    needs: [push, review, verify, criteria, recheck]
     if: always() && (github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))) && (inputs.round == 0 || needs.push.outputs.candidate != '')
     runs-on: ${{ inputs.runner }}
     environment: agents
@@ -531,10 +573,12 @@ jobs:
           ROUNDS: ${{ inputs.rounds }}
           VERIFIED: ${{ needs.verify.outputs.verified }}
           FAILED: ${{ needs.verify.outputs.failed }}
+          RECHECKED: ${{ needs.recheck.outputs.passed }}
         run: |
           pnpm agent publish --in "$RUNNER_TEMP/review/in" --out "$RUNNER_TEMP/review/out" \
             --round "$ROUND" --rounds "$ROUNDS" --verified "$VERIFIED" --ci-failed "$FAILED" \
-            --verifier-in "$RUNNER_TEMP/verify/in" --verifier-out "$RUNNER_TEMP/verify/out"
+            --verifier-in "$RUNNER_TEMP/verify/in" --verifier-out "$RUNNER_TEMP/verify/out" \
+            --rechecked "$RECHECKED"
 
       # The next round's replan job: the reviewed commit, the build's base, and this review.
       - id: memory
