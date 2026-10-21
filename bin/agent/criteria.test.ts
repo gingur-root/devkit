@@ -14,7 +14,7 @@ const evidence = {
   expected: 'works',
   observed: 'works',
   exit: 0,
-  location: 'check.log',
+  location: 'checks/A1.sh',
   result: 'pass' as const,
 };
 const checked = {
@@ -34,7 +34,8 @@ const gate = {
   rounds: 10,
   checks: { A1: 'agent' },
   check: { result: checked },
-  outputs: ['check.log'],
+  outputs: ['checks/A1.sh'],
+  rechecked: ['A1'],
 };
 
 for (const exit of [1, null]) {
@@ -58,6 +59,11 @@ for (const [location, outputs] of [
   ['/etc/passwd', ['/etc/passwd']],
   ['../in/job.json', ['../in/job.json']],
   ['checks/../check.log', ['check.log']],
+  ['checks/A1.sh', []],
+  ['steps.json', ['steps.json']],
+  ['candidate.patch', ['candidate.patch']],
+  ['A1.log', ['A1.log']],
+  ['check.log', ['check.log']],
   ['result.json', ['result.json']],
   ['./result.json', ['result.json']],
   ['check log', ['check log']],
@@ -79,17 +85,30 @@ for (const [location, outputs] of [
   });
 }
 
-test('relative verifier files accept a leading dot and nested directories', () => {
-  for (const location of ['check.log', './check.log', 'checks/A1.sh']) {
+test('verifier scripts accept a leading dot at the fixed criterion path', () => {
+  for (const location of ['checks/A1.sh', './checks/A1.sh']) {
     const input = {
       ...gate,
-      outputs: ['check.log', 'checks/A1.sh'],
+      outputs: ['checks/A1.sh'],
       check: { result: { ...checked, evidence: [{ ...evidence, location }] } },
     };
     assert.deepEqual(criterionVerdict(input), { kind: 'verified' });
     assert.equal(nextStep(input), 'ready');
   }
 });
+
+for (const rechecked of [[], undefined, ['A2']]) {
+  test(`an agent pass stops unless its script was re-run: ${JSON.stringify(rechecked)}`, () => {
+    const input = { ...gate, rechecked };
+    const verdict = criterionVerdict(input);
+    assert.equal(verdict.kind, 'stop');
+    if (verdict.kind === 'stop') {
+      assert.equal(verdict.stage, 'verify');
+      assert.match(verdict.reason, /A1: checks\/A1\.sh.*re-run/);
+    }
+    assert.equal(nextStep(input), 'stop');
+  });
+}
 
 test('agent criteria need passing evidence, a complete verified result, review and CI on the candidate', () => {
   assert.equal(nextStep(gate), 'ready');
@@ -166,7 +185,7 @@ test('criterion evidence creates one stable finding per failed ID and reports ga
         criterion: 'A1',
         path: null,
         line: null,
-        evidence: 'check.log',
+        evidence: 'checks/A1.sh',
         scenario: 'exercise the candidate',
         impact: 'Criterion A1 fails on head.',
         fix: 'Make A1 pass: works.',

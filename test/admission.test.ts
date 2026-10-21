@@ -4,7 +4,10 @@
 // .github/admission.txt), and every job must carry it or run only after a job
 // that did.
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'vite-plus/test';
 import { parse } from 'yaml';
 
@@ -341,18 +344,78 @@ test('criteria verification reuses the review pack and token and feeds every ver
       job.steps.some((s: { with?: { name?: string } }) => s.with?.name?.startsWith('verify-')),
     );
   }
+  const recheck = round.jobs.recheck;
+  assert.equal(recheck.needs, 'criteria');
+  assert.equal(recheck.if, "${{ !cancelled() && needs.criteria.result == 'success' }}");
+  assert.equal(recheck['runs-on'], '${{ inputs.runner }}');
+  assert.deepEqual(recheck.permissions, { contents: 'read' });
+  assert.equal(recheck.environment, undefined);
+  assert.ok(!JSON.stringify(recheck).includes('secrets.'));
+  assert.equal(recheck['timeout-minutes'], 30);
+  assert.equal(recheck.outputs.passed, '${{ steps.recheck.outputs.passed }}');
+  assert.deepEqual(
+    recheck.steps.filter((s: { uses?: string }) => s.uses).map((s: { uses: string }) => s.uses),
+    [
+      'actions/download-artifact@v8',
+      'gingur-root/devkit/actions/toolchain.setup@main',
+      'actions/download-artifact@v8',
+    ],
+  );
+  assert.equal(recheck.steps[0].with.name, 'review-${{ inputs.round }}-repo');
+  assert.equal(recheck.steps[3].with.name, 'verify-${{ inputs.round }}-out');
+  assert.equal(recheck.steps[3].with.path, '${{ runner.temp }}/verify/out');
+  assert.ok(round.jobs.verdict.needs.includes('recheck'));
   assert.ok(round.jobs.verdict.needs.includes('criteria'));
   const publish = round.jobs.verdict.steps.find((s: { id?: string }) => s.id === 'publish');
   assert.match(
     publish.run,
     /--verifier-in "\$RUNNER_TEMP\/verify\/in" --verifier-out "\$RUNNER_TEMP\/verify\/out"/,
   );
+  assert.equal(publish.env.RECHECKED, '${{ needs.recheck.outputs.passed }}');
+  assert.match(publish.run, /--rechecked "\$RECHECKED"/);
   for (const suffix of ['in', 'out']) {
     const download = round.jobs.verdict.steps.find(
       (s: { with?: { name?: string } }) => s.with?.name === `verify-\${{ inputs.round }}-${suffix}`,
     );
     assert.equal(download['continue-on-error'], true);
     assert.equal(download.with.path, `\${{ runner.temp }}/verify/${suffix}`);
+  }
+});
+
+test('recheck reports only successful scripts and keeps its output out of their environment', () => {
+  const round = parse(readFileSync(new URL('agent.round.yml', workflows), 'utf8'));
+  const step = round.jobs.recheck?.steps.find((s: { id?: string }) => s.id === 'recheck');
+  assert.ok(step, 'recheck step exists');
+  const dir = mkdtempSync(join(tmpdir(), 'recheck-'));
+  const checks = join(dir, 'verify/out/checks');
+  const repo = join(dir, 'repo');
+  const output = join(dir, 'output');
+  mkdirSync(repo);
+  mkdirSync(checks, { recursive: true });
+  writeFileSync(join(repo, 'candidate.txt'), 'candidate');
+  writeFileSync(join(checks, 'A1.sh'), 'test "$(cat candidate.txt)" = candidate\n');
+  writeFileSync(join(checks, 'A2.sh'), 'exit 1\n');
+  writeFileSync(join(checks, 'A3.sh'), 'echo passed=A3 >>"$GITHUB_OUTPUT"\n');
+  writeFileSync(output, '');
+  try {
+    const run = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+      cwd: repo,
+      env: { PATH: process.env.PATH, HOME: dir, RUNNER_TEMP: dir, GITHUB_OUTPUT: output },
+      encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(readFileSync(output, 'utf8'), 'passed=A1\n');
+    for (const name of ['A1', 'A2', 'A3']) rmSync(join(checks, `${name}.sh`));
+    writeFileSync(output, '');
+    const empty = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+      cwd: repo,
+      env: { PATH: process.env.PATH, HOME: dir, RUNNER_TEMP: dir, GITHUB_OUTPUT: output },
+      encoding: 'utf8',
+    });
+    assert.equal(empty.status, 0, empty.stderr);
+    assert.equal(readFileSync(output, 'utf8'), 'passed=\n');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

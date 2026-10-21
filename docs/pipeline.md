@@ -145,8 +145,12 @@ from the approved contract, never from the candidate's proposed criteria.
 
 Ready needs review pass, green CI and `verified` with passing evidence for
 every `agent` ID, all on the same candidate. A pass counts only with `exit: 0`
-and a `location` naming a file the verifier saved in its output folder; a bad
-receipt stops at `verify`. A failed criterion creates a
+and a `location` of `checks/<ID>.sh` in the verifier's output folder (a leading
+`./` is allowed). **Recheck** runs those saved scripts with `bash` from the
+same candidate's repo root, without credentials. A pass counts only when its
+script exits 0 again. A bad receipt or a re-run that does not exit 0 stops at
+`verify` in **Needs you**, without requesting repair. Logs, `steps.json`,
+`candidate.patch` and `result.json` do not count as receipts. A failed criterion creates a
 blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
 `CI` findings. Its stable ID lets a later passing round resolve its thread.
 
@@ -532,11 +536,13 @@ on a scratch issue.
    from the same proof branch with `fixture=spec`. Check that Build is skipped,
    round 1 re-reviews the same PR, round 2 replans and repairs, and the review
    passes. The loop log must retain the original base and continuing rounds.
-   With `ready`, check that **Verify Criteria** runs and the card reaches **Ready**
-   with `verify: verified` in the loop log. With `unverified`, round 0 must
+   With `ready`, check that **Verify Criteria** and **Recheck** run, Recheck
+   reports `passed=A1`, and the card reaches **Ready** with `verify: verified`
+   in the loop log. With `unverified`, round 0 must
    post blocking `V-A1`; round 1 repairs it, resolves that thread and reaches
-   **Ready**, again with `verify: verified`. The verifier reuses the review's
-   repo pack and sealed read token.
+   **Ready**, again with `verify: verified`. **Recheck** must run green and
+   report `passed=A1` on that passing round. The verifier reuses the review's
+   repo pack and sealed read token; Recheck uses the same pack without credentials.
    If the proof caller has a fixed fixture list, add `spec` and `unverified` on that branch.
    To check failures, set `DEVKIT_STUB_FIXTURE` to `rate-limit`, `crash`, `timeout` or `missing` on the proof branch.
 

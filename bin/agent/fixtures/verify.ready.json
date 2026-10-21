@@ -19,11 +19,11 @@
   "evidence": [
     {
       "criterion": "A1",
-      "check": "stub",
+      "check": "test -f STUB.md",
       "expected": "STUB.md exists",
       "observed": "STUB.md exists",
       "exit": 0,
-      "location": "A1.log",
+      "location": "checks/A1.sh",
       "result": "pass"
     }
   ],

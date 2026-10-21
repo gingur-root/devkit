@@ -118,6 +118,7 @@ export interface PublishOptions {
   ciFailed?: string;
   verifierIn?: string;
   verifierOut?: string;
+  rechecked?: string;
   /** A memory run's failed jobs, encoded as the caller's toJSON(needs). */
   failed?: string;
   repo?: string;
@@ -157,6 +158,7 @@ export interface Gate {
   checks: Record<string, string>;
   check: Verdict | null;
   outputs: string[];
+  rechecked?: string[];
   round: number;
   rounds: number;
   history?: LoopEntry[];
@@ -192,7 +194,7 @@ export function nextStep(gate: Gate): Step {
 
 /** Evidence comes from the verifier, while the IDs come from the approved plan. */
 export function criterionVerdict(
-  gate: Pick<Gate, 'checks' | 'check' | 'candidate' | 'outputs'>,
+  gate: Pick<Gate, 'checks' | 'check' | 'candidate' | 'outputs' | 'rechecked'>,
 ):
   | { kind: 'verified' }
   | { kind: 'findings'; findings: Finding[] }
@@ -231,19 +233,25 @@ export function criterionVerdict(
   });
   if (findings.length) return { kind: 'findings', findings };
   for (const entry of result.evidence) {
-    if (!ids.includes(entry.criterion ?? '') || entry.result !== 'pass') continue;
+    if (entry.criterion === null || !ids.includes(entry.criterion) || entry.result !== 'pass')
+      continue;
     if (entry.exit !== 0) return stop('verify', `${entry.criterion}: exit ${entry.exit}`);
     const location = posix.normalize(entry.location);
     if (
       !/^[A-Za-z0-9._/-]+$/.test(entry.location) ||
       posix.isAbsolute(entry.location) ||
       entry.location.split('/').includes('..') ||
-      location === RESULT_FILE ||
+      location !== `checks/${entry.criterion}.sh` ||
       !gate.outputs.includes(location)
     )
       return stop(
         'verify',
-        `${entry.criterion}: location ${entry.location} is not in the verifier output`,
+        `${entry.criterion}: location ${entry.location} is not checks/${entry.criterion}.sh in the verifier output`,
+      );
+    if (!gate.rechecked?.includes(entry.criterion))
+      return stop(
+        'verify',
+        `${entry.criterion}: checks/${entry.criterion}.sh did not exit 0 when re-run`,
       );
   }
   const missing = ids.filter((id) => {
@@ -1174,10 +1182,12 @@ async function publishReview(
   else if (pull.head.sha !== job.candidate)
     v = { stage: 'stale', reason: 'the PR has a newer commit than the one reviewed' };
   const outputs = outputFiles(options.verifierOut);
+  const rechecked = options.rechecked?.split(',').filter(Boolean) ?? [];
   const criteria = criterionVerdict({
     checks: job.plan?.checks ?? {},
     check,
     outputs,
+    rechecked,
     candidate: job.candidate ?? '',
   });
   const round = options.round ?? 0;
@@ -1206,6 +1216,7 @@ async function publishReview(
     checks: job.plan?.checks ?? {},
     check,
     outputs,
+    rechecked,
     candidate: job.candidate ?? '',
     head: pull?.head.sha ?? job.candidate ?? '',
     review: v,

@@ -14,8 +14,15 @@
 // always asks for repair and stops early at round 2 for no progress on F1;
 // `advisory` passes with an inline advisory finding.
 
-import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { STUB_FIXTURES, type StubFixture } from '../constants.ts';
 import { JOB_FILE, Job, PLAN_FILE, RESEARCH_FILE, REVIEW_FILE, THREADS_FILE } from '../job.ts';
@@ -66,8 +73,11 @@ export async function runStub(input: RunInput): Promise<RunOutput> {
   const file = existsSync(own) ? own : new URL(`${job.role}.ready.json`, FIXTURES);
   const result = JSON.parse(readFileSync(file, 'utf8'));
   if (job.role === 'verify') {
-    for (const entry of result.evidence)
-      writeFileSync(join(input.out, entry.location), entry.observed);
+    for (const entry of result.evidence) {
+      const file = join(input.out, entry.location);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, entry.check);
+    }
   }
   const reviewFile = join(input.in, REVIEW_FILE);
   if (job.role === 'repair' && existsSync(reviewFile)) {
