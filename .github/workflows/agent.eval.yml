@@ -18,6 +18,11 @@ on:
         type: string
         required: false
         default: 'main'
+      runs:
+        description: 'Runs per case.'
+        type: string
+        required: false
+        default: '2'
       cases:
         description: 'Comma-separated case names; empty runs them all.'
         type: string
@@ -37,7 +42,7 @@ jobs:
     if: github.repository_owner_id == '340382989' && github.run_attempt == '1' && ((github.actor_id == '2553213' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build","agent:research","ready-for-agent"]'), github.event.label.name)) || (github.event_name == 'issue_comment' && github.event.action == 'created' && (startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/revise') || startsWith(github.event.comment.body, '/approve'))))) || (github.actor_id == '340770692' && github.event_name == 'issues' && github.event.action == 'labeled' && contains(fromJSON('["agent:plan","agent:build"]'), github.event.label.name)) || (github.repository == 'gingur-root/pipeline' && github.actor_id == '340770692' && github.event_name == 'workflow_dispatch'))
     runs-on: ${{ inputs.runner }}
     environment: agents
-    # Five cases, each up to plan, build and three reviews with two repairs.
+    # Five cases per run, each up to plan, build and three reviews with two repairs.
     timeout-minutes: 600
     permissions:
       contents: read
@@ -72,10 +77,11 @@ jobs:
         working-directory: devkit
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ fromJSON(steps.secrets.outputs.json).CLAUDE_CODE_OAUTH_TOKEN }}
+          RUNS: ${{ inputs.runs }}
           CASES: ${{ inputs.cases }}
           DEVKIT_REF: ${{ inputs.devkitRef }}
         run: |
-          pnpm agent eval --repo "$GITHUB_WORKSPACE/repo" --out "$RUNNER_TEMP/eval" ${CASES:+--only "$CASES"}
+          pnpm agent eval --runs "$RUNS" --repo "$GITHUB_WORKSPACE/repo" --out "$RUNNER_TEMP/eval" ${CASES:+--only "$CASES"}
           { echo "### Eval of devkit \`$DEVKIT_REF\`"; echo; cat "$RUNNER_TEMP/eval/scorecard.md"; } >>"$GITHUB_STEP_SUMMARY"
 
       # Keep filename cleanup in sync with actions/agent.run/action.yml.

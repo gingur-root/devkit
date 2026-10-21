@@ -484,8 +484,10 @@ role's instructions or skills should show it helps. scratch's `eval/` holds
 fixed cases (a feature, a bug, a docs change, a refactor, and one with a
 missing requirement where the plan should ask). `agent eval` runs each one
 through plan, build, review and repair the way the pipeline does, but locally
-on a fresh copy and with no GitHub writes, then scores it against a hidden
-check the agents never see.
+on a fresh copy of scratch's `eval/fixture/` plus the case's `seed/`, with no
+GitHub writes. It scores each candidate against a hidden check the agents
+never see. A branch must include the fixture-based eval change to compare
+with main.
 
 1. Run scratch's **Eval** workflow twice, from Actions or with:
 
@@ -494,13 +496,27 @@ check the agents never see.
    gh workflow run agents.eval.yml -R gingur-root/scratch -f devkitRef=<your-branch>
    ```
 
-2. Paste both scorecards from the runs' summaries into the PR.
+2. Run N of at least 2 (the workflow default) on both refs before claiming a
+   gain, and compare k/N per case. To run locally:
+
+   ```bash
+   devkit agent eval --repo <scratch-checkout> --out <output-dir> --runs 2
+   ```
+
+3. Paste both scorecards from the runs' summaries into the PR.
 
 The scorecard has, per case: the plan's outcome, whether the hidden check
 passes, the last review, whether the review passed a change the check fails,
-repair rounds, tokens and minutes. A full run took about 11 minutes on
-the first try, more when reviews ask for repairs. Runs go one at a time, and
-a live pipeline run may wait behind one for a runner. Case format:
+over-rejected reviews (a review rejected code whose check passed), repair
+rounds, tokens and minutes. A case whose check passes on the base is invalid
+and stops before any agent runs; it does not count as a passing check.
+`check-base.log` records the base check. Each candidate's result is kept in
+`checks` in `scorecard.json` and `check-<round>.log` (round 0 is the build).
+With multiple runs, the scorecard adds a per-case k/N table; check passes uses
+only runs that reached a candidate check as its denominator. One run of all
+cases took about 11 minutes on the first try, more when reviews ask for
+repairs. Runs go one at a time, and a live pipeline run may wait behind one
+for a runner. Case format:
 scratch's `eval/README.md`.
 
 ## Proving a devkit branch

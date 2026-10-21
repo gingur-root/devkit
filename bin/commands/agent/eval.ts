@@ -1,4 +1,4 @@
-import { Option } from 'commander';
+import { InvalidArgumentError, Option } from 'commander';
 
 import { EXECUTORS } from '../../agent/constants.ts';
 import type { EvalOptions } from '../../agent/eval.ts';
@@ -12,6 +12,12 @@ export default {
     command
       .requiredOption('--repo <dir>', 'the target repo checkout, with eval/<case>/')
       .requiredOption('--out <dir>', 'where each case runs and the scorecard goes')
+      .option('--runs <n>', 'run each case N times and report k/N (default 1)', (value) => {
+        const runs = Number(value);
+        if (!Number.isInteger(runs) || runs < 1)
+          throw new InvalidArgumentError('--runs must be an integer of at least 1');
+        return runs;
+      })
       .option('--only <cases>', 'comma-separated case names (default: all)')
       .addOption(
         new Option(
