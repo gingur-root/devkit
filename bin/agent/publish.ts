@@ -40,6 +40,7 @@ import {
   REPAIR_ROUNDS,
   RETRO_LABEL,
   STAGE_LABELS,
+  STATUS_FAILURES,
   type Status,
 } from './constants.ts';
 import {
@@ -91,6 +92,10 @@ import { approvedPlan } from './render.ts';
 import { denyRules } from './merge.ts';
 import { receiptFor, settle } from './reactions.ts';
 import { type Failure, type Followup, Result, type Subtask, Triage } from './result.ts';
+import { holdUntil, markHeld, retry, type Held } from './hold.ts';
+import { resolveRole } from './run.ts';
+import { ROLES, type RoleName } from './roles.ts';
+import { providerStatus } from './status.ts';
 
 export interface PublishOptions {
   in: string;
@@ -133,7 +138,9 @@ interface Outcome {
 }
 
 /** A result that may be published, or the stage it stopped at and why. */
-export type Verdict = { result: Result } | { stage: string; reason: string; step?: string };
+export type Verdict =
+  | { result: Result }
+  | { stage: string; reason: string; step?: string; failure?: Failure };
 
 export type Step = 'ready' | 'repair' | 'rerun' | 'spec' | 'stop';
 export interface Gate {
@@ -298,7 +305,11 @@ export function verdict(job: Job, liveRevision: string, out: string): Verdict {
   const result = parsed.data;
   // The CLI's own failure says more than any later check could (devkit#14).
   if (result.failure)
-    return { stage: job.role, reason: failureReason(result.failure, result.summary) };
+    return {
+      stage: job.role,
+      reason: failureReason(result.failure, result.summary),
+      failure: result.failure,
+    };
   if (
     result.job !== job.job ||
     result.role !== job.role ||
@@ -394,11 +405,6 @@ export function failureReason(failure: Failure, summary: string): string {
   return `\`${failure.class}\`${resets}: ${summary.replace(/\.$/, '')}`;
 }
 
-function retry(role: string): string {
-  if (role === 'plan' || role === 'research') return `add \`${STAGE_LABELS[role]}\``;
-  return 'reply `/approve`';
-}
-
 export function stopped(role: string, v: { stage: string; reason: string; step?: string }): string {
   return [
     marker(role),
@@ -426,8 +432,8 @@ interface Assessment {
   valid: boolean;
 }
 
-function readCriticism(job: Job, out: string): Assessment {
-  const v = verdict(job, job.issue.revision, out);
+async function readCriticism(job: Job, options: PublishOptions): Promise<Assessment> {
+  const v = await publishFailure(job, options, verdict(job, job.issue.revision, options.out));
   const valid =
     'result' in v &&
     v.result.status === 'complete' &&
@@ -454,7 +460,7 @@ function readCriticism(job: Job, out: string): Assessment {
   return { criticism, text, valid };
 }
 
-function planCriticism(job: Job, out: string, dir: string): Assessment {
+async function planCriticism(job: Job, out: string, dir: string): Promise<Assessment> {
   const expected: Job = {
     ...job,
     role: 'critique',
@@ -475,7 +481,7 @@ function planCriticism(job: Job, out: string, dir: string): Assessment {
       critic.plan?.revision !== expected.plan!.revision
     )
       throw new Error('The criticism job is for different inputs.');
-    return readCriticism(critic, join(dir, 'out'));
+    return readCriticism(critic, { in: join(dir, 'in'), out: join(dir, 'out') });
   } catch (error) {
     return {
       criticism: {
@@ -491,7 +497,7 @@ function planCriticism(job: Job, out: string, dir: string): Assessment {
 }
 
 async function publishCriticism(job: Job, issue: Issue, options: PublishOptions): Promise<void> {
-  let assessment = readCriticism(job, options.out);
+  let assessment = await readCriticism(job, options);
   try {
     if (options.appId === undefined) throw new Error('Criticism publish needs --app-id.');
     const comment = await stageComment(job.repo, job.issue.number, 'plan');
@@ -528,7 +534,7 @@ async function publishCriticism(job: Job, issue: Issue, options: PublishOptions)
   }
   const pass = assessment.valid && assessment.criticism.outcome === 'pass';
   if (!pass) {
-    const body = `Build blocked: criticism ${assessment.criticism.outcome} on plan ${job.plan!.revision.slice(0, 7)} at ${job.source.slice(0, 7)}`;
+    const body = `Build blocked: criticism ${assessment.criticism.outcome} on plan ${job.plan!.revision.slice(0, 7)} at ${job.source.slice(0, 7)}${assessment.valid ? '' : `\n\n${assessment.text}`}`;
     await upsertStageComment(
       job.repo,
       job.issue.number,
@@ -1041,7 +1047,11 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   };
 }
 
-function readVerifier(job: Job, liveRevision: string, options: PublishOptions): Verdict | null {
+async function readVerifier(
+  job: Job,
+  liveRevision: string,
+  options: PublishOptions,
+): Promise<Verdict | null> {
   if (
     !Object.values(job.plan?.checks ?? {}).includes('agent') ||
     !options.verifierIn ||
@@ -1075,7 +1085,11 @@ function readVerifier(job: Job, liveRevision: string, options: PublishOptions): 
     };
   if (verifier.candidate !== job.candidate)
     return { stage: 'stale', reason: 'the verifier job is for a different candidate' };
-  return verdict(verifier, liveRevision, options.verifierOut);
+  return publishFailure(
+    verifier,
+    { ...options, in: options.verifierIn, out: options.verifierOut },
+    verdict(verifier, liveRevision, options.verifierOut),
+  );
 }
 
 async function publishReview(
@@ -1956,6 +1970,37 @@ export async function publishMemory(
   }
 }
 
+async function publishFailure(job: Job, options: PublishOptions, v: Verdict): Promise<Verdict> {
+  if (!('stage' in v) || !v.failure) return v;
+  const role = Object.keys(ROLES).find((name): name is RoleName => name === job.role)!;
+  // shortcut: workflow executor overrides are stub smoke runs with past resets; honor them here if real callers start using overrides.
+  const { executor } = resolveRole({ role, in: options.in });
+  const failure = v.failure;
+  const until = holdUntil(failure, executor, new Date());
+  if (until && job.role !== 'memory') {
+    const replay: Held['dispatch'] =
+      job.role === 'plan' || job.role === 'research'
+        ? {
+            stage: job.role,
+            repo: job.repo.split('/')[1]!,
+            issue: job.issue.number,
+            actor: PIPELINE_BOT.id,
+          }
+        : null;
+    await markHeld(
+      job.repo,
+      job.issue.number,
+      { until: until.toISOString(), dispatch: replay, state: 'held' },
+      job.role,
+    );
+  }
+  if (failure.resetsAt === null && STATUS_FAILURES.includes(failure.class)) {
+    const status = await providerStatus(executor);
+    if (status) return { ...v, reason: `${v.reason}.\n\n${status.replace(/\.$/, '')}` };
+  }
+  return v;
+}
+
 export async function publish(options: PublishOptions): Promise<void> {
   if (options.failed !== undefined) {
     const url = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -1973,7 +2018,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   if (job.role === 'memory') {
     // This stage proposes from the recorded merged-PR snapshot. The publish
     // token writes pipeline only; the evidence token reads repository contents.
-    const v = verdict(job, job.issue.revision, options.out);
+    const v = await publishFailure(job, options, verdict(job, job.issue.revision, options.out));
     if ('stage' in v) throw new Error(`Memory stopped at ${v.stage}: ${v.reason}.`);
     const changed = readFileSync(join(options.in, 'changed.txt'), 'utf8')
       .split('\n')
@@ -1997,7 +2042,11 @@ export async function publish(options: PublishOptions): Promise<void> {
     await publishCriticism(job, issue, options);
     return;
   }
-  let v = verdict(job, revision(issue.title, issue.body ?? ''), options.out);
+  let v = await publishFailure(
+    job,
+    options,
+    verdict(job, revision(issue.title, issue.body ?? ''), options.out),
+  );
   const reviewFile = join(options.in, REVIEW_FILE);
   if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {
     const reason = repairMap(Result.parse(JSON.parse(readFileSync(reviewFile, 'utf8'))), v.result);
@@ -2015,7 +2064,7 @@ export async function publish(options: PublishOptions): Promise<void> {
     ready && 'result' in v && !job.artifacts.includes(ISSUES_FILE) ? (v.result.subtasks ?? []) : [];
   // A ready plan a dashboard Continue started goes straight to its build (devkit#99), unless it is a story.
   const assessment =
-    ready && options.critique ? planCriticism(job, options.out, options.critique) : undefined;
+    ready && options.critique ? await planCriticism(job, options.out, options.critique) : undefined;
   const criticismPassed =
     job.role === 'plan' &&
     'result' in v &&
@@ -2032,7 +2081,7 @@ export async function publish(options: PublishOptions): Promise<void> {
       : null;
   const check =
     job.role === 'review'
-      ? readVerifier(job, revision(issue.title, issue.body ?? ''), options)
+      ? await readVerifier(job, revision(issue.title, issue.body ?? ''), options)
       : null;
   const outcome =
     job.role === 'review'

@@ -56,6 +56,7 @@ for (const [fixture, failureClass, reason] of [
       assert.deepEqual(verdict(job, 'rev', out), {
         stage: 'plan',
         reason: `\`${failureClass}\`: ${result.summary.replace(/\.$/, '')}`,
+        failure: { class: failureClass, resetsAt: null },
       });
     } finally {
       process.exitCode = exitCode;

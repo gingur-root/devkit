@@ -2,6 +2,16 @@
 export const EXECUTORS = ['claude', 'codex', 'stub'] as const;
 export type Executor = (typeof EXECUTORS)[number];
 
+export const STATUS_PAGES = {
+  claude: 'https://status.claude.com',
+  codex: 'https://status.openai.com',
+} as const;
+
+export const HELD_LABEL = 'agent:held';
+export const HOLD_FALLBACK_MINUTES = 60;
+export const HOLD_STATES = ['held', 'replaying'] as const;
+export const STATUS_FAILURES: readonly string[] = ['rate_limit', 'overloaded', 'server_error'];
+
 export const EFFORTS = ['low', 'medium', 'high'] as const;
 export type Effort = (typeof EFFORTS)[number];
 

@@ -19,8 +19,13 @@ from a pack the App-token job makes (`actions/repo.pack`), since their own
 token can't read another private repo. The agents can also read every other
 enrolled repo with `GH_TOKEN`, a read-only token minted for each run
 (`actions/agent.token`); the pack still carries the target repo. A repo is
-enrolled when infra lists it `enrolled`, which installs the App on it. infra
-keeps its own caller, which runs the same plan and build workflows.
+enrolled when infra lists it `enrolled`, which installs the App on it. This
+includes infra, which uses the same central caller for every stage.
+
+Routing infra through the receiver requires one infra PR that deletes
+`.github/workflows/agents.yml` and bumps `dashboardRef` to this devkit version
+together. Until that deploy, infra still bypasses the receiver. Deleting the
+workflow and deploying separately can start two runs per label, or none.
 
 ## The flow
 
@@ -42,6 +47,31 @@ the label again. A stop at a setup step before the agent starts names the step
 and points at the environment (runner, Bitwarden); read that step's log before
 retrying. Every comment that leaves a card in **Needs you** or
 **Ready** mentions @gingur, so the notification arrives then.
+
+A Claude subscription usage limit holds new plan, build, research and memory
+dispatches across repos until its reset. This is the usage window, separate
+from a concurrency limit. Codex failures do not set a Claude hold; build
+dispatches still wait because their review uses Claude. A missing reset time
+holds for 60 minutes. Each card gets `agent:held` and a bot comment naming the
+reset time. The receiver recovers these comments at startup and replays held
+dispatches automatically at the latest reset. Plan and research failures replay
+too; a stopped build-chain stage stays in **Needs you** with its retry
+instruction. A memory run that hits the limit sets no hold: its Publish token
+cannot reach the source PR. Memory dispatches still wait while another card's
+hold is active. Before replay, the receiver records an attempt in the bot
+comment. If it restarts with that attempt unfinished, it clears the hold and
+moves the card to **Needs you** with "replay outcome unknown"; it never
+dispatches that replay twice. Check the card's runs before retrying. The board
+loop can keep adding `agent:plan`, which the receiver holds. A limit or outage failure (`rate_limit`, `overloaded`,
+`server_error`) with no reset time includes a provider status line: operational,
+open incident, or unknown if the public status page did not answer. Memory
+reports that line only in its run log's thrown error, because its Report job
+writes the source PR comment from job names.
+
+Publish starts writing held comments when this change merges. The gate and
+automatic replay start only after infra deploys the updated `dashboardRef`;
+until then, the comment's promised automatic restart is not live. Deploy that
+bump the same day as the merge.
 
 Every plan proposes a **Priority** for the card (devkit#115): `P0` broken or
 blocked now, `P1` next, `P2` soon, `P3` someday. Publishing the plan sets the
@@ -67,7 +97,7 @@ Who writes them (`bin/agent/reactions.ts`):
 
 - **👀:** the webhook receiver, right after it dispatches a plan or build
   run. It has the comment ID, which the dispatch can't carry. For an
-  event the receiver didn't dispatch (infra's caller, a manual dispatch), the
+  event the receiver didn't dispatch (a manual dispatch), the
   start job adds it. A board-loop tick gets none.
 - **The end state:** publish, once the run's last stage is done. When a run
   dies before it publishes, the start job's failure step or the board loop's
@@ -299,14 +329,15 @@ publish job with GitHub's error.
 
 A failed or cancelled run updates one `<!-- devkit:memory -->` comment on the
 merged PR, naming the stopped job and linking its run. The merged card stays Done, and
-a memory run gets no retro. Merges in `pipeline` and `infra` are skipped by
+a memory run gets no retro. Merges in `pipeline` are skipped by
 the receiver, so merging a memory PR cannot start another memory run.
 
 Activation needs the central caller's `memory` option and job, with
 `devkitRef: main` (devkit#276). Merge the devkit implementation first, then
 the caller update: until the caller lands, memory dispatch returns 422.
 That follow-up also owns the first live run. The companion infra diagram is
-tracked in devkit#277; infra's own memory caller is devkit#261.
+tracked in devkit#277. infra memory runs use the central caller after the
+`dashboardRef` deploy described above (devkit#261).
 
 ## Retros
 
