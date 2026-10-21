@@ -65,6 +65,8 @@ return a blocking `spec` finding that names exactly what to delete or the
 simpler form in `fix`. When the whole change should not exist, put that and
 its reason in `questions` with no other blocking finding, so it stops for
 Troy. A vague "this is too much" without a concrete alternative is advisory.
+When the issue, the plan or an operator reply in `threads.json` already
+answers the objection, keep it advisory so the operator can override it.
 
 ## Output
 

@@ -30,7 +30,9 @@ and layer as a cost the plan must justify.
 When the work is not needed now, or a concrete smaller design meets the
 issue's intent, return a blocking `spec` finding. Name what to drop or the
 smaller design, and what the plan's extra scope costs. A vague "this is too
-much" without a smaller alternative is advisory.
+much" without a smaller alternative is advisory. When the issue or an owner
+comment already answers the objection, keep it advisory so the owner can
+override it.
 
 Report only material plan defects or unanswered decisions as findings. State
 the scenario, supporting requirement or code location, consequence, and
