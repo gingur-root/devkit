@@ -1269,7 +1269,13 @@ test('a repair drops its patch and reviews the newer PR head without replies or 
 test('review and repair log failure classes and clear them on a successful same-round write', async () => {
   const h = harness();
   await h.stage(
-    { ...ready, status: 'failed', outcome: null, failure: { class: 'rate_limit', resetsAt: null } },
+    {
+      ...ready,
+      status: 'failed',
+      outcome: null,
+      // A past reset sets no usage hold (bin/agent/hold.ts), so this stays about the loop log.
+      failure: { class: 'rate_limit', resetsAt: '2000-01-01T00:00:00.000Z' },
+    },
     6,
   );
   assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'rate_limit');

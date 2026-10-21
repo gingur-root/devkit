@@ -70,8 +70,10 @@ export function isStageComment(
   role: string,
 ): boolean {
   return (
-    (comment.user?.id === OPERATOR_ID ||
-      (role === 'loop' ? comment.user?.id === PIPELINE_BOT.id : comment.user?.type === 'Bot')) &&
+    (role === 'held'
+      ? comment.user?.id === PIPELINE_BOT.id
+      : comment.user?.id === OPERATOR_ID ||
+        (role === 'loop' ? comment.user?.id === PIPELINE_BOT.id : comment.user?.type === 'Bot')) &&
     !!comment.body?.startsWith(marker(role))
   );
 }

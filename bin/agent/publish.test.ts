@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, vi } from 'vite-plus/test';
 
-import { OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
+import { HELD_LABEL, OPERATOR_ID, PIPELINE_BOT } from './constants.ts';
 import {
   capText,
   stalled,
@@ -924,6 +924,7 @@ function fakeGitHub(card = CARD, comments: unknown[] = [], events: unknown[] = [
       return json(ids.map((id) => ({ id })));
     }
     if (method === 'GET' && path === cardPath) return json(card);
+    if (method === 'GET' && path === '/repos/o/r/pulls') return json([]);
     if (method === 'GET' && path === `${cardPath}/comments`) return json(comments);
     if (method === 'GET' && path === `${cardPath}/events`) return json(events);
     if (method === 'GET' && path === `${cardPath}/reactions`) return json([]);
@@ -950,6 +951,13 @@ function teardown() {
   vi.unstubAllEnvs();
 }
 
+function fakeScanner(root: string) {
+  writeFileSync(join(root, 'gitleaks'), `#!${process.execPath}\nprocess.exit(0);`, {
+    mode: 0o755,
+  });
+  vi.stubEnv('PATH', `${root}:${process.env.PATH}`);
+}
+
 const storyJob: Job = {
   job: 'plan-1',
   role: 'plan',
@@ -971,6 +979,177 @@ const storyJob: Job = {
   attemptLimit: null,
   baseMoved: false,
 };
+
+for (const role of ['plan', 'research', 'review'] as const) {
+  test(`Publish marks a Claude ${role} failure held before adding the label`, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'publish-held-'));
+    const job = { ...storyJob, role };
+    const failure = {
+      class: 'rate_limit',
+      resetsAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    } as const;
+    writeFileSync(join(root, JOB_FILE), JSON.stringify(job));
+    writeFileSync(
+      join(root, RESULT_FILE),
+      JSON.stringify({ ...pass, job: job.job, role, failure }),
+    );
+    const github = fakeGitHub();
+    fakeScanner(root);
+    const exitCode = process.exitCode;
+    try {
+      await publish({ in: root, out: root });
+      const comment = github.calls.findIndex(
+        (c) => c.startsWith('POST /repos/o/r/issues/1/comments ') && c.includes('devkit:held'),
+      );
+      const label = github.calls.findIndex(
+        (c) => c === `POST /repos/o/r/issues/1/labels {"labels":["${HELD_LABEL}"]}`,
+      );
+      assert.ok(comment >= 0 && label > comment, github.calls.join('\n'));
+      const body = String(JSON.parse(github.calls[comment]!.split(' ').slice(2).join(' ')).body);
+      assert.match(body, /Claude usage limit/);
+      assert.match(body, /"state":"held"/);
+      if (role === 'review') {
+        assert.match(body, /"dispatch":null/);
+        assert.match(body, /This card stays in Needs you.*reply `\/approve`/);
+      } else {
+        const replay = JSON.parse(/<!-- devkit:held (.+) -->/.exec(body)![1]!).dispatch;
+        assert.deepEqual(replay, { stage: role, repo: 'r', issue: 1, actor: PIPELINE_BOT.id });
+      }
+    } finally {
+      process.exitCode = exitCode;
+      teardown();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('memory failures make no source-repo request and report no-reset status only in the error', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'publish-memory-failure-'));
+  fakeScanner(root);
+  const job = { ...storyJob, role: 'memory' };
+  const calls: string[] = [];
+  vi.stubEnv('GH_TOKEN', 'pipeline-only');
+  vi.stubGlobal('fetch', async (url: string) => {
+    calls.push(url);
+    assert.equal(new URL(url).hostname, 'status.claude.com');
+    return Response.json({ status: { indicator: 'major', description: 'Claude incident' } });
+  });
+  writeFileSync(join(root, JOB_FILE), JSON.stringify(job));
+  try {
+    for (const kind of [
+      'rate_limit',
+      'overloaded',
+      'server_error',
+      'timeout',
+      'unknown',
+    ] as const) {
+      for (const resetsAt of [null, '2099-01-01T00:00:00.000Z']) {
+        calls.length = 0;
+        writeFileSync(
+          join(root, RESULT_FILE),
+          JSON.stringify({
+            ...pass,
+            job: job.job,
+            role: job.role,
+            failure: { class: kind, resetsAt },
+          }),
+        );
+        const statusExpected =
+          resetsAt === null && ['rate_limit', 'overloaded', 'server_error'].includes(kind);
+        await assert.rejects(publish({ in: root, out: root }), (error: Error) => {
+          assert.match(error.message, /Memory stopped at memory:/);
+          assert.equal(
+            error.message.includes(
+              'Provider status (status.claude.com): open incident, Claude incident',
+            ),
+            statusExpected,
+          );
+          return true;
+        });
+        assert.equal(calls.length, statusExpected ? 1 : 0, `${kind} ${resetsAt}`);
+      }
+    }
+  } finally {
+    teardown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a trusted roles snapshot making plan Codex sets no Claude hold', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'publish-codex-'));
+  const github = fakeGitHub();
+  fakeScanner(root);
+  const exitCode = process.exitCode;
+  writeFileSync(join(root, JOB_FILE), JSON.stringify(storyJob));
+  writeFileSync(join(root, 'roles.json'), '{"plan":{"executor":"codex"}}');
+  writeFileSync(
+    join(root, RESULT_FILE),
+    JSON.stringify({
+      ...pass,
+      failure: { class: 'rate_limit', resetsAt: new Date(Date.now() + 60 * 60_000).toISOString() },
+    }),
+  );
+  try {
+    await publish({ in: root, out: root });
+    assert.ok(!github.calls.some((c) => c.includes(HELD_LABEL) || c.includes('devkit:held')));
+  } finally {
+    process.exitCode = exitCode;
+    teardown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('only no-reset quota and outage failures get a provider status line, fetched once', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'publish-status-'));
+  const exitCode = process.exitCode;
+  writeFileSync(join(root, JOB_FILE), JSON.stringify(storyJob));
+  try {
+    for (const kind of [
+      'rate_limit',
+      'overloaded',
+      'server_error',
+      'timeout',
+      'unknown',
+    ] as const) {
+      for (const resetsAt of [null, '2026-01-01T00:00:00.000Z']) {
+        writeFileSync(
+          join(root, RESULT_FILE),
+          JSON.stringify({ ...pass, failure: { class: kind, resetsAt } }),
+        );
+        const github = fakeGitHub();
+        fakeScanner(root);
+        const request = globalThis.fetch;
+        let fetched = 0;
+        vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+          if (new URL(url).hostname === 'status.claude.com') {
+            fetched++;
+            return Response.json({
+              status: { indicator: 'major', description: 'Claude incident' },
+            });
+          }
+          return request(url, init);
+        });
+        await publish({ in: root, out: root });
+        const expected =
+          resetsAt === null && ['rate_limit', 'overloaded', 'server_error'].includes(kind);
+        assert.equal(fetched, expected ? 1 : 0, `${kind} ${resetsAt}`);
+        assert.equal(
+          github.calls.some((c) =>
+            c.includes(
+              'Provider status (status.claude.com): open incident, Claude incident (major). https://status.claude.com',
+            ),
+          ),
+          expected,
+        );
+        teardown();
+      }
+    }
+  } finally {
+    process.exitCode = exitCode;
+    teardown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('subtasks become sub-issues in Ask, and a retry files none twice', async () => {
   const github = fakeGitHub();

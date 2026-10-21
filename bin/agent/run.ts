@@ -172,7 +172,10 @@ export async function run(options: RunOptions): Promise<void> {
   output = settle(output, role.result);
   // Written even when the run failed: publish validates it and names the stage.
   let result = output.result;
-  if (result === undefined && role.result && dirs.in && dirs.out)
+  // Agents cannot forge account-wide holds; only the provider reports failures.
+  if (result !== null && typeof result === 'object' && !Array.isArray(result))
+    result = { ...result, failure: null };
+  if ((result === undefined || output.failure) && role.result && dirs.in && dirs.out)
     result = failedResult(
       Job.parse(JSON.parse(readFileSync(join(dirs.in, JOB_FILE), 'utf8'))),
       output,

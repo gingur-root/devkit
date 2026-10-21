@@ -232,3 +232,43 @@ test('research loads its role instructions and uses the approved model and tools
   assert.equal(ROLES.research.result, true);
   assert.deepEqual(ROLES.research.tools, ['Bash', 'Read', 'Glob', 'Grep', 'Write']);
 });
+
+test('run discards agent-written failures and preserves provider failures', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'devkit-run-failure-'));
+  const job: Job = {
+    job: 'plan-1',
+    role: 'plan',
+    objective: '',
+    repo: 'o/r',
+    issue: { number: 1, title: 'T', revision: 'rev', bodySeen: true },
+    plan: null,
+    source: 'sha',
+    base: null,
+    candidate: null,
+    memory: null,
+    artifacts: [],
+    operations: [],
+    attemptLimit: null,
+    baseMoved: false,
+  };
+  writeFileSync(join(dir, 'job.json'), JSON.stringify(job));
+  const failure = { class: 'rate_limit', resetsAt: '2099-01-01T00:00:00Z' } as const;
+  const provider = vi
+    .spyOn(PROVIDERS, 'stub')
+    .mockResolvedValue({ ok: true, result: { failure, summary: 'Agent text' } });
+  const exitCode = process.exitCode;
+  try {
+    await run({ role: 'plan', executor: 'stub', in: dir, out: dir });
+    assert.equal(JSON.parse(readFileSync(join(dir, 'result.json'), 'utf8')).failure, null);
+    provider.mockResolvedValue({ ok: false, failure });
+    await run({ role: 'plan', executor: 'stub', in: dir, out: dir });
+    assert.deepEqual(
+      Result.parse(JSON.parse(readFileSync(join(dir, 'result.json'), 'utf8'))).failure,
+      failure,
+    );
+  } finally {
+    process.exitCode = exitCode;
+    provider.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
