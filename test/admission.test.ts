@@ -176,6 +176,7 @@ test('cancelled runs skip publishing agent output', () => {
     ['agent.plan.yml', 'publish'],
     ['agent.research.yml', 'publish'],
     ['agent.round.yml', 'push'],
+    ['agent.round.yml', 'gate'],
   ] as const) {
     const condition = jobsByWorkflow.get(file)?.[id]?.if;
     const where = `${file}#${id}`;
@@ -284,7 +285,8 @@ test('each repair is gated by replan and resume skips the builder', () => {
   assert.ok(admits(jobs.replan.if));
   assert.ok(admits(jobs.gate.if));
   assert.ok(jobs.replan.if.endsWith('&& inputs.round > 0 && !inputs.rerun'));
-  assert.ok(jobs.gate.if.endsWith('&& inputs.round > 0 && !inputs.rerun'));
+  assert.ok(jobs.gate.if.endsWith('&& inputs.round > 0 && !inputs.rerun }}'));
+  assert.doesNotMatch(jobs.gate.if, /needs\.replan\.result/);
   assert.equal(jobs.gate.needs, 'replan');
   assert.equal(jobs.repair.needs, 'gate');
   assert.equal(jobs.repair.steps[0].with.readToken, '${{ needs.gate.outputs.readToken }}');
@@ -373,6 +375,10 @@ test('criticism gates plan handoff and build dispatch at trusted devkit jobs', (
   assert.equal(
     build.publish.if,
     "${{ !cancelled() && needs.start.result == 'success' && needs.start.outputs.resume == '' && (needs.build.result != 'skipped' || needs.start.outputs.triage == 'true') }}",
+  );
+  assert.equal(
+    build.review.if,
+    "${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.candidate != '' }}",
   );
   assert.deepEqual(build.criticism.needs, ['start', 'critique']);
   for (const jobs of [plan, build]) {

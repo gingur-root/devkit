@@ -14,6 +14,7 @@ import {
   PIPELINE_BOT,
   RETRO_LABEL,
   STAGE_LABELS,
+  TRANSIENT_FAILURES,
 } from './constants.ts';
 import { setStatus } from './board.ts';
 import { removeLabel, rest, restAll, stageComment, upsertStageComment } from './github.ts';
@@ -43,7 +44,7 @@ import {
   revision,
   TRIAGE_FILE,
 } from './job.ts';
-import { loopComment, readLoopState } from './publish.ts';
+import { loopComment, readLoopState, restoreHeading } from './publish.ts';
 import { ROLES, type RoleName } from './roles.ts';
 import { branchOf, openPull, readThreads } from './threads.ts';
 import { MANIFEST_PATH } from './tools.ts';
@@ -541,10 +542,34 @@ export async function render(options: RenderOptions): Promise<Job> {
       if (options.role === 'build' && last?.step === 'spec') {
         state.approved = approved.contract.planRevision;
         await upsertStageComment(job.repo, pull.number, 'loop', loopComment(state));
+        const plan = await stageComment(job.repo, job.issue.number, 'plan');
+        if (plan?.body) {
+          const body = restoreHeading(plan.body, approved.contract.bodySeen ?? job.issue.bodySeen);
+          if (body !== plan.body)
+            await upsertStageComment(job.repo, job.issue.number, 'plan', body);
+        }
         job.base = state.base ?? base;
         writeFileSync(
           join(options.out, RESUME_FILE),
           JSON.stringify({ round: last.round, candidate: pull.head.sha, base: job.base }),
+        );
+      }
+      if (
+        options.role === 'build' &&
+        last?.step === 'stop' &&
+        TRANSIENT_FAILURES.some((failure) => failure === last.failure) &&
+        pull.head.sha === last.candidate &&
+        state.approved === approved.contract.planRevision &&
+        state.rounds > 0
+      ) {
+        job.base = state.base ?? base;
+        writeFileSync(
+          join(options.out, RESUME_FILE),
+          JSON.stringify({
+            round: Math.max(last.round, 1),
+            candidate: pull.head.sha,
+            base: job.base,
+          }),
         );
       }
       if (options.role !== 'build') {

@@ -271,6 +271,12 @@ jobs:
           permissionIssues: write
           permissionOrganizationProjects: write
 
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
+
       - id: publish
         name: Publish
         working-directory: devkit
@@ -356,6 +362,12 @@ jobs:
           name: agent-out
           path: ${{ runner.temp }}/agent/out
 
+      # Publish must report a validate stop even if installing its scanner fails.
+      - uses: gingur-root/devkit/actions/secrets.scan@main
+        continue-on-error: true
+        with:
+          installOnly: 'true'
+
       - id: publish
         name: Publish
         working-directory: devkit
@@ -427,7 +439,8 @@ jobs:
   review:
     name: Review
     needs: [start, publish]
-    if: needs.publish.outputs.candidate != ''
+    # No status function would also need every job upstream of publish to succeed, and Critique is skipped when the plan has no critique.
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.candidate != '' }}
     # The ceiling for the nested jobs: the agents check out this repo.
     permissions:
       contents: read

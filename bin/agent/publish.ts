@@ -95,6 +95,7 @@ import { type Failure, type Followup, Result, type Subtask, Triage } from './res
 import { holdUntil, markHeld, retry, type Held } from './hold.ts';
 import { resolveRole } from './run.ts';
 import { ROLES, type RoleName } from './roles.ts';
+import { screen } from './screen.ts';
 import { providerStatus } from './status.ts';
 
 export interface PublishOptions {
@@ -433,7 +434,11 @@ interface Assessment {
 }
 
 async function readCriticism(job: Job, options: PublishOptions): Promise<Assessment> {
-  const v = await publishFailure(job, options, verdict(job, job.issue.revision, options.out));
+  const v = await publishFailure(
+    job,
+    options,
+    screen(options.out) ?? verdict(job, job.issue.revision, options.out),
+  );
   const valid =
     'result' in v &&
     v.result.status === 'complete' &&
@@ -456,7 +461,7 @@ async function readCriticism(job: Job, options: PublishOptions): Promise<Assessm
               (finding) => `- ${finding.id}: ${finding.scenario} ${finding.impact} ${finding.fix}`,
             ),
         ].join('\n\n')
-      : v.reason;
+      : stopped(job.role, v);
   return { criticism, text, valid };
 }
 
@@ -539,7 +544,9 @@ async function publishCriticism(job: Job, issue: Issue, options: PublishOptions)
       job.repo,
       job.issue.number,
       'build',
-      mention(`${marker('build')}\n\n${body}`),
+      mention(
+        [marker('build'), body, ...(!assessment.valid ? [assessment.text] : [])].join('\n\n'),
+      ),
     );
     await removeLabel(job.repo, job.issue.number, STAGE_LABELS.build);
     await setStatus(job.repo, issue.node_id, 'Needs you');
@@ -547,6 +554,26 @@ async function publishCriticism(job: Job, issue: Issue, options: PublishOptions)
   }
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `pass=${pass}\n`);
   if (!assessment.valid) process.exitCode = 1;
+}
+
+export function readyHeading(bodySeen: boolean): string {
+  const bodyNote = bodySeen ? '' : ' (written without the issue body, which someone else wrote)';
+  return `**Plan: ready: reply \`/approve\` to build it${bodyNote}**`;
+}
+
+export function specHeading(round: number, pull: number, changed: string[]): string {
+  return `**Plan: changed in review round ${round}: reply \`/approve\` to resume #${pull}**\n\nChanged criteria: ${changed.join(', ') || 'plan text only'}.`;
+}
+
+export function restoreHeading(body: string, bodySeen: boolean): string {
+  const start = body.indexOf(PLAN_START);
+  const heading = start < 0 ? body : body.slice(0, start);
+  return (
+    heading.replace(
+      /^\*\*Plan: changed in review round \d+: reply `\/approve` to resume #\d+\*\*\n\nChanged criteria: [^\n]*/m,
+      readyHeading(bodySeen),
+    ) + (start < 0 ? '' : body.slice(start))
+  );
 }
 
 export function planComment(
@@ -571,7 +598,9 @@ export function planComment(
         ? `**Plan: ready. This card is a story: approve and build each subtask, not this card${bodyNote}**`
         : handoff
           ? `**Plan: ready. Your Continue approved it, so \`${STAGE_LABELS[handoff]}\` starts now${bodyNote}**`
-          : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : result.triage ? 'ready: reply `/approve` to file what it keeps' : 'ready: reply `/approve` to build it'}${bodyNote}**`;
+          : result.outcome === 'ready' && !result.triage
+            ? readyHeading(job.issue.bodySeen)
+            : `**Plan: ${result.outcome !== 'ready' ? 'needs your input' : 'ready: reply `/approve` to file what it keeps'}${bodyNote}**`;
   const contract: PlanContract = {
     planRevision: planRevision(plan),
     criticism: assessment?.criticism ?? null,
@@ -871,6 +900,7 @@ export interface LoopEntry {
   open: string[];
   hypotheses: string[];
   step: Step | null;
+  failure?: Failure['class'] | null;
 }
 export interface LoopState {
   rounds: number;
@@ -887,7 +917,7 @@ export function loopComment(state: LoopState): string {
     `**Round ${round} of ${state.rounds} · ${state.failures} failures**`,
     ...state.entries.map(
       (e) =>
-        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; verify: ${e.verify ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
+        `- Round ${e.round}: \`${e.candidate.slice(0, 7)}\`; CI ${e.ci ?? 'pending'}; review ${e.review ?? 'pending'}; verify: ${e.verify ?? 'pending'}; open blocking IDs: ${e.open.join(', ') || 'none'}; ${e.step ?? 'pending'}${e.failure ? `; stopped: ${e.failure}` : ''}${e.replan ? `; planner: ${e.replan}` : ''}${e.hypotheses.length ? `; hypotheses: ${e.hypotheses.join('; ')}` : ''}`,
     ),
     `<!-- devkit:loop-state ${JSON.stringify(state).replace(/-->/g, '--\\u003e')} -->`,
   ].join('\n\n');
@@ -985,7 +1015,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
     readFileSync(join(options.in, CHECKS_FILE), 'utf8'),
   );
   const planFile = join(options.out, PLAN_FILE);
-  const plan = existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
+  const plan = 'result' in v && existsSync(planFile) ? readFileSync(planFile, 'utf8') : null;
   const changed =
     'result' in v && specChanged({ revision: job.plan!.revision, checks }, v.result, plan);
   const step =
@@ -998,6 +1028,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
   const log = await updateLoop(job, pull, options, {
     candidate: job.source,
     replan: 'result' in v ? v.result.summary : v.reason,
+    failure: 'stage' in v ? (v.failure?.class ?? null) : null,
     ...(step !== 'repair' && { step }),
   });
   if (step === 'spec' && 'result' in v) {
@@ -1016,7 +1047,7 @@ async function publishReplan(job: Job, v: Verdict, options: PublishOptions): Pro
       'plan',
       body.replace(
         /\*\*Plan:.*?\*\*/,
-        `**Plan: changed in review round ${round}: reply \`/approve\` to resume #${pull.number}**\n\nChanged criteria: ${changedCriteria(checks, v.result.criteria).join(', ') || 'plan text only'}.`,
+        specHeading(round, pull.number, changedCriteria(checks, v.result.criteria)),
       ),
     );
   }
@@ -1088,7 +1119,7 @@ async function readVerifier(
   return publishFailure(
     verifier,
     { ...options, in: options.verifierIn, out: options.verifierOut },
-    verdict(verifier, liveRevision, options.verifierOut),
+    screen(options.verifierOut) ?? verdict(verifier, liveRevision, options.verifierOut),
   );
 }
 
@@ -1133,6 +1164,10 @@ async function publishReview(
           threads.map((t) => t.id),
         )
       : null;
+  const failure =
+    ('stage' in v && v.failure?.class) ||
+    (check && 'stage' in check && check.failure?.class) ||
+    null;
   if ('result' in v && criteria.kind === 'stop')
     v = { stage: criteria.stage, reason: criteria.reason };
   const log =
@@ -1150,6 +1185,7 @@ async function publishReview(
       ...('result' in v &&
         result && { open: (result.findings ?? []).filter((f) => f.blocking).map((f) => f.id) }),
       step,
+      failure,
     }));
   if (step === 'rerun' && pull && 'stage' in v) {
     if (process.env.GITHUB_OUTPUT)
@@ -1503,6 +1539,20 @@ async function publishBuildOrPlan(
   }
   if ('result' in v && v.result.outcome === 'implemented') {
     try {
+      if (job.role === 'repair') {
+        pull = (await openPull(job, branchOf(job))) ?? null;
+        if (pull && pull.head.sha !== job.source) {
+          candidate = pull.head.sha;
+          if (process.env.GITHUB_OUTPUT)
+            appendFileSync(process.env.GITHUB_OUTPUT, `candidate=${candidate}\n`);
+          await updateLoop(job, pull, options, { candidate, failure: null, step: null });
+          return {
+            body: `${marker(job.role)}\n\nThe repair was dropped because the PR has a newer commit \`${candidate.slice(0, 7)}\` than the one repaired. This round reviews that commit.`,
+            status: 'Building',
+            stopped: false,
+          };
+        }
+      }
       if (!checkout) throw new Error('publish needs --checkout for a build.');
       const { branch, commit } = pushCandidate(job, checkout, join(out, CANDIDATE_FILE));
       candidate = commit;
@@ -1534,6 +1584,7 @@ async function publishBuildOrPlan(
     if (logPull)
       await updateLoop(job, logPull, options, {
         candidate: candidate || job.source,
+        failure: 'stage' in v ? (v.failure?.class ?? null) : null,
         ...('result' in v
           ? { hypotheses: v.result.hypotheses ?? [] }
           : { step: 'stop' as const, review: v.stage }),
@@ -2018,7 +2069,11 @@ export async function publish(options: PublishOptions): Promise<void> {
   if (job.role === 'memory') {
     // This stage proposes from the recorded merged-PR snapshot. The publish
     // token writes pipeline only; the evidence token reads repository contents.
-    const v = await publishFailure(job, options, verdict(job, job.issue.revision, options.out));
+    const v = await publishFailure(
+      job,
+      options,
+      screen(options.out) ?? verdict(job, job.issue.revision, options.out),
+    );
     if ('stage' in v) throw new Error(`Memory stopped at ${v.stage}: ${v.reason}.`);
     const changed = readFileSync(join(options.in, 'changed.txt'), 'utf8')
       .split('\n')
@@ -2045,7 +2100,7 @@ export async function publish(options: PublishOptions): Promise<void> {
   let v = await publishFailure(
     job,
     options,
-    verdict(job, revision(issue.title, issue.body ?? ''), options.out),
+    screen(options.out) ?? verdict(job, revision(issue.title, issue.body ?? ''), options.out),
   );
   const reviewFile = join(options.in, REVIEW_FILE);
   if (job.role === 'repair' && 'result' in v && existsSync(reviewFile)) {

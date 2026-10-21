@@ -14,6 +14,7 @@ import {
   CANDIDATE_FILE,
   JOB_FILE,
   type Job,
+  marker,
   RESULT_FILE,
   REVIEW_FILE,
   THREADS_FILE,
@@ -63,9 +64,15 @@ function harness(
     research?: boolean;
     buildPull?: boolean;
     researchError?: string;
+    scanner?: string;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'publish-flow-'));
+  const scanner = join(root, 'gitleaks');
+  writeFileSync(scanner, `#!${process.execPath}\n${options.scanner ?? 'process.exit(0);'}`, {
+    mode: 0o755,
+  });
+  vi.stubEnv('PATH', `${root}:${process.env.PATH}`);
   const issue = { number: 1, node_id: 'issue', title: 'T', body: 'B', labels: [] };
   const pull = {
     number: 2,
@@ -195,12 +202,15 @@ function harness(
       rounds?: number;
       candidate?: string;
       jobCandidate?: string;
+      source?: string;
       review?: Result;
       checks?: Record<string, string>;
       verifier?: Result | null;
       verifierJob?: Partial<Job>;
       verifierJobText?: string;
       researchText?: string | false;
+      patch?: string;
+      planText?: string;
     } = {},
   ) {
     const dir = join(root, String(calls++));
@@ -220,7 +230,7 @@ function harness(
       plan: options.checks
         ? { revision: 'approved', criteria: Object.keys(options.checks), checks: options.checks }
         : null,
-      source: pull.head.sha,
+      source: options.source ?? pull.head.sha,
       base: 'base',
       candidate: options.jobCandidate ?? pull.head.sha,
       memory: null,
@@ -244,8 +254,10 @@ function harness(
     writeFileSync(join(dir, RESULT_FILE), JSON.stringify(matched));
     writeFileSync(
       join(dir, CANDIDATE_FILE),
-      'diff --git a/STUB.md b/STUB.md\n--- a/STUB.md\n+++ b/STUB.md\n@@ -1 +1 @@\n-old\n+new\n',
+      options.patch ??
+        'diff --git a/STUB.md b/STUB.md\n--- a/STUB.md\n+++ b/STUB.md\n@@ -1 +1 @@\n-old\n+new\n',
     );
+    if (options.planText) writeFileSync(join(dir, 'plan.md'), options.planText);
     if (options.review) writeFileSync(join(dir, REVIEW_FILE), JSON.stringify(options.review));
     if (role === 'research' && options.researchText !== false)
       writeFileSync(
@@ -293,6 +305,135 @@ function harness(
   return { stage, pull, comments, researchComments, reads, writes, threads };
 }
 
+const planted = 'gh' + 'p_' + 'A1b2C3d4'.repeat(4) + 'Zz9Y';
+
+function scannerHit(file: string) {
+  return `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    if (!fs.existsSync(${JSON.stringify(file)}) ||
+        !fs.readFileSync(${JSON.stringify(file)}, 'utf8').includes(${JSON.stringify(planted)}))
+      process.exit(0);
+    const args = process.argv.slice(2);
+    fs.writeFileSync(args[args.indexOf('-r') + 1], JSON.stringify([
+      { File: ${JSON.stringify(file)}, RuleID: 'github-pat', Secret: 'REDACTED' }
+    ]));
+    console.error(${JSON.stringify(planted)});
+    process.exit(2);
+  `;
+}
+
+test('publish screens plan text and blocked summaries before echoing them', async () => {
+  for (const status of ['complete', 'blocked'] as const) {
+    const h = harness({ scanner: scannerHit('result.json') });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    await h.stage(
+      {
+        ...ready,
+        role: 'plan',
+        status,
+        outcome: status === 'complete' ? 'ready' : null,
+        summary: `Result ${planted}`,
+        priority: 'P2',
+        subtasks: [{ title: 'Subtask', body: 'Body', pr: true, blockedBy: null }],
+        followups: [{ title: 'Follow-up', body: 'Body' }],
+      },
+      0,
+      { planText: `Plan ${planted}` },
+    );
+    const comment = h.writes.filter((w) => w.path.endsWith('/issues/1/comments'));
+    assert.equal(comment.length, 1);
+    assert.match(String(comment[0]!.body.body), /stopped at `validate`.*result.json.*github-pat/);
+    assert.ok(!JSON.stringify(h.writes).includes(planted));
+    assert.ok(!JSON.stringify([...log.mock.calls, ...error.mock.calls]).includes(planted));
+    assert.ok(!h.writes.some((w) => w.path.endsWith('/issues') || w.path.includes('/pulls')));
+    assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+    assert.equal(process.exitCode, 1);
+  }
+});
+
+test('publish screens candidate additions before any git push or PR write', async () => {
+  const h = harness({ scanner: scannerHit('candidate.patch') });
+  await h.stage({ ...repair, role: 'build' }, 0, { patch: `+${planted}\n` });
+  const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+  assert.match(String(comment?.body.body), /stopped at `validate`.*candidate.patch/);
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.ok(!h.writes.some((w) => w.path.includes('/pulls')));
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});
+
+test('publish screens verifier output before it reaches review threads', async () => {
+  const h = harness({ scanner: scannerHit('result.json') });
+  await h.stage(ready, 0, {
+    checks: { A1: 'agent' },
+    verifier: {
+      ...ready,
+      summary: `Verification ${planted}`,
+      outcome: 'inconclusive',
+      evidence: [
+        {
+          criterion: 'A1',
+          check: planted,
+          expected: 'pass',
+          observed: 'fail',
+          exit: 1,
+          location: 'fixture',
+          result: 'fail',
+        },
+      ],
+    },
+  });
+  const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+  assert.match(String(comment?.body.body), /validate.*result.json.*github-pat/s);
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});
+
+test('publish screens findings before opening review threads', async () => {
+  const h = harness({ scanner: scannerHit('result.json') });
+  await h.stage(
+    {
+      ...changes,
+      findings: changes.findings!.map((finding) => ({ ...finding, fix: planted })),
+    },
+    0,
+  );
+  const comment = h.writes.find((w) => w.path.endsWith('/issues/1/comments'));
+  assert.match(String(comment?.body.body), /stopped at `validate`.*github-pat/);
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.equal(h.threads.length, 0);
+});
+
+test('memory screens its output before touching the store', async () => {
+  const h = harness({ scanner: scannerHit('result.json') });
+  await assert.rejects(
+    h.stage({ ...ready, role: 'memory', summary: planted }, 0),
+    /Memory stopped at validate:.*github-pat/,
+  );
+  assert.ok(!JSON.stringify(h.writes).includes(planted));
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+});
+
+test('publish posts a readable validation stop when gitleaks is missing', async () => {
+  const h = harness();
+  vi.stubEnv('PATH', '/nonexistent');
+  await h.stage({ ...ready, role: 'plan' }, 0, { planText: 'Plan' });
+  const comments = h.writes.filter((w) => w.path.endsWith('/issues/1/comments'));
+  assert.equal(comments.length, 1);
+  assert.match(String(comments[0]!.body.body), /stopped at `validate`.*could not run.*PATH/);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
+  assert.equal(process.exitCode, 1);
+});
+
 test('publish carries repair hypotheses into the same-round review and upserts one loop log', async () => {
   const h = harness();
   const first = await h.stage(changes, 0);
@@ -324,6 +465,7 @@ test('publish carries repair hypotheses into the same-round review and upserts o
   assert.deepEqual(state.entries[1], {
     round: 1,
     candidate: 'repaired',
+    failure: null,
     ci: 'green',
     review: 'pass',
     verify: 'skipped',
@@ -1096,4 +1238,82 @@ test('missing research artifacts stop at validation and still remove the label',
   assert.match(h.researchComments[0]!.body!, /add `agent:research`/);
   assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Needs you');
   assert.ok(h.writes.some((w) => w.path.endsWith('/labels/agent%3Aresearch')));
+});
+
+test('a repair drops its patch and reviews the newer PR head without replies or a push', async () => {
+  const h = harness();
+  await h.stage(changes, 0);
+  const before = h.writes.length;
+  const result = await h.stage(
+    { ...repair, changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }] },
+    1,
+    { review: changes, source: 'older-head' },
+  );
+  assert.equal(vi.mocked(git).mock.calls.length, 0);
+  assert.equal(vi.mocked(gitAsOperator).mock.calls.length, 0);
+  assert.equal(result.output, 'candidate=candidate\n');
+  assert.equal(h.threads[0]!.comments.nodes.length, 1);
+  const state = readLoopState(h.comments[0]!.body);
+  assert.equal(state.entries.at(-1)?.candidate, 'candidate');
+  assert.equal(state.entries.at(-1)?.step, null);
+  assert.equal(state.entries.at(-1)?.failure, null);
+  assert.equal(vi.mocked(setStatus).mock.lastCall?.[2], 'Building');
+  const body = h.writes.slice(before).find((w) => w.path.endsWith('/issues/1/comments'))?.body.body;
+  assert.ok(String(body).startsWith(marker('repair')));
+  assert.match(String(body), /repair.*dropped/i);
+  assert.match(String(body), /`candida`/);
+});
+
+test('review and repair log failure classes and clear them on a successful same-round write', async () => {
+  const h = harness();
+  await h.stage(
+    {
+      ...ready,
+      status: 'failed',
+      outcome: null,
+      // A past reset sets no usage hold (bin/agent/hold.ts), so this stays about the loop log.
+      failure: { class: 'rate_limit', resetsAt: '2000-01-01T00:00:00.000Z' },
+    },
+    6,
+  );
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'rate_limit');
+  assert.match(h.comments[0]!.body!, /stopped: rate_limit/);
+  await h.stage(changes, 6);
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, null);
+  await h.stage(
+    {
+      ...repair,
+      status: 'failed',
+      outcome: null,
+      failure: { class: 'overloaded', resetsAt: null },
+    },
+    6,
+  );
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'overloaded');
+  await h.stage(
+    { ...repair, changes: [{ ref: 'F1', change: 'fixed', response: null, evidence: null }] },
+    6,
+    { review: changes },
+  );
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, null);
+});
+
+test('a verifier failure is logged when the reviewer has no failure class', async () => {
+  const h = harness();
+  await h.stage(ready, 6, {
+    checks: { A1: 'agent' },
+    verifier: {
+      ...ready,
+      role: 'verify',
+      status: 'failed',
+      outcome: null,
+      failure: { class: 'timeout', resetsAt: null },
+    },
+  });
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'timeout');
+  await h.stage({ ...ready, failure: { class: 'server_error', resetsAt: null } }, 6, {
+    checks: { A1: 'agent' },
+    verifier: { ...ready, role: 'verify', failure: { class: 'timeout', resetsAt: null } },
+  });
+  assert.equal(readLoopState(h.comments[0]!.body).entries.at(-1)?.failure, 'server_error');
 });

@@ -147,6 +147,10 @@ Ready needs review pass, green CI and `verified` with passing evidence for
 every `agent` ID, all on the same candidate. A failed criterion creates a
 blocking `V-<ID>` finding on axis Spec, sent through replan and repair like
 `CI`. Its stable ID lets a later passing round resolve its thread.
+
+Publish screens agent text and patch additions with gitleaks before any write.
+A hit or scanner failure stops at `validate`.
+
 Missing verifier output, a missing evidence entry, `not-verified`, or an
 inconclusive result stops at **Needs you** and names the criterion IDs.
 Stale verifier results stop at **Needs you** in stage `verify` and preserve the
@@ -213,18 +217,21 @@ a resolved thread gets a new thread.
   names the commit being re-reviewed and the next round. Reruns count toward
   the cap; a stale review at the cap stops at **Needs you**. A stale review
   never posts a PR review or changes the PR's ready state. A head that moves
-  while the planner runs reruns the same way, within the cap.
+  while the planner runs reruns the same way, within the cap. A head that
+  moves while a repair runs is reviewed instead, in the same round.
 
 After a spec stop, reply `/approve` or press Continue to approve the new plan.
 The run skips Build and re-reviews the current head of the same PR in the
 stopped round, now under the new plan. The round count and original base carry
 over; the next repair round runs replan → gate → repair as usual. This extra
 review avoids repairing findings judged against the old plan. Close the PR
-first to rebuild from scratch.
+first to rebuild from scratch. A transient stop (`rate_limit`, `overloaded`,
+`server_error` or `timeout`) resumes in the same round when the head and approved
+plan are unchanged. Round 0 resumes as round 1. Otherwise, the run rebuilds.
 
 The PR has one loop-log comment, updated after each replan, repair and review. It
 shows the round and cap, failure count, candidate short SHA, CI result,
-review outcome, open blocking IDs, planner summary and repair hypotheses. It
+review outcome, failure class, open blocking IDs, planner summary and repair hypotheses. It
 also records the approved plan revision and original build base. Only loop
 comments authored by the pipeline App or the operator count for approval or
 resume. Its hidden
@@ -535,9 +542,6 @@ proof, then pin it back.
   removes its label, so add it again once the plan is ready.
 - **A plan written without the issue body is refused once the body becomes visible.**
   Run `agent:plan` again.
-- **A repair needs the branch as reviewed.** If anyone pushes to
-  `agent/issue-<n>` while a repair runs, its push is rejected and the card
-  stops in Needs you.
 - **No `/revise` yet.** It passes the gate but no stage handles it; edit the
   issue and re-plan instead, or press **Request changes** on the dashboard,
   which hands the note to the planner.
