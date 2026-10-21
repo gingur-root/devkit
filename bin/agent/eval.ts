@@ -1,8 +1,7 @@
 // The eval set (devkit#42): fixed issues under the target repo's `eval/`, each
-// taken through plan, build, review and repair the way the pipeline runs them,
-// but locally and with no GitHub writes. A change to a role's instructions or
-// skills shows its effect as two scorecards, one from main and one from its
-// branch.
+// started from `eval/fixture/` plus its seed, then taken through plan, build,
+// review and repair locally with no GitHub writes. Instruction and skill
+// changes show their effect as scorecards from main and the branch.
 
 import { spawnSync } from 'node:child_process';
 import {
@@ -35,9 +34,10 @@ import { passes, repairable, verdict } from './publish.ts';
 import type { Result } from './result.ts';
 import { ROLES, type RoleName } from './roles.ts';
 
-/** The cases' folder in the target repo. It is removed before any agent runs. */
+/** Hidden cases and their shared fixture in the target repo. */
 export const EVAL_DIR = 'eval';
 
+const FIXTURE_DIR = 'fixture';
 const EVAL_REPAIR_ROUNDS = 2;
 
 /** `eval/<case>/case.json`: what the plan should do with the issue. */
@@ -50,10 +50,16 @@ export interface EvalOptions {
   /** Comma-separated case names. Default: every case. */
   only?: string;
   executor?: Executor;
+  /** Runs per case; default 1. */
+  runs?: number;
 }
 
 export interface Score {
   case: string;
+  run: number;
+  invalid: boolean;
+  checks: boolean[];
+  overRejected: number;
   expected: z.infer<typeof Case>['plan'];
   /** The plan's outcome, or null when it stopped. */
   plan: string | null;
@@ -75,14 +81,11 @@ const EVAL_IDENTITY = { name: 'eval', email: 'eval@localhost' };
 const DEVKIT_BIN = fileURLToPath(new URL('../devkit.mjs', import.meta.url));
 
 /**
- * A fresh repo with one commit: the target repo with the case's `seed/` laid
- * over it and `eval/` gone. No history, so no agent can read a check from git.
+ * A fresh repo with one commit: `eval/fixture/` with the case's `seed/` laid
+ * over it. No history, so no agent can read a check from git.
  */
 function base(repo: string, caseDir: string, cwd: string): string {
-  cpSync(repo, cwd, {
-    recursive: true,
-    filter: (src) => ![join(repo, '.git'), join(repo, EVAL_DIR)].includes(src),
-  });
+  cpSync(join(repo, EVAL_DIR, FIXTURE_DIR), cwd, { recursive: true });
   const seed = join(caseDir, 'seed');
   if (existsSync(seed)) cpSync(seed, cwd, { recursive: true });
   git(cwd, ['init', '--quiet'], EVAL_IDENTITY);
@@ -112,6 +115,9 @@ export function evaluate(options: EvalOptions): Score[] {
   const repo = resolve(options.repo);
   const out = resolve(options.out);
   const root = join(repo, EVAL_DIR);
+  const fixture = join(root, FIXTURE_DIR);
+  if (!existsSync(fixture)) throw new Error(`${fixture} is missing: every case starts from it.`);
+  const runs = options.runs ?? 1;
   const names = options.only
     ? options.only.split(',').map((name) => name.trim())
     : readdirSync(root).filter((name) => existsSync(join(root, name, 'case.json')));
@@ -120,27 +126,34 @@ export function evaluate(options: EvalOptions): Score[] {
     const expected = Case.parse(
       JSON.parse(readFileSync(join(root, name, 'case.json'), 'utf8')),
     ).plan;
-    let score: Score;
-    try {
-      score = runCase(repo, name, expected, join(out, name), options.executor);
-    } catch (error) {
-      // One broken case must not cost the rest of a run that takes hours.
-      score = {
-        ...emptyScore(name, expected),
-        stopped: `eval: ${error instanceof Error ? error.message : String(error)}`,
-      };
+    for (let run = 1; run <= runs; run++) {
+      const work = runs === 1 ? join(out, name) : join(out, name, `run-${run}`);
+      let score: Score;
+      try {
+        score = runCase(repo, name, expected, work, run, options.executor);
+      } catch (error) {
+        // One broken run must not cost the rest of an eval that takes hours.
+        score = {
+          ...emptyScore(name, expected, run),
+          stopped: `eval: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      console.log(JSON.stringify(score));
+      scores.push(score);
     }
-    console.log(JSON.stringify(score));
-    scores.push(score);
   }
   writeFileSync(join(out, 'scorecard.json'), `${JSON.stringify(scores, null, 2)}\n`);
   writeFileSync(join(out, 'scorecard.md'), scorecard(scores));
   return scores;
 }
 
-function emptyScore(name: string, expected: Score['expected']): Score {
+function emptyScore(name: string, expected: Score['expected'], run: number): Score {
   return {
     case: name,
+    run,
+    invalid: false,
+    checks: [],
+    overRejected: 0,
     expected,
     plan: null,
     check: null,
@@ -158,6 +171,7 @@ function runCase(
   name: string,
   expected: Score['expected'],
   work: string,
+  run: number,
   executor?: Executor,
 ): Score {
   const started = Date.now();
@@ -168,7 +182,7 @@ function runCase(
   rmSync(work, { recursive: true, force: true });
   mkdirSync(cwd, { recursive: true });
   const source = base(repo, caseDir, cwd);
-  const score = emptyScore(name, expected);
+  const score = emptyScore(name, expected, run);
 
   const stage = (
     role: RoleName,
@@ -243,6 +257,23 @@ function runCase(
     return score;
   };
 
+  const runCheck = (label: string): boolean => {
+    const check = spawnSync('sh', [join(caseDir, 'check.sh')], {
+      cwd,
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', BASE: source },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    writeFileSync(join(work, `check-${label}.log`), `${check.stdout ?? ''}${check.stderr ?? ''}`);
+    git(cwd, ['reset', '--quiet', '--hard'], EVAL_IDENTITY);
+    git(cwd, ['clean', '-fdxq'], EVAL_IDENTITY);
+    return check.status === 0;
+  };
+  if (existsSync(join(caseDir, 'check.sh')) && runCheck('base')) {
+    score.invalid = true;
+    return finish('invalid: check passes on the base');
+  }
+
   const plan = stage('plan', 'plan', {}, { [ISSUE_FILE]: issueText });
   if ('stopped' in plan) return finish(plan.stopped);
   score.plan = plan.result.outcome;
@@ -258,25 +289,17 @@ function runCase(
   const planFiles = { [ISSUE_FILE]: issueText, [PLAN_FILE]: `${planText}\n` };
 
   // Commits what the build or repair left, then runs the hidden check on it.
-  const commit = (message: string): string => {
+  const commit = (message: string, round: number): string => {
     git(cwd, ['commit', '--quiet', '--allow-empty', '-m', message], EVAL_IDENTITY);
-    const check = spawnSync('sh', [join(caseDir, 'check.sh')], {
-      cwd,
-      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', BASE: source },
-      encoding: 'utf8',
-      timeout: 60_000,
-    });
-    writeFileSync(join(work, 'check.log'), `${check.stdout ?? ''}${check.stderr ?? ''}`);
-    score.check = check.status === 0;
-    git(cwd, ['reset', '--quiet', '--hard'], EVAL_IDENTITY);
-    git(cwd, ['clean', '-fdxq'], EVAL_IDENTITY);
+    score.check = runCheck(String(round));
+    score.checks.push(score.check);
     return git(cwd, ['rev-parse', 'HEAD'], EVAL_IDENTITY);
   };
 
   const build = stage('build', 'build', { plan: approved, base: source }, planFiles);
   if ('stopped' in build) return finish(build.stopped);
   if (build.result.outcome !== 'implemented') return finish(`build: ${build.result.outcome}`);
-  let candidate = commit('build');
+  let candidate = commit('build', 0);
 
   for (let round = 0; ; round++) {
     const patch = gitBytes(cwd, ['diff', '--binary', source, candidate]);
@@ -295,6 +318,7 @@ function runCase(
       score.missed = score.check === false;
       return finish(null);
     }
+    if (score.check === true) score.overRejected++;
     if (round >= EVAL_REPAIR_ROUNDS || !repairable(review.result)) return finish(null);
 
     const repair = stage(
@@ -309,7 +333,7 @@ function runCase(
     score.repairs = round + 1;
     if ('stopped' in repair) return finish(repair.stopped);
     if (repair.result.outcome !== 'implemented') return finish(`repair: ${repair.result.outcome}`);
-    candidate = commit(`repair ${round + 1}`);
+    candidate = commit(`repair ${round + 1}`, round + 1);
   }
 }
 
@@ -318,13 +342,15 @@ function mark(ok: boolean | null): string {
 }
 
 export function scorecard(scores: Score[]): string {
+  const repeated = scores.some((s) => s.run > 1);
   const rows = scores.map((s) =>
     [
-      s.case,
+      repeated ? `${s.case} #${s.run}` : s.case,
       `${s.plan ?? 'stopped'}${s.plan === s.expected ? '' : ` (wanted ${s.expected})`}`,
       mark(s.check),
       s.review ?? '–',
       s.missed ? 'yes' : '',
+      String(s.overRejected),
       String(s.repairs),
       `${Math.round(s.tokens.input / 1000)}k / ${Math.round(s.tokens.output / 1000)}k`,
       String(s.minutes),
@@ -333,12 +359,27 @@ export function scorecard(scores: Score[]): string {
   );
   const right = scores.filter((s) => s.plan === s.expected).length;
   const checked = scores.filter((s) => s.check !== null);
+  const perCase = repeated
+    ? [...new Set(scores.map((s) => s.case))].map((name) => {
+        const runs = scores.filter((s) => s.case === name);
+        const checked = runs.filter((s) => s.check !== null);
+        return `| ${name} | ${runs.length} | ${runs.filter((s) => s.plan === s.expected).length}/${runs.length} | ${checked.filter((s) => s.check).length}/${checked.length} | ${runs.filter((s) => s.missed).length}/${runs.length} | ${runs.filter((s) => s.overRejected > 0).length}/${runs.length} |`;
+      })
+    : [];
   return [
-    '| Case | Plan | Check passes | Review | Missed by review | Repairs | Tokens in / out | Minutes | Stopped |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Case | Plan | Check passes | Review | Missed by review | Over-rejected | Repairs | Tokens in / out | Minutes | Stopped |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ...rows.map((row) => `| ${row} |`),
     '',
-    `Plans right: ${right}/${scores.length}. Checks passing: ${checked.filter((s) => s.check).length}/${checked.length}. Missed by review: ${scores.filter((s) => s.missed).length}.`,
+    `Plans right: ${right}/${scores.length}. Checks passing: ${checked.filter((s) => s.check).length}/${checked.length}. Missed by review: ${scores.filter((s) => s.missed).length}. Invalid: ${scores.filter((s) => s.invalid).length}. Over-rejected: ${scores.reduce((total, s) => total + s.overRejected, 0)}.`,
     '',
+    ...(repeated
+      ? [
+          '| Case | Runs | Plan right | Check passes | Missed by review | Over-rejected |',
+          '| --- | --- | --- | --- | --- | --- |',
+          ...perCase,
+          '',
+        ]
+      : []),
   ].join('\n');
 }
