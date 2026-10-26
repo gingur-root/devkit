@@ -5,7 +5,7 @@ description: Use when Troy asks to run the pipeline in this session instead of o
 
 # Pipeline
 
-Run the GitHub pipeline (`docs/pipeline.md`) from a desk session. Each stage
+Run the GitHub pipeline (`docs/pipeline.md`) from a local session. Each stage
 is a fresh subagent with that stage's role files. You are the controller: you
 hold the gates, run the checks, and do every GitHub write as Troy's `gh` user.
 Role files and the result schema are devkit's own, so the session and the
@@ -46,7 +46,7 @@ Give every stage the same prompt shape. Never write the stage's work into it:
 the role files are the instructions.
 
 ```text
-You are the <stage> stage of the devkit pipeline, run from a desk session.
+You are the <stage> stage of the devkit pipeline, run from a local session.
 Read these files in order and follow them as your instructions:
 <devkit>/agents/worker.md, <devkit>/agents/contract.md, <role files>, <skills>.
 Skip the "This runner" section of worker.md. Instead:
@@ -125,7 +125,7 @@ names its fix; show Troy the fix and stop. Don't install anything yourself.
      `agent/<slug>`, push, and open a draft PR. Its body is the build
      `summary`, then the issue and the plan.
 5. **Review.** Run the review subagent on the pushed commit, with
-   `candidate.patch` (`git diff <base>..<candidate>`). Desk stages have no
+   `candidate.patch` (`git diff <base>..<candidate>`). Local stages have no
    `job.json`; each criterion's check kind is its `check` field in `$JOB/plan.json`
    `criteria`. If any criterion is `agent`, run the verify subagent on the same
    commit as review, with `issue.md`, `plan.md`, `plan.json` and `candidate.patch`.
