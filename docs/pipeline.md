@@ -469,7 +469,7 @@ repo adds one, or replaces devkit's, under `.devkit/skills/<name>/`.
 repair use the build's base, never the candidate checkout. Changes take effect
 after merge; runs without this snapshot use devkit's own files.
 
-## Running it from a desk session
+## Running it from a local session
 
 The `pipeline` skill (`skills/pipeline/SKILL.md`) runs the
 same stages from a Claude Code session, with Troy's `gh` user and one
