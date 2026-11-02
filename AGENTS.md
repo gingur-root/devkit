@@ -246,7 +246,9 @@ top-level `&&` with `(<admission>)` as one operand, e.g.
   so a caller that omits the input runs GitHub-hosted.
 - Every other gingur-root job runs self-hosted (`vars.RUNNER`), throwaway probes included. Outside devkit's own CI, only infra's
   `vps.scan.yml` and its manual `RUNNER=ubuntu-latest` fallback run
-  GitHub-hosted (gingur-root/infra `docs/runbook.md`).
+  GitHub-hosted (gingur-root/infra `docs/runbook.md`), and so does
+  `cmdkeys` CI on `windows-latest`, because the org runners can't give it
+  Windows (gingur-root/infra `src/github/repos.ts`).
 
 ## Consumer standards
 
